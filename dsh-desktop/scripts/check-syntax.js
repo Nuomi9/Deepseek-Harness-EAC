@@ -29,6 +29,8 @@ const entryFiles = [
   'patch-row-heal.js',
   'plugin-guard.js',
   'preset-sync.js',
+  'web-service-supervisor.js',
+  'shutdown-coordinator.js',
 ];
 
 // 匹配「async/await 关键字与紧随其后的 function 声明之间被空行/注释行拆开」：

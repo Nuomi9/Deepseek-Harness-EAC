@@ -43,7 +43,7 @@
 | 插件安装 | 手动 npm | 设置页内置**插件市场**，搜索/一键安装/卸载 dsh 插件 |
 | 更新 | 手动 `npm update` | **双重自动更新**：官方 agent 更新（npm overlay，失败可回退）+ 客户端本体自更新，均经用户同意 |
 | 任务通知 | 无 | agent 任务完成弹出**系统通知**，点击回到窗口 |
-| 系统要求 | Windows/macOS/Linux + Node.js 环境 | Windows 10/11 或 Linux x86_64（Arch / Ubuntu / Debian / Fedora），**无需预装 Node.js** |
+| 系统要求 | Windows/Linux + Node.js 环境 | Windows 10/11 或 Linux x86_64（Arch / Ubuntu / Debian / Fedora），**无需预装 Node.js** |
 
 > 内核零改动：EAC 直接运行官方 `dsh web`，完整保留「一切皆插件」架构与全部官方能力，
 > 与 CLI 共享 `DSH_HOME` 配置，已有会话/API Key 直接生效。

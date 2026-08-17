@@ -33,6 +33,8 @@ const { createGuard } = require('./plugin-guard');
 const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
 const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
+const { createWebServiceSupervisor } = require('./web-service-supervisor');
+const { createShutdownCoordinator } = require('./shutdown-coordinator');
 const {
   runKoffiPreflight,
   runKoffiPreflightAsync,
@@ -89,7 +91,7 @@ function isUnderFileRoots(p) {
 }
 
 const IS_WIN = process.platform === 'win32';
-const IS_MAC = process.platform === 'darwin';
+const IS_LINUX = process.platform === 'linux';
 const APP_VERSION = app.getVersion();
 const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 
@@ -99,6 +101,8 @@ const AUTO_UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000; // every 6 hours
 
 let mainWindow = null;
 let serverProc = null;
+let webServiceSupervisor = null;
+let shutdownCoordinator = null;
 let webUrl = null;
 let quitting = false;
 let updateBusy = false;
@@ -119,8 +123,6 @@ let clientUpdateBusy = false;
 let balanceCache = null;
 let balanceTimer = null;
 let restartingServer = false;
-// V4 退出清理：before-quit 只允许进入一次异步清理（防止重复触发）。
-let shutdownInProgress = false;
 // V4 退出清理：当前正在执行的插件市场排队任务子进程（退出时强杀）。
 let marketOpChild = null;
 // 渲染进程崩溃/挂起自恢复状态机（renderer-recovery.js，上游 Issue #9 修复）。
@@ -334,32 +336,44 @@ async function killTreeAndWait(proc, { graceMs = 1200, hardMs = 4000 } = {}) {
 // 拉起旧实例。改动退出路径只改这两个函数。
 // ---------------------------------------------------------------------------
 
-// 干净退出并重启应用。app.exit 不触发 window close 事件，天然绕过
-// close-to-tray 拦截；force 额外置 forceQuit，供恢复页面等需要确保
-// 退出的入口使用。
-function restartApp({ force = false } = {}) {
-  quitting = true;
-  if (force) forceQuit = true;
-  markCleanExit();
-  killTree(serverProc);
-  app.relaunch();
-  app.exit(0);
+function ensureShutdownCoordinator() {
+  if (shutdownCoordinator) return shutdownCoordinator;
+  shutdownCoordinator = createShutdownCoordinator({
+    app,
+    log,
+    markCleanExit,
+    setQuitting: (value) => { quitting = value; },
+    setForceQuit: (value) => { forceQuit = value; },
+    getServerProcess: () => serverProc,
+    stopServerProcess: async (proc) => {
+      await killTreeAndWait(proc);
+      if (serverProc === proc) serverProc = null;
+    },
+    terminateChildTree: (child) => killTree(child),
+    getMarketOpChild: () => marketOpChild,
+    closeAllFloatWindows,
+    abortUpdater: () => updater.abort(),
+    stopSessionWatcher: () => { if (sessionWatcher) sessionWatcher.stop(); },
+    clearBalanceTimer: () => {
+      if (balanceTimer) clearInterval(balanceTimer);
+      balanceTimer = null;
+    },
+    destroyTray: () => {
+      if (tray) { try { tray.destroy(); } catch {} tray = null; }
+    },
+    applyClientUpdate: (ctx, pendingUpdate) => clientUpdater.applyUpdate(ctx, pendingUpdate),
+  });
+  return shutdownCoordinator;
 }
 
-// 客户端（封装）更新专用：终结服务与后台任务后交给更新脚本，由它负责
-// 安装并拉起新版本，随后本进程退出（不 app.relaunch，避免新旧实例竞争）。
-async function restartWithClientUpdate(ctx, pendingUpdate) {
-  quitting = true;
-  forceQuit = true;
-  markCleanExit();
-  updater.abort();
-  if (sessionWatcher) sessionWatcher.stop();
-  // V4：先等 dsh web 进程树真正退出再交给更新脚本接管（旧实现 killTree
-  // 的强杀补刀在主进程退出后不会执行，node.exe+conhost.exe 成对残留）。
-  await killTreeAndWait(serverProc);
-  serverProc = null;
-  clientUpdater.applyUpdate(ctx, pendingUpdate);
-  setTimeout(() => app.exit(0), 400);
+// 干净退出并重启应用。应用级的服务回收和看门狗标记统一由协调器负责。
+function restartApp(opts = {}) {
+  return ensureShutdownCoordinator().restartApp(opts);
+}
+
+// 客户端（封装）更新专用：停止服务后交给更新脚本接管，避免新旧实例竞争。
+function restartWithClientUpdate(ctx, pendingUpdate) {
+  return ensureShutdownCoordinator().restartWithClientUpdate(ctx, pendingUpdate);
 }
 
 // ---------------------------------------------------------------------------
@@ -593,183 +607,60 @@ function stablePortCtx() {
   };
 }
 
-async function startServer(unsafePortRetries = 4, overlays = []) {
-  // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
-  if (serverProc && !serverProc.killed && !quitting) {
-    log('dsh', 'startServer 重入：先终结旧进程再启动');
-    killTree(serverProc);
-    serverProc = null;
-  }
-  // 稳定端口（stable-port.js）：复用 settings.webPort，避免每次 --port 0
-  // 换 origin 导致 localStorage 偏好丢失；同时避开 Chromium 受限端口。
-  const webPort = await chooseStableWebPort(stablePortCtx());
-  return new Promise((resolve, reject) => {
-    const nodeBin = nodeExe();
-    const bin = dshBin();
-    if (!fs.existsSync(nodeBin)) {
-      return reject(new Error(
-        '找不到内置 Node 运行时: ' + nodeBin + '\n' +
-        (app.isPackaged ? '安装包可能不完整，请重新安装。' : '开发模式请先运行: npm run fetch-node')
-      ));
-    }
-    const out = fs.createWriteStream(path.join(logsDir, 'dsh-web.log'), { flags: 'a' });
-    log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port ${webPort}`);
-    // --use-system-ca: 让 dsh web 进程信任系统证书库（代理/MITM 场景下内置 node 的
-    // 默认 CA 无法验证，导致插件市场等对外 fetch 失败）。
-    const patchArgs = overlays
-      .filter((p) => typeof p === 'string' && p && fs.existsSync(p))
-      .flatMap((p) => ['--patch', p]);
-    // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
-    // 硬编码别名，不接受父级 --profile）；app 入口由 profile bundles 决定，
-    // --host/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
-    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
-      cwd: userDataDir,
-      env: childEnv(),
-      detached: !IS_WIN,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    serverProc = proc;
-    // V4：profile 首次引导（node_modules 缺失）时 dsh 要先跑 pnpm 装齐依赖，
-    // 就绪等待放宽（见 watchServerProc 的 bootTimer）。
-    const firstBoot = !fs.existsSync(path.join(desktopProfileDir(), 'node_modules'));
-    watchServerProc(proc, out, { expectedPort: webPort, unsafePortRetries, overlays, firstBoot }).then(resolve, reject);
+function ensureWebServiceSupervisor() {
+  if (webServiceSupervisor) return webServiceSupervisor;
+  webServiceSupervisor = createWebServiceSupervisor({
+    app,
+    spawn,
+    nodeExe,
+    dshBin,
+    childEnv,
+    desktopProfile,
+    desktopProfileDir,
+    userDataDir,
+    getLogsDir: () => logsDir,
+    chooseStableWebPort,
+    stablePortCtx,
+    restrictedPortOf,
+    overrideAnnouncedPort: () => {
+      if (!testForceUnsafeOnce) return 0;
+      testForceUnsafeOnce = false;
+      return 6000;
+    },
+    loadSettings,
+    saveSettings,
+    updCtx,
+    killTree,
+    waitForProcExit,
+    isQuitting: () => quitting,
+    isRestarting: () => restartingServer,
+    onProcessChanged: (proc) => { serverProc = proc; },
+    onUnexpectedExit: ({ logPath: serviceLogPath }) => {
+      if (!webUrl || !mainWindow || mainWindow.isDestroyed()) return;
+      showBox({
+        type: 'error',
+        title: 'DSH 服务已停止',
+        message: 'DeepSeek Harness 服务意外退出。',
+        detail: `日志文件：${serviceLogPath}`,
+        buttons: ['重新启动', '退出'],
+        defaultId: 0,
+        cancelId: 1,
+      }).then(({ response }) => {
+        if (response === 0) startAndShow().catch((err) => handleBootFailure(err));
+        else app.quit();
+      });
+    },
+    log,
   });
+  return webServiceSupervisor;
 }
 
-// 等待 dsh web 子进程 stdout 出现就绪 URL 行；进程提前退出 / 启动超时则拒绝。
-// 退出时若服务已就绪过（webUrl 已设）且非主动重启，弹「DSH 服务已停止」对话框。
-function watchServerProc(proc, out, opts = {}) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let handedOff = false; // 受限端口重启：本实例的退出不再影响外层 Promise/弹窗
-    let bootTimer = null;
-    const finish = (fn, value) => {
-      if (!settled) { settled = true; fn(value); }
-      if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
-    };
-    const onData = (chunk) => {
-      out.write(chunk);
-      const text = chunk.toString();
-      for (const line of text.split(/\r?\n/)) {
-        const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
-        if (!m) continue;
-        let blocked;
-        if (testForceUnsafeOnce) {
-          testForceUnsafeOnce = false;
-          blocked = 6000; // 测试钩子：仅第一次强制视为受限端口
-        } else {
-          blocked = restrictedPortOf(m[1]);
-        }
-        if (blocked && opts.unsafePortRetries > 0) {
-          // 端口命中 Chromium 受限列表：结束该实例重启换端口（有上限）。
-          // 标记 handedOff，本实例的 exit 事件不得提前 reject 外层 Promise
-          // 或弹出「服务已停止」对话框，结果交由递归重启决定。
-          handedOff = true;
-          log('dsh', `端口 ${blocked} 属于 Chromium 受限端口（ERR_UNSAFE_PORT），重启服务换端口（剩余重试 ${opts.unsafePortRetries} 次）`);
-          killTree(proc);
-          setTimeout(() => {
-            if (quitting) return finish(reject, new Error('应用正在退出'));
-            startServer(opts.unsafePortRetries - 1, opts.overlays).then(
-              (url) => finish(resolve, url),
-              (err) => finish(reject, err)
-            );
-          }, 600);
-          return;
-        }
-        // 稳定端口：若 dsh 最终监听端口与请求的不同（极端兜底），以实际为准并保存。
-        try {
-          const actual = Number(new URL(m[1]).port) || 0;
-          if (opts.expectedPort != null && actual > 0 && actual !== opts.expectedPort) {
-            const c = updCtx();
-            const settings = loadSettings(c);
-            settings.webPort = actual;
-            saveSettings(c, settings);
-          }
-        } catch {}
-        finish(resolve, m[1]);
-      }
-    };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', (c) => out.write(c));
-    proc.on('error', (err) => finish(reject, err));
-    // V4：HTTP 就绪探测与 stdout 就绪行并行竞争 —— 就绪行被管道缓冲吞掉
-    // 或格式变化时不再白白等满 bootTimer（「启动 60 秒超时」的主要假阳性
-    // 来源）。expectedPort 由 chooseStableWebPort 挑选、已避开 Chromium
-    // 受限端口，探测命中的 URL 与请求端口一致；受限端口重启交接（handedOff）
-    // 期间 settled 由递归重启决定，探测自然退出。
-    if (opts.expectedPort && restrictedPortOf(`http://127.0.0.1:${opts.expectedPort}`) === 0) {
-      const probeUrl = `http://127.0.0.1:${opts.expectedPort}`;
-      (async () => {
-        while (!settled) {
-          const ok = await new Promise((res) => {
-            const req = http.get(probeUrl + '/', { timeout: 2500 }, (r) => {
-              r.resume();
-              res(!!r.statusCode && r.statusCode < 500);
-            });
-            req.on('error', () => res(false));
-            req.on('timeout', () => { req.destroy(); res(false); });
-          }).catch(() => false);
-          if (ok) { finish(resolve, probeUrl); return; }
-          await new Promise((r) => setTimeout(r, 350));
-        }
-      })();
-    }
-    proc.on('exit', (code, signal) => {
-      out.end();
-      log('dsh', `进程退出 code=${code} signal=${signal}`);
-      // 原地重启（插件市场）或已替换为新进程时，不打扰用户、也不清掉新进程的句柄。
-      const intentional = restartingServer || serverProc !== proc;
-      if (serverProc === proc) serverProc = null;
-      if (!handedOff) {
-        finish(reject, new Error(`dsh web 启动失败（退出码 ${code}）。日志: ${path.join(logsDir, 'dsh-web.log')}`));
-      }
-      if (!quitting && !intentional && !handedOff && webUrl && mainWindow && !mainWindow.isDestroyed()) {
-        showBox({
-          type: 'error',
-          title: 'DSH 服务已停止',
-          message: 'DeepSeek Harness 服务意外退出。',
-          detail: `日志文件：${path.join(logsDir, 'dsh-web.log')}`,
-          buttons: ['重新启动', '退出'],
-          defaultId: 0,
-          cancelId: 1,
-        }).then(({ response }) => {
-          if (response === 0) startAndShow().catch((err) => handleBootFailure(err));
-          else app.quit();
-        });
-      }
-    });
-    // Safety net in case neither the URL line nor the HTTP probe lands in time.
-    // V4：profile 首次引导（node_modules 尚不存在）需要 pnpm 从网络装齐
-    // dsh-base + dsh-web-app，慢网络下 60 秒不够 —— 首启放宽到 180 秒，
-    // 稳态启动维持 60 秒。
-    const bootTimeoutMs = opts.firstBoot ? 180000 : 60000;
-    bootTimer = setTimeout(
-      () => finish(reject, new Error(`等待 dsh web 启动超时（${Math.round(bootTimeoutMs / 1000)} 秒）`)),
-      bootTimeoutMs
-    );
-    bootTimer.unref();
-  });
+function startServer(unsafePortRetries = 4, overlays = []) {
+  return ensureWebServiceSupervisor().start(unsafePortRetries, overlays);
 }
 
 function waitUntilUp(url, timeoutMs = 120000) {
-  const started = Date.now();
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      const req = http.get(url + '/', { timeout: 3000 }, (res) => {
-        res.resume();
-        if (res.statusCode && res.statusCode < 500) resolve(url);
-        else retry();
-      });
-      req.on('error', retry);
-      req.on('timeout', () => { req.destroy(); retry(); });
-    };
-    const retry = () => {
-      if (Date.now() - started > timeoutMs) reject(new Error('Web UI 未在预期时间内就绪'));
-      else setTimeout(tick, 300);
-    };
-    tick();
-  });
+  return ensureWebServiceSupervisor().waitUntilUp(url, timeoutMs);
 }
 
 function startAndShow(overlays = []) {
@@ -902,44 +793,9 @@ function scheduleClientUpdateRescue() {
 // Window
 // ---------------------------------------------------------------------------
 
-// macOS 需要保留原生菜单栏：setApplicationMenu(null) 会连 Cmd+C/V/Q/W 等
-// 系统快捷键一起干掉（macOS 的剪贴板/退出快捷键依赖菜单存在）。这里装一个
-// 最小菜单（App / 文件 / 编辑 / 视图 / 窗口），其余平台维持无菜单栏——
-// Windows/Linux 的全部功能由自绘 chrome 提供。
+// Windows/Linux 的全部功能由自绘 chrome 与托盘提供，不保留原生菜单栏。
 function installAppMenu() {
-  if (!IS_MAC) {
-    Menu.setApplicationMenu(null);
-    return;
-  }
-  const template = [
-    { role: 'appMenu' },
-    {
-      label: '文件',
-      submenu: [{ role: 'close' }], // Cmd+W 关窗；应用常驻 Dock，activate 时重开
-    },
-    {
-      label: '编辑',
-      submenu: [
-        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
-        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
-      ],
-    },
-    {
-      label: '视图',
-      submenu: [
-        { label: '重新加载', accelerator: 'CmdOrCtrl+R', click: () => reloadMainWindow() },
-        {
-          label: '开发者工具',
-          accelerator: 'CmdOrCtrl+Shift+I',
-          click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.toggleDevTools(); },
-        },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-      ],
-    },
-    { role: 'windowMenu' },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(null);
 }
 
 function createWindow({ startHidden = false } = {}) {
@@ -1840,25 +1696,8 @@ function trayHintOnce() {
   }
 }
 
-// macOS：窗口已关闭（关窗不退出）后从 Dock / 通知回来时重建主窗口。
-// 服务还活着就直接加载已有 webUrl，否则走完整启动链（会 loadURL 到新窗口）。
-function reopenMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    showMainWindow();
-    return;
-  }
-  createWindow();
-  const serverAlive = serverProc && serverProc.exitCode === null && !serverProc.killed;
-  if (webUrl && serverAlive) {
-    mainWindow.loadURL(webUrl).catch((err) => log('boot', '重开窗口加载失败: ' + err.message));
-  } else {
-    startAndShow().catch((err) => handleBootFailure(err));
-  }
-}
-
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    if (IS_MAC) reopenMainWindow();
     return;
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -3448,7 +3287,6 @@ function boot() {
   log('boot', `Deepseek Harness EAC（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
-  // macOS 例外：保留最小原生菜单（否则 Cmd+C/V/Q/W 等系统快捷键失效）。
   installAppMenu();
   startPreviewStaticServer();
   registerChromeIpc();
@@ -3544,49 +3382,17 @@ if (!gotLock) {
     }
   });
   app.on('before-quit', (event) => {
-    // V4：退出必须等 dsh web 进程树真正死透再退（见 killTreeAndWait 注释）。
-    // 首次事件里阻止默认退出，完成异步清理后 app.exit(0)；后续重复事件
-    // （window-all-closed 触发的 app.quit 等）直接放行。
-    if (shutdownInProgress) return;
-    shutdownInProgress = true;
-    event.preventDefault();
-    quitting = true;
-    forceQuit = true;
-    const t0 = Date.now();
-    log('boot', '正在退出，停止 dsh web 进程树…');
-    markCleanExit();
-    (async () => {
-      try {
-        closeAllFloatWindows();
-        // 正在跑的插件市场排队任务：直接强杀（它只是 pnpm 的转发器，
-        // 标记文件的 attempts 机制会在下次启动重试）。
-        if (marketOpChild && marketOpChild.pid && marketOpChild.exitCode === null) {
-          try {
-            spawn('taskkill', ['/pid', String(marketOpChild.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          } catch {}
-        }
-        await killTreeAndWait(serverProc);
-        updater.abort();
-        if (sessionWatcher) sessionWatcher.stop();
-      } catch (err) {
-        log('boot', '退出清理异常: ' + err.message);
-      } finally {
-        if (balanceTimer) clearInterval(balanceTimer);
-        if (tray) { try { tray.destroy(); } catch {} tray = null; }
-        log('boot', `退出清理完成（耗时 ${Date.now() - t0}ms）`);
-        app.exit(0);
-      }
-    })();
+    ensureShutdownCoordinator().beforeQuit(event);
   });
-  // macOS 惯例：关闭所有窗口不退出应用（dsh web 服务与会话继续运行，
-  // 点 Dock 图标经 activate 重建窗口）；Windows 有托盘时同样常驻。
   app.on('window-all-closed', () => {
-    if (IS_MAC) return;
     if (!IS_WIN || !tray) app.quit();
   });
-  // macOS：点击 Dock 图标（无窗口时）重新打开主窗口。
-  app.on('activate', () => {
-    if (IS_MAC) reopenMainWindow();
-  });
-  app.whenReady().then(boot).catch((err) => fatal('应用初始化失败', err));
+  app.whenReady().then(() => {
+    if (!IS_WIN && !IS_LINUX) {
+      dialog.showErrorBox('不支持的操作系统', '当前版本仅支持 Windows 和 Linux。');
+      app.quit();
+      return;
+    }
+    boot();
+  }).catch((err) => fatal('应用初始化失败', err));
 }
