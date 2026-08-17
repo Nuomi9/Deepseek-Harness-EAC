@@ -9,7 +9,43 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 3.1.0（插件保护中心 + 原生 CLI 共存根治 + 字体自定义 + 自动压缩 + 人设卡库）→
 4.0.0（本版：四大用户反馈问题根治 + SHA-256 更新校验 + 微信 ClawBot 桥 + 多窗口
 + 会话删除 + AI 变更审核 + 崩溃急救 undo + 大肥鱼桌宠 + 插件启停管理）→
-4.0.2（tool-vision llm/stream 契约修复 + 该插件默认不启动）。
+4.0.2（tool-vision llm/stream 契约修复 + 该插件默认不启动）→
+4.1.0（同步上游 v4.1.0：请求守卫双重请求边角 + 更新器黑窗挂死 + 设置左栏滚动）。
+
+## [4.1.0] — 2026-08-17（Linux 线，同步上游 v4.1.0）
+
+cherry-pick 上游 `1c51604`，保留本仓库 Linux 重构差异（desktopName、平台感知
+选版、Linux 打包链）。tool-vision 插件文件与上游字节级一致，后续同步零冲突。
+
+### 修复：tool-vision 请求守卫的双重请求边角（上游对 4.0.2 修复的精化）
+- 4.0.2 的修复把 `yield* next(...)` 放在监听器 try/catch **内部**：若下游适配
+  器自身抛错，错误会被守卫捕获后又落到 `yield* next()` 用**原始参数重发一次**
+  请求 —— 绕过图片降级守卫且双重请求。
+- 上游精化：try 内只赋值 `downstream = next(...)`（不消费），委托统一放到
+  try/catch 之外的 `yield* downstream ?? next()`，下游流的错误永远不被守卫
+  吞掉重发。
+
+### 修复：安装版自更新黑窗挂死（apply-update.cmd 重写）
+- 根因：旧脚本用 `tasklist | find` 管道轮询旧进程 —— detached 隐藏控制台下
+  管道偶发挂死，用户看到黑窗卡住、Setup 永不执行；`start /wait` 也偶发不
+  返回；批处理自删后读不到下一行导致退出码 1。
+- 修复：固定短等待（ping）→ 无条件 `taskkill /F /T` 兜底强杀（检测本就冗余：
+  主进程 spawn 后约 0.4s 即退出，且 spawn 前已等完 dsh web 进程树）→ `call`
+  启动 Setup（同步等待且返回退出码）→ `(goto) 2>nul` 惯用法自删。全程无管道
+  无循环、总时长有界。apply 契约测试重写 + 新增 Windows e2e（Linux 跳过）。
+- Linux 不受影响（更新归包管理器），但本仓库同步维护 Windows 更新链路。
+
+### 修复：设置弹窗左栏底部条目被裁掉
+- `patch-deps.js` 新增 `patchSettingsNavScroll`：上游
+  `dsh-client-ui-settings-general` 的 `.nav/.navList` 无滚动约束，面板
+  overflow:hidden 把排到底部的插件设置条目（ClawBot，order 50）裁掉且无法
+  滚动到。补 `min-height:0 + overflow-y:auto` + nav 底部内边距；CSS 类名
+  前缀是内容哈希，用捕获组正则兼容上游小版本差异，幂等标记注释防重复应用。
+
+### 新增工具脚本（上游带来的复用资产）
+- `scripts/sim-client-update.js`：本地 HTTP 服务离线模拟完整更新链（checkLatest
+  解析 → >64MB 下载 → SHA-256 校验通过/失败/缺失三分支），无外网依赖。
+- `scripts/e2e-full.js`：发布前全链路验收 harness。
 
 ## [4.0.2] — 2026-08-17（Linux 线）
 
