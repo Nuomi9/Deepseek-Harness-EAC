@@ -21,7 +21,8 @@
 //      用户名不受 cmd 文件 ANSI 编码影响：
 //      · 便携版：等旧 exe 解锁 → 备份 → 用新 exe 原地替换 → 重新启动；
 //        若旧 exe 所在目录只读，则退化为直接启动新 exe（保留旧文件）。
-//      · 安装版：等 Deepseek Harness EAC 进程退出 → 以向导方式启动新 Setup 安装包
+//      · 安装版：固定短等待 → 无条件兜底强杀残留进程（不做 tasklist 轮询
+//        检测，管道在隐藏控制台下偶发挂死）→ 以向导方式启动新 Setup 安装包
 //        （安装器会记录原安装目录并在完成后自动启动新版本）。
 
 const https = require('node:https');
@@ -511,8 +512,11 @@ async function downloadRelease(ctx, release, { onProgress } = {}) {
  * 生成 apply-update.cmd 的行内容（纯 ASCII，join('\r\n') 后落盘）。
  *
  * issue #8 回归约束（对应 test/client-updater-apply.test.mjs）：
- *   1. 安装版分支：等待旧进程退出必须有界（约 30s），超时 taskkill /F /T
- *      强杀——托盘应用关窗后进程仍存活，无界等待会让 Setup 永远不执行。
+ *   1. 安装版分支：不得用 tasklist|find 管道轮询旧进程（detached 隐藏控制台
+ *      下偶发挂死，用户看到黑窗卡住、Setup 永不执行）；也不得有无界等待。
+ *      改为固定短等待（ping）→ 无条件 taskkill /F /T 兜底强杀 → 运行 Setup，
+ *      线性推进、总时长有界（主进程 spawn 后约 0.4s 即 app.exit(0)，且
+ *      killTreeAndWait 已在 spawn 前等完 dsh web 进程树，检测本是冗余）。
  *   2. 全程写 apply-update.log（与脚本同目录），记录等待/强杀/运行/退出码。
  *   3. Setup 失败：保留安装包与日志供诊断，并拉起旧版应用，用户不被困住。
  *   4. 清理（删安装包+自删）仅在成功路径发生。
@@ -557,36 +561,38 @@ function buildApplyScript({ newExe, oldExe, portable }) {
       'exit /b 0'
     );
   } else {
+    // 安装版：不做进程检测。主进程 spawn 本脚本约 0.4s 后 app.exit(0)，
+    // 且 spawn 前 killTreeAndWait 已等完 dsh web 进程树，单实例锁保证没有
+    // 其他实例 —— 检测是冗余保险，而 tasklist|find 管道在 detached 隐藏
+    // 控制台下偶发挂死（黑窗反馈的根源）。固定短等待给主进程留优雅退出
+    // 时间，然后无条件兜底强杀（正常情况下进程已不在，taskkill 记一条
+    // not found 到日志即通过），线性推进到 Setup，全程无管道无循环。
     lines.push(
       'set "SETUP=%~1"',
       'set "EXENAME=%~2"',
       'set "OLD=%~3"',
       'set "LOG=%~dp0apply-update.log"',
       'echo [%date% %time%] apply-update start > "%LOG%"',
-      'set /a tries=0',
-      ':wait',
-      'set /a tries+=1',
-      'if %tries% gtr 15 goto kill',
-      'ping -n 2 127.0.0.1 >nul',
-      'tasklist /fi "IMAGENAME eq %EXENAME%" 2>nul | find /i "%EXENAME%" >nul',
-      'if not errorlevel 1 goto wait',
-      'echo [%date% %time%] app exited after %tries% checks >> "%LOG%"',
-      'goto run',
-      ':kill',
-      'echo [%date% %time%] app still alive, force killing >> "%LOG%"',
+      'ping -n 4 127.0.0.1 >nul',
+      'echo [%date% %time%] force-killing leftover app processes >> "%LOG%"',
       'taskkill /F /T /IM "%EXENAME%" >> "%LOG%" 2>&1',
-      'ping -n 3 127.0.0.1 >nul',
-      ':run',
+      'ping -n 2 127.0.0.1 >nul',
       'echo [%date% %time%] running setup >> "%LOG%"',
-      'start /wait "" "%SETUP%"',
+      // call 而非 start /wait：隐藏控制台下 start /wait 偶发不返回（实测
+      // 子进程已退出、父脚本仍停滞，黑窗卡死的共因）；批处理直接调用另一
+      // 个批处理则是 tail-call 语义不返回。call 对 .cmd/.exe 都同步等待、
+      // 返回控制权并保留退出码。
+      'call "%SETUP%"',
       'echo [%date% %time%] setup exit code %errorlevel% >> "%LOG%"',
       'if errorlevel 1 goto failed',
       'goto success',
       ':success',
       'echo [%date% %time%] update applied >> "%LOG%"',
       'del "%SETUP%" >nul 2>&1',
-      'del "%~f0" >nul 2>&1',
-      'exit /b 0',
+      // (goto) 2>nul 先终止批处理上下文，其后的 del/exit 在批处理之外
+      // 执行：直接 del 自身再写 exit /b 0 的话，cmd 自删后读不到下一行，
+      // 批处理异常终止（退出码 1）。
+      '(goto) 2>nul & del "%~f0" >nul 2>&1 & exit /b 0',
       ':failed',
       'echo [%date% %time%] update failed, installer kept for diagnosis >> "%LOG%"',
       'if not "%OLD%" == "" if exist "%OLD%" start "" "%OLD%"',
