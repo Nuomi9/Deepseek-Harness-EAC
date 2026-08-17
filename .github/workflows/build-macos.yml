@@ -2,16 +2,8 @@ name: Build macOS packages
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - codex/arch-linux
-    tags:
-      - "v*"
-    # 纯文档提交不触发构建（README / docs 等）
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
+  # 自动触发已移除：本账号 macOS runner 从未启动过（全部积压 queued 后手动
+  # 取消），且 -linux 发版 tag 不应带 macOS 资产。需要时手动 workflow_dispatch。
 
 permissions:
   contents: write
