@@ -48,6 +48,11 @@ const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
 const { patchSessionManage } = require('./scripts/patch-session-manage');
 const { togglePluginInPatch, removePluginFromPatch } = require('./scripts/plugin-manager-patch');
 const onboardingLogic = require('./scripts/onboarding');
+const {
+  loadBuiltinPluginState,
+  setBuiltinPluginState,
+  clearBuiltinPluginState,
+} = require('./builtin-plugin-state');
 const zlib = require('node:zlib');
 
 // ---------------------------------------------------------------------------
@@ -1642,7 +1647,7 @@ async function showAbout() {
 // 原地重启 dsh web 服务（安装/卸载插件后生效，窗口重载到新端口）。
 // V4：抽出核心逻辑，⋯ 菜单「重启 Web 服务」与托盘菜单共用（用户建议：
 // 不关闭软件即可重启服务）。
-async function restartWebServiceCore() {
+async function restartWebServiceCore({ beforeSync = null } = {}) {
   if (!serverProc || restartingServer) return { ok: false, error: 'not-running' };
   log('service', '请求重启 dsh web 服务');
   restartingServer = true;
@@ -1654,6 +1659,10 @@ async function restartWebServiceCore() {
     // 最后才拉起新服务 —— 排队安装正需要这个"无锁窗口"。
     await waitForProcExit(oldProc, 20000);
     await processPendingMarketOps();
+    if (typeof beforeSync === 'function') {
+      const mutation = await beforeSync();
+      if (mutation && mutation.ok === false) throw new Error(mutation.error || '服务重启前插件变更失败');
+    }
     // pnpm（排队安装/卸载）会重写 profile node_modules：可能删掉配套插件
     // 副本、重新 hoist 核心包。服务拉起前重建 + 清理，顺序不能反。
     syncCompanionPlugins();
@@ -1667,6 +1676,23 @@ async function restartWebServiceCore() {
     return { ok: false, error: String((err && err.message) || err) };
   } finally {
     restartingServer = false;
+  }
+}
+
+// If a plugin mutation fails after the old service has already been stopped,
+// bring the service back before returning the error to the renderer. The user
+// should see a failed operation, not a permanently blank desktop window.
+async function recoverWebServiceAfterPluginFailure() {
+  if (serverProc || restartingServer) return { ok: true };
+  try {
+    syncCompanionPlugins();
+    healProfileModules();
+    await restoreKeptArtifacts(desktopProfile());
+    const url = await startAndShowGuarded();
+    return { ok: true, url };
+  } catch (err) {
+    log('plugin-manager', '插件操作失败后的 Web 服务恢复失败: ' + ((err && err.message) || err));
+    return { ok: false, error: String((err && err.message) || err) };
   }
 }
 
@@ -1980,6 +2006,22 @@ function registerChromeIpc() {
     }
     openPluginWizard({ mode: 'rerun' });
     return { ok: true };
+  });
+
+  ipcMain.handle('dsh:plugin-uninstall', async (event, { id } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const row = pluginManagerCollect().find((r) => r.id === id);
+    if (!row) return { ok: false, error: '未知插件: ' + String(id) };
+    if (!row.uninstallable) return { ok: false, error: '该插件不可卸载: ' + String(id) };
+    return pluginManagerUninstall(id);
+  });
+
+  ipcMain.handle('dsh:plugin-restore', async (event, { id } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const row = pluginManagerCollect().find((r) => r.id === id);
+    if (!row) return { ok: false, error: '未知插件: ' + String(id) };
+    if (!row.restorable) return { ok: false, error: '该插件当前不可恢复: ' + String(id) };
+    return pluginManagerRestore(id);
   });
 
   // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口（校验来源与
@@ -2346,7 +2388,7 @@ const COMPANION_PLUGINS = [
   { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
-  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager', required: true, uninstallable: false },
   // 插件选择向导入口（设置页「插件 → 选择向导」分区）：重新打开首次启动的
   // 内置插件选择向导，按需启用/停用内置插件。纯客户端 UI + 壳层 IPC
   // （onboard:*），host 半边 no-op；核心插件组内锁定，永不被向导停用。
@@ -2505,6 +2547,39 @@ function copyPluginPackage(profileDirP, src, name) {
       fs.mkdirSync(destRoot, { recursive: true });
       fs.writeFileSync(stampFile, want);
     } catch { /* 戳记写失败不影响功能 */ }
+  }
+}
+
+// Remove only a package that the desktop shell owns. Marketplace packages,
+// pnpm links, and malformed/unrelated directories are never recursively
+// deleted by the built-in plugin lifecycle.
+function removeOwnedPluginPackage(profileDirP, name) {
+  if (typeof name !== 'string' || !name || name.includes('\\') || name.includes('..')) {
+    return { ok: false, error: '非法内置插件包名: ' + String(name) };
+  }
+  const modulesDir = path.resolve(path.join(profileDirP, 'node_modules'));
+  const dest = path.resolve(path.join(modulesDir, ...name.split('/')));
+  if (dest !== modulesDir && !dest.startsWith(modulesDir + path.sep)) {
+    return { ok: false, error: '内置插件路径越界: ' + name };
+  }
+  let stat;
+  try { stat = fs.lstatSync(dest); } catch (err) {
+    if (err && err.code === 'ENOENT') return { ok: true, removed: false };
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+  // A user may have replaced the desktop copy with a link. Do not follow or
+  // remove it: the user-owned target is outside the desktop lifecycle.
+  if (stat.isSymbolicLink()) return { ok: false, error: '拒绝删除非桌面托管链接: ' + name };
+  if (!stat.isDirectory()) return { ok: false, error: '内置插件路径不是目录: ' + name };
+  const pkg = readJsonFile(path.join(dest, 'package.json'));
+  if (!pkg || pkg.name !== name) {
+    return { ok: false, error: '插件目录不是桌面托管副本，已保留: ' + name };
+  }
+  try {
+    fs.rmSync(dest, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return { ok: !fs.existsSync(dest), removed: true };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
   }
 }
 
@@ -2888,8 +2963,9 @@ function patchApiproxyBridgeNamespace() {
 }
 
 // ---------------------------------------------------------------------------
-// 插件启停管理（V4，移植自上游）：设置页「插件 → 管理」标签的数据与写盘。
-// dsh:plugin-list / dsh:plugin-set-enabled 两个 IPC 驱动；写盘用纯文本手术
+// 插件启停/卸载管理（V4，移植自上游）：设置页「插件 → 管理」标签的数据与写盘。
+// dsh:plugin-list / dsh:plugin-set-enabled / dsh:plugin-uninstall /
+// dsh:plugin-restore 四个 IPC 驱动；写盘用纯文本手术
 // （scripts/plugin-manager-patch.js），保留文件其它内容与注释。
 // ---------------------------------------------------------------------------
 
@@ -2945,6 +3021,7 @@ function pluginManagerPackageDescription(name) {
 
 function pluginManagerCollect() {
   const { entries } = pluginManagerReadPatch();
+  const builtinState = loadBuiltinPluginState(desktopProfileDir());
   const companionById = new Map(COMPANION_PLUGINS.map((p) => [p.id, p.name]));
   const insertById = new Map();
   const userById = new Map();
@@ -2952,7 +3029,11 @@ function pluginManagerCollect() {
     if (!entry || typeof entry !== 'object') continue;
     if (Array.isArray(entry.insert)) {
       for (const it of entry.insert) {
-        if (it && typeof it.id === 'string') insertById.set(it.id, it.name || '');
+        if (it && typeof it.id === 'string') insertById.set(it.id, {
+          name: it.name || '',
+          disabled: it.disabled === true,
+          hasConfig: it.config !== undefined && it.config !== null,
+        });
       }
     } else if (typeof entry.id === 'string') {
       userById.set(entry.id, {
@@ -2975,26 +3056,35 @@ function pluginManagerCollect() {
   const addRow = (id, name, group, extra) => {
     if (!id || seen.has(id)) return;
     seen.add(id);
-    const user = userById.get(id);
+    const user = userById.get(id) || insertById.get(id);
     const userDisabled = !!(user && user.disabled);
     const hasConfig = !!(user && user.hasConfig);
-    const isRemoved = !!(extra && extra.removed);
-    const isCore = !!(extra && extra.core);
-    const toggleable = group !== 'core' && !(hasConfig && !userDisabled);
+    const companion = group === 'companion' ? COMPANION_PLUGINS.find((p) => p.id === id) : null;
+    const required = group === 'core' || companion?.required === true;
+    const uninstalled = companion && builtinState.plugins[id]?.state === 'uninstalled';
+    const isRemoved = !!(extra && extra.removed) || !!uninstalled;
+    const isCore = group === 'core' || !!(extra && extra.core);
+    const toggleable = !required && !uninstalled && !isRemoved && !(hasConfig && !userDisabled);
+    const uninstallable = !!companion && companion.uninstallable !== false && !required;
     rows.push({
       id,
       name: name || id,
       description: pluginManagerPackageDescription(name || id),
       enabled: !userDisabled && !isRemoved,
-      toggleable: toggleable && !isRemoved,
+      state: isRemoved ? 'uninstalled' : (userDisabled ? 'disabled' : 'installed'),
+      source: companion ? 'builtin' : (isCore ? 'core' : 'user'),
+      required,
+      uninstallable,
+      restorable: !!isRemoved,
+      toggleable,
       removable: group === 'companion' && !isCore && !isRemoved,
       removed: isRemoved,
       core: isCore,
       group,
     });
   };
-  for (const p of COMPANION_PLUGINS) addRow(p.id, p.name, 'companion', { removed: removedIds.has(p.id), core: onboardingLogic.CORE_PLUGIN_IDS.has(p.id) });
-  for (const [id, name] of insertById) if (!companionById.has(id)) addRow(id, name, 'other');
+  for (const p of COMPANION_PLUGINS) addRow(p.id, p.name, 'companion', { removed: removedIds.has(p.id) || builtinState.plugins[p.id]?.state === 'uninstalled', core: onboardingLogic.CORE_PLUGIN_IDS.has(p.id) });
+  for (const [id, info] of insertById) if (!companionById.has(id)) addRow(id, info.name, 'other');
   for (const [id, u] of userById) if (!companionById.has(id)) addRow(id, u.name, 'other');
   for (const name of bundles) {
     if (companionNames.has(name)) continue;
@@ -3084,7 +3174,8 @@ function pluginManagerSetRemoved(id, removed) {
       // 1) 清 patch 行（顶层 + insert 内层）
       let text = '';
       try { text = fs.readFileSync(patchFile, 'utf8'); } catch {}
-      const patched = removePluginFromPatch(text, id);
+      const removed = removePluginFromPatch(text, id);
+      const patched = typeof removed === 'string' ? removed : removed.text;
       if (patched !== text) fs.writeFileSync(patchFile, patched, 'utf8');
       // 2) 删 profile node_modules 里的包副本（copyPluginPackage 的产物）
       const pkgDir = path.join(desktopProfileDir(), 'node_modules', p.name);
@@ -3171,6 +3262,139 @@ function pluginManagerSetEnabled(id, enabled) {
   return { ok: true };
 }
 
+function pluginManagerPatchRemove(id) {
+  const file = path.join(desktopProfileDir(), 'cordis.patch.yml');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch {}
+  let result;
+  try {
+    result = removePluginFromPatch(text, id);
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+  if (result.text !== text) {
+    try {
+      const tmp = file + '.tmp';
+      fs.writeFileSync(tmp, result.text, 'utf8');
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  }
+  return { ok: true, removed: result.removed };
+}
+
+function companionSource(p) {
+  const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() : p.name);
+  return path.join(__dirname, 'assets', 'plugins', dirName);
+}
+
+function builtinPluginDefinition(id) {
+  return COMPANION_PLUGINS.find((p) => p.id === id) || null;
+}
+
+function builtinPluginMutation(id, state) {
+  const p = builtinPluginDefinition(id);
+  if (!p) return { ok: false, error: '该插件不是桌面配套插件: ' + String(id) };
+  if (p.required || p.uninstallable === false) return { ok: false, error: '该插件是系统必需插件，不可卸载: ' + id };
+  const profileDirP = desktopProfileDir();
+  ensureDesktopProfileInit();
+  if (state === 'uninstalled') {
+    const removed = removeOwnedPluginPackage(profileDirP, p.name);
+    if (!removed.ok) return removed;
+    const patch = pluginManagerPatchRemove(id);
+    if (!patch.ok) return patch;
+    setBuiltinPluginState(profileDirP, id, 'uninstalled');
+    return { ok: true, removed: removed.removed, patchRows: patch.removed };
+  }
+  clearBuiltinPluginState(profileDirP, id);
+  return { ok: true };
+}
+
+function builtinPluginRollback(id, previousState) {
+  const p = builtinPluginDefinition(id);
+  if (!p) return;
+  const profileDirP = desktopProfileDir();
+  if (previousState === 'uninstalled') {
+    setBuiltinPluginState(profileDirP, id, 'uninstalled');
+    removeOwnedPluginPackage(profileDirP, p.name);
+    pluginManagerPatchRemove(id);
+  } else {
+    clearBuiltinPluginState(profileDirP, id);
+    const src = companionSource(p);
+    if (fs.existsSync(path.join(src, 'package.json'))) copyPluginPackage(profileDirP, src, p.name);
+    // Re-register the overlay row without starting a service. The next start
+    // also runs this synchronizer, so a partial rollback remains recoverable.
+    syncCompanionPlugins();
+  }
+}
+
+async function pluginManagerUninstall(id) {
+  const p = builtinPluginDefinition(id);
+  if (!p) return { ok: false, error: '该插件不是桌面配套插件: ' + String(id) };
+  if (p.required || p.uninstallable === false) return { ok: false, error: '该插件是系统必需插件，不可卸载: ' + id };
+  if (restartingServer) return { ok: false, error: '服务正在执行其它重启操作，请稍后重试' };
+  const profileDirP = desktopProfileDir();
+  const hadServer = !!serverProc;
+  const previous = loadBuiltinPluginState(profileDirP).plugins[id]?.state || 'installed';
+  ensureGuard().snapshot('plugin-uninstall:' + id);
+  const mutate = () => builtinPluginMutation(id, 'uninstalled');
+  try {
+    if (!serverProc) {
+      const result = mutate();
+      if (!result.ok) return result;
+      syncCompanionPlugins();
+      log('plugin-manager', '已卸载内置插件 ' + id + '（服务未运行）');
+      return { ok: true, state: 'uninstalled', restartRequired: false };
+    }
+    const restarted = await restartWebServiceCore({ beforeSync: mutate });
+    if (!restarted.ok) {
+      builtinPluginRollback(id, previous);
+      if (hadServer) await recoverWebServiceAfterPluginFailure();
+      return { ok: false, error: '卸载后重启 Web 服务失败，已回滚：' + restarted.error };
+    }
+    log('plugin-manager', '已卸载内置插件 ' + id);
+    return { ok: true, state: 'uninstalled', restartRequired: true, url: restarted.url };
+  } catch (err) {
+    try { builtinPluginRollback(id, previous); } catch (rollbackErr) { log('plugin-manager', '卸载回滚失败: ' + rollbackErr.message); }
+    if (hadServer) await recoverWebServiceAfterPluginFailure();
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+}
+
+async function pluginManagerRestore(id) {
+  const p = builtinPluginDefinition(id);
+  if (!p) return { ok: false, error: '该插件不是桌面配套插件: ' + String(id) };
+  if (restartingServer) return { ok: false, error: '服务正在执行其它重启操作，请稍后重试' };
+  const profileDirP = desktopProfileDir();
+  const hadServer = !!serverProc;
+  const previous = loadBuiltinPluginState(profileDirP).plugins[id]?.state || 'installed';
+  if (previous !== 'uninstalled') return { ok: false, error: '该插件当前没有卸载状态: ' + id };
+  ensureGuard().snapshot('plugin-restore:' + id);
+  const mutate = () => builtinPluginMutation(id, 'installed');
+  try {
+    if (!serverProc) {
+      const result = mutate();
+      if (!result.ok) return result;
+      syncCompanionPlugins();
+      log('plugin-manager', '已恢复内置插件 ' + id + '（服务未运行）');
+      return { ok: true, state: 'installed', restartRequired: false };
+    }
+    const restarted = await restartWebServiceCore({ beforeSync: mutate });
+    if (!restarted.ok) {
+      builtinPluginRollback(id, previous);
+      if (hadServer) await recoverWebServiceAfterPluginFailure();
+      return { ok: false, error: '恢复后重启 Web 服务失败，已回滚：' + restarted.error };
+    }
+    log('plugin-manager', '已恢复内置插件 ' + id);
+    return { ok: true, state: 'installed', restartRequired: true, url: restarted.url };
+  } catch (err) {
+    try { builtinPluginRollback(id, previous); } catch (rollbackErr) { log('plugin-manager', '恢复回滚失败: ' + rollbackErr.message); }
+    if (hadServer) await recoverWebServiceAfterPluginFailure();
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+}
+
 function syncCompanionPlugins() {
   try {
     const home = dshHomePath();
@@ -3198,6 +3422,7 @@ function syncCompanionPlugins() {
     if (defaultResult === 'set') log('boot', '已设置默认 agent preset: anchored-standard');
     else if (defaultResult === 'kept') log('boot', '用户已设置默认 agent preset，保持不变');
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
+    const builtinState = loadBuiltinPluginState(profileDirP);
     const pending = [];
     const removedIds = removedPluginIds();
     // V4.2：用户曾从市场安装过与内置插件同名的包时，写包前先迁移残留
@@ -3205,8 +3430,14 @@ function syncCompanionPlugins() {
     // duplicate loader entry；完成后系统通知告知「插件树变化」。
     const migratedBuiltins = [];
     for (const p of COMPANION_PLUGINS) {
-      // V4.2：用户移除过的内置插件不再复制/登记（见 pluginManagerSetRemoved）。
-      if (removedIds.has(p.id)) {
+      // 用户移除过的内置插件不再复制/登记；兼容旧的 settings 标记和本地
+      // profile 状态文件两套卸载记录。卸载状态下同时清理已有副本。
+      const uninstalled = builtinState.plugins[p.id]?.state === 'uninstalled';
+      if (removedIds.has(p.id) || uninstalled) {
+        if (uninstalled) {
+          const cleaned = removeOwnedPluginPackage(profileDirP, p.name);
+          if (!cleaned.ok) log('boot', `卸载状态下清理内置插件失败，已保留目录: ${p.id}（${cleaned.error}）`);
+        }
         log('boot', `已按用户选择跳过被移除的内置插件: ${p.id}`);
         continue;
       }
@@ -3279,11 +3510,30 @@ function syncCompanionPlugins() {
     // 拒绝重复安装 —— 内置包每次启动都被重新同步，市场覆盖安装会产生
     // duplicate loader entry / 模块双实例，必须从源头拦截。
     try {
-      const builtinNames = pending.map((p) => p.name);
+      // 即使用户卸载了某个插件，也保留它的 builtin 身份，阻止市场重新
+      // 安装一个同名副本；恢复动作由本地插件管理器统一完成。
+      const builtinNames = COMPANION_PLUGINS.map((p) => p.name).concat(
+        pending.filter((p) => p.id.startsWith('ui-skin-')).map((p) => p.name)
+      );
       const marker = path.join(profileDirP, '.dsh-builtin-plugins.json');
       const prev = readJsonFile(marker);
-      const next = { names: builtinNames, updatedAt: new Date().toISOString() };
-      if (!prev || JSON.stringify(prev.names) !== JSON.stringify(next.names)) {
+      const next = {
+        names: [...new Set(builtinNames)],
+        installed: pending.map((p) => p.name),
+        uninstalled: COMPANION_PLUGINS.filter((p) => builtinState.plugins[p.id]?.state === 'uninstalled').map((p) => p.name),
+        updatedAt: new Date().toISOString(),
+      };
+      const prevComparable = prev && {
+        names: Array.isArray(prev.names) ? prev.names : [],
+        installed: Array.isArray(prev.installed) ? prev.installed : [],
+        uninstalled: Array.isArray(prev.uninstalled) ? prev.uninstalled : [],
+      };
+      const nextComparable = {
+        names: next.names,
+        installed: next.installed,
+        uninstalled: next.uninstalled,
+      };
+      if (!prev || JSON.stringify(prevComparable) !== JSON.stringify(nextComparable)) {
         fs.writeFileSync(marker, JSON.stringify(next, null, 2) + '\n');
       }
     } catch (err) {
@@ -3294,6 +3544,17 @@ function syncCompanionPlugins() {
     let patch = '';
     try { patch = fs.readFileSync(patchFile, 'utf8'); } catch { patch = ''; }
     let changed = false;
+    // 卸载是持久状态，不只是一次性删目录：启动/服务重启同步前先清理
+    // 由桌面端生成的 insert 行及插件管理器留下的 disabled 覆盖。
+    for (const p of COMPANION_PLUGINS) {
+      if (builtinState.plugins[p.id]?.state !== 'uninstalled') continue;
+      const removed = removePluginFromPatch(patch, p.id);
+      if (removed.text !== patch) {
+        patch = removed.text;
+        changed = true;
+        log('boot', '已应用内置插件卸载状态: ' + p.id);
+      }
+    }
     // 先修存量坏行：v2.0.0 写入的 soul-md 行缺 config.path（见 patch-row-heal.js
     // 头注释），不修则升级用户仍会 “dsh web 启动失败 (退出码 1)”。
     const healed = healSoulMdPatchRow(patch);
@@ -3541,6 +3802,13 @@ function migrateFromSharedWebProfile() {
     const marker = path.join(oldDir, '.dsh-builtin-plugins.json');
     if (!fs.existsSync(marker)) return; // 旧版本从没在共享 profile 跑过桌面端
     const builtinNames = readJsonFile(marker)?.names || [];
+    const oldBuiltinState = loadBuiltinPluginState(oldDir);
+    const newDir = path.join(home, 'profiles', DESKTOP_PROFILE);
+    for (const [id, info] of Object.entries(oldBuiltinState.plugins || {})) {
+      if (info && info.state === 'uninstalled') {
+        try { setBuiltinPluginState(newDir, id, 'uninstalled'); } catch {}
+      }
+    }
 
     // 1) 提取用户启用的皮肤行 id。
     let enabledSkin = null;

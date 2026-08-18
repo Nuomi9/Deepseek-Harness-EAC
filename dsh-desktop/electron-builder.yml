@@ -44,6 +44,7 @@ files:
   - web-service-supervisor.js
   - shutdown-coordinator.js
   - watchdog.js
+  - builtin-plugin-state.js
   - preload.js
   - assets/**/*
   # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与

@@ -7,7 +7,7 @@
 //      标题/版本、菜单按钮（⋯）、最小化/最大化/关闭按钮，替代被移除的
 //      原生标题栏与 文件/视图/帮助 菜单栏。
 //   2. 通过 contextBridge 暴露 window.dshDesktop（窗口控制 / 菜单动作 /
-//      余额刷新），并把主进程推送的余额数据转发成 window 上的
+//      余额刷新 / 配套插件管理），并把主进程推送的余额数据转发成 window 上的
 //      "dsh-balance-changed" 事件，供 dsh-balance 插件消费。
 //   3. 把 Web UI 内容下移 36px（body padding-top），保证自绘栏不遮挡界面。
 
@@ -43,6 +43,14 @@ const dshDesktop = {
   refreshBalance: () => ipcRenderer.invoke('dsh:balance-refresh'),
   // 插件市场：请求主进程原地重启 dsh web 服务（安装/卸载插件后生效）。
   restartService: () => ipcRenderer.invoke('chrome:restart-service', { intent: 'restart-service' }),
+  // 桌面端配套插件管理：list 返回本地清单，卸载/恢复只作用于当前
+  // web-desktop profile，安装包内的 assets/plugins 源文件不会被删除。
+  pluginManager: {
+    list: () => ipcRenderer.invoke('dsh:plugin-list'),
+    setEnabled: (id, enabled) => ipcRenderer.invoke('dsh:plugin-set-enabled', { id, enabled }),
+    uninstall: (id) => ipcRenderer.invoke('dsh:plugin-uninstall', { id }),
+    restore: (id) => ipcRenderer.invoke('dsh:plugin-restore', { id }),
+  },
   // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口；浮窗关闭自身。
   floatWindow: {
     open: (sessionId) => ipcRenderer.invoke('chrome:float-window', { action: 'open', sessionId }),

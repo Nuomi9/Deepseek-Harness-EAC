@@ -22,7 +22,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
-const { loadSettings, saveSettings } = require('./settings');
+const { settingsPath, loadSettings, saveSettings } = require('./settings');
 
 const PKG = '@deepseek-ai/dsh';
 const IS_WIN = process.platform === 'win32';

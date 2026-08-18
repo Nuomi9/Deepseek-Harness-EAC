@@ -59,7 +59,7 @@ test('禁用后留下空 insert 块会被清理', () => {
 
 test('移除：清掉 insert 内层条目且不伤兄弟条目', () => {
   const t = '- insert:\n    - id: dafeiyu\n      name: \'dsh-dafeiyu\'\n      disabled: true\n    - id: navbar\n      name: n\n    - id: last\n      name: c\n';
-  const r = removePluginFromPatch(t, 'dafeiyu');
+  const r = removePluginFromPatch(t, 'dafeiyu').text;
   assert.ok(!r.includes('dafeiyu'), '目标 id 不应再出现');
   assert.ok(r.includes('- id: navbar'), 'navbar 必须保留');
   assert.ok(r.includes('- id: last'), 'last 必须保留');
@@ -67,13 +67,13 @@ test('移除：清掉 insert 内层条目且不伤兄弟条目', () => {
 
 test('移除：顶层条目 + 关闭标记注释一并清除', () => {
   const t = '# 插件管理（设置页「插件」栏）：关闭 dafeiyu\n- id: dafeiyu\n  name: \'dsh-dafeiyu\'\n  disabled: true\n';
-  const r = removePluginFromPatch(t, 'dafeiyu');
+  const r = removePluginFromPatch(t, 'dafeiyu').text;
   assert.ok(!r.includes('dafeiyu'), '顶层条目与注释都应清除');
 });
 
 test('移除：最后一个条目清空后留下空 insert 块会被清理', () => {
   const t = '- insert:\n    - id: solo\n      name: s\n';
-  const r = removePluginFromPatch(t, 'solo');
+  const r = removePluginFromPatch(t, 'solo').text;
   assert.ok(!r.includes('- insert:'), '空块应清理');
   assert.ok(!r.includes('solo'));
 });
@@ -81,4 +81,23 @@ test('移除：最后一个条目清空后留下空 insert 块会被清理', () 
 test('移除：id 白名单校验（防注入）', () => {
   assert.throws(() => removePluginFromPatch('- insert:\n', 'a b'), /非法字符/);
   assert.throws(() => removePluginFromPatch('', '../evil'), /非法字符/);
+});
+
+test('卸载只移除目标插件行，不吞掉同一 insert 块中的其它插件', () => {
+  const t = '# keep this comment\n- insert:\n    - id: first\n      name: a\n    - id: target\n      name: t\n      config:\n        enabled: true\n    - id: last\n      name: c\n- id: user-row\n  name: user-pkg\n';
+  const r = removePluginFromPatch(t, 'target');
+  assert.equal(r.removed, 1);
+  assert.ok(r.text.includes('# keep this comment'));
+  assert.ok(r.text.includes('- id: first'));
+  assert.ok(r.text.includes('- id: last'));
+  assert.ok(r.text.includes('- id: user-row'));
+  assert.ok(!r.text.includes('- id: target'));
+});
+
+test('卸载孤立顶层覆盖与空 insert 块会一并清理', () => {
+  const t = '- insert:\n    - id: target\n      name: t\n\n- id: target\n  name: t\n  disabled: true\n';
+  const r = removePluginFromPatch(t, 'target');
+  assert.equal(r.removed, 2);
+  assert.ok(!r.text.includes('target'));
+  assert.ok(!r.text.includes('- insert:'));
 });
