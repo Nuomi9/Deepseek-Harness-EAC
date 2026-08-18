@@ -27,6 +27,9 @@ const crypto = require('node:crypto');
 const WebSocket = require('ws');
 
 function arg(name, def) {
+  const eq = '--' + name + '=';
+  const hit = process.argv.find((a) => a.startsWith(eq));
+  if (hit) return hit.slice(eq.length);
   const i = process.argv.indexOf('--' + name);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def;
 }
@@ -34,6 +37,8 @@ const EXE = arg('exe');
 const DEBUG_PORT = Number(arg('port', '9341'));
 const MOCK_PORT = Number(arg('mockport', '9342'));
 const INSTALL_TARGET = arg('plugin', 'dsh-task-status');
+const SKIP_MARKET = arg('skip-market') === '1';
+const SKIP_CHAT = arg('skip-chat') === '1';
 if (!EXE || !fs.existsSync(EXE)) {
   console.error('[full] --exe 必须指向存在的便携版 exe');
   process.exit(2);
@@ -113,7 +118,7 @@ async function startMockRelease(exePath) {
     if (req.url === '/api/releases') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify([{
-        tag_name: 'v4.0.1',
+        tag_name: 'v4.1.1',
         body: 'E2E 全流程更新验证版本',
         assets: [
           { name: 'Deepseek-Harness-EAC-Portable-x64.exe', browser_download_url: `${base}/dl/portable.exe`, size, digest: `sha256:${exeHash}` },
@@ -151,6 +156,7 @@ async function main() {
   fs.mkdirSync(path.join(home, 'profiles'), { recursive: true });
   for (const e of fs.readdirSync(path.join(srcHome, 'profiles'), { withFileTypes: true })) {
     if (e.name === 'node_modules' || !e.isDirectory()) continue;
+    if (e.name !== 'web-desktop') continue; // 只复制桌面端实际使用的 profile（省磁盘）
     fs.cpSync(path.join(srcHome, 'profiles', e.name), path.join(home, 'profiles', e.name), { recursive: true });
   }
   for (const f of ['settings.yaml', '.credentials.yaml', '.env']) {
@@ -167,6 +173,19 @@ async function main() {
   const mock = await startMockRelease(EXE);
   const userDataDir = path.join(path.dirname(runExe), 'data');
   const readLog = () => { try { return fs.readFileSync(path.join(userDataDir, 'logs', 'desktop.log'), 'utf8'); } catch { return ''; } };
+  // 预写老用户标记：全新 data 目录会触发「内置插件选择向导」阻塞 boot，
+  // 而本场景模拟的是升级老用户（向导已确认过）。更新链路全程只换 exe，
+  // userData 与 DSH_HOME 不得被改动 —— 更新后再断言这些字段仍在。
+  fs.mkdirSync(userDataDir, { recursive: true });
+  fs.writeFileSync(path.join(userDataDir, 'settings.json'), JSON.stringify({
+    pluginOnboardingDone: true,
+    builtinPluginSelection: [
+      'balance', 'file-changes', 'client-file-changes', 'terminal',
+      'dsh-market-plugin', 'skin-switch', 'easy-setup', 'plugin-shield',
+      'plugin-manager', 'plugin-wizard',
+    ],
+    webPort: 0,
+  }, null, 2) + '\n');
 
   const child = spawn(runExe, ['--remote-debugging-port=' + DEBUG_PORT], {
     env: {
@@ -201,8 +220,12 @@ async function main() {
   if (!page) { console.log(readLog().slice(-2500)); return finish(1, root, mock, child); }
 
   // ── 2) 插件市场：真实安装第三方插件（dsh CLI → pnpm 全流程）──
-  console.log(`[full] 市场安装 ${INSTALL_TARGET}（走真实 pnpm）…`);
   const profDir = path.join(home, 'profiles', 'web-desktop');
+  const pkgDir = path.join(profDir, 'node_modules', INSTALL_TARGET);
+  if (SKIP_MARKET) {
+    console.log('[full] 跳过市场安装步骤（--skip-market=1）');
+  } else {
+  console.log(`[full] 市场安装 ${INSTALL_TARGET}（走真实 pnpm）…`);
   const bundlesBefore = new Set((() => {
     try { return JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')).dsh.profile.bundles; } catch { return []; }
   })());
@@ -226,15 +249,17 @@ async function main() {
     }
   }
   check('插件安装任务完成（pnpm 全流程）', opFinal && opFinal.status === 'done', opFinal && opFinal.status + ' | ' + String(opFinal && opFinal.output || '').slice(-200));
-  const pkgDir = path.join(profDir, 'node_modules', INSTALL_TARGET);
   check('插件包落盘 node_modules', fs.existsSync(path.join(pkgDir, 'package.json')), pkgDir);
   let bundlesAfter = [];
   try { bundlesAfter = JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')).dsh.profile.bundles; } catch {}
   check('插件登记进 profile bundles', bundlesAfter.includes(INSTALL_TARGET), bundlesAfter.join(','));
   check('artifact-keep 快照目录生成（第三方产物保护）', fs.existsSync(path.join(home, 'plugin-artifact-cache', 'web-desktop')), '(pnpm 前快照)');
+  }
 
   // ── 3) 真实对话 + 识图工具注册（消耗真实 token，约几分钱）──
-  if (hasKey) {
+  if (SKIP_CHAT) {
+    console.log('[full] 跳过真实对话步骤（--skip-chat=1）');
+  } else if (hasKey) {
     const chat = async (content) => {
       const r = await pageFetch(page, '/openclaw-bridge/v1/chat/completions', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -267,7 +292,9 @@ async function main() {
   check('更新后旧进程退出（含进程树回收）', !procAlive(appPid), `elapsed=${Math.round((Date.now() - tU) / 1000)}s`);
 
   const bak = runExe + '.bak';
-  check('旧 exe 已备份（.bak）', fs.existsSync(bak), bak);
+  // 语义：备份仅用于失败回滚；替换成功后 cmd 脚本自删 .bak（client-updater.js:549）。
+  // 故「无 .bak」= 替换成功并完成清理；「有 .bak」= 失败回滚或脚本中断。
+  check('更新后 .bak 已清理（替换成功标志）', !fs.existsSync(bak), bak);
   // 更新脚本可能成功后自删 —— 文件缺失不算失败，仅提示。
   const updatesLeft = (() => {
     try { return fs.readdirSync(path.join(userDataDir, 'updates')).join(','); } catch { return '(目录不存在)'; }
@@ -293,6 +320,24 @@ async function main() {
     await sleep(12000); // 给新实例走完 boot
     check('新实例持续运行（未闪退）', procAlive(newPid));
     check('新实例写入 boot 日志（真实重启）', readLog().length > logBeforeUpdate, readLog().slice(logBeforeUpdate).slice(0, 200));
+
+    // ── 更新后数据保留（用户最关心的回归：插件/向导标记一个都不能丢）──
+    if (!SKIP_MARKET) {
+      check('更新后市场插件仍在 node_modules', fs.existsSync(path.join(pkgDir, 'package.json')), pkgDir);
+    }
+    let bundlesAfterUpdate = [];
+    try { bundlesAfterUpdate = JSON.parse(fs.readFileSync(path.join(profDir, 'package.json'), 'utf8')).dsh.profile.bundles; } catch {}
+    check('更新后 profile bundles 保留（含原内置插件）', !SKIP_MARKET ? bundlesAfterUpdate.includes(INSTALL_TARGET) : bundlesAfterUpdate.length > 0, bundlesAfterUpdate.join(','));
+    check('更新后 cordis.patch.yml 保留', fs.existsSync(path.join(profDir, 'cordis.patch.yml')), '(patch 文件)');
+    check('更新后内置插件清单标记保留', fs.existsSync(path.join(profDir, '.dsh-builtin-plugins.json')));
+    const newLog = readLog().slice(logBeforeUpdate);
+    check('更新后新实例无启动失败/完整性告警', !/启动失败|捆绑依赖完整性校验失败/.test(newLog), newLog.slice(0, 300));
+    const settingsAfter = (() => {
+      try { return JSON.parse(fs.readFileSync(path.join(userDataDir, 'settings.json'), 'utf8')); } catch { return {}; }
+    })();
+    check('更新后设置保留（pluginOnboardingDone/插件选择仍在）', settingsAfter.pluginOnboardingDone === true && Array.isArray(settingsAfter.builtinPluginSelection) && settingsAfter.builtinPluginSelection.length > 0,
+      'onboardingDone=' + settingsAfter.pluginOnboardingDone + ' selection=' + (settingsAfter.builtinPluginSelection || []).length);
+
     try { require('node:child_process').spawn('taskkill', ['/pid', String(newPid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {}
     await sleep(4000);
     check('收尾：新实例已退出', !procAlive(newPid));

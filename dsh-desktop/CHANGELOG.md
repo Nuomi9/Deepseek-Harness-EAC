@@ -10,7 +10,8 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 4.0.0（本版：四大用户反馈问题根治 + SHA-256 更新校验 + 微信 ClawBot 桥 + 多窗口
 + 会话删除 + AI 变更审核 + 崩溃急救 undo + 大肥鱼桌宠 + 插件启停管理）→
 4.0.2（tool-vision llm/stream 契约修复 + 该插件默认不启动）→
-4.1.0（同步上游 v4.1.0：请求守卫双重请求边角 + 更新器黑窗挂死 + 设置左栏滚动）。
+4.1.0（同步上游 v4.1.0：请求守卫双重请求边角 + 更新器黑窗挂死 + 设置左栏滚动）→
+4.2.0（插件安装 profile 修复 + allowBuilds 自动放行 + 冲突预检 + 内置插件接管）。
 
 ## [4.1.0] — 2026-08-17（Linux 线，同步上游 v4.1.0）
 
@@ -61,6 +62,96 @@ cherry-pick 上游 `1c51604`，保留本仓库 Linux 重构差异（desktopName�
   （与桌宠同机制，用户可在「设置 → 插件 → 管理」重新启用）；存量启用行由
   `healRowDisabled` 一次性迁移禁用 —— 只改不带 disabled 键的原始行，用户
   显式启用/禁用的行永不覆盖。
+## [4.2.0] — 2026-08-18
+
+### 修复：安装插件报 `spawn ...\resources\node\node.exe ENOENT`
+- 根因：插件市场目录条目不带目标 profile，客户端默认填 dsh CLI 生态的
+  `web`；桌面壳实际跑在专属 profile（web-desktop），`profiles/web` 并不存在。
+  安装时 spawn 以不存在的目录作 cwd，Windows 上 Node 把 ENOENT 记在可执行
+  文件（node.exe）头上 —— 错误信息极具误导性，node.exe 本身完好。
+- 修复：host 层统一把 `web` 映射到桌面 profile（`resolveProfile`，CLI 直连
+  时映射恒等、行为不变），安装/卸载/扫描/已装状态/更新检查全部走真实
+  profile；重启窗口期排队任务读取旧标记时同样归一化。此前有人用目录联接
+  （`profiles\web` → `web-desktop`）绕过，修复后无需保留。
+
+### 修复：安装版自更新时黑窗挂死
+- 根因：installer.nsh 的进程存在性检查用 `tasklist | find` 管道 —— 每轮开
+  3 个隐藏 cmd 经 `|` 串管道读输出，在无控制台的 NSIS 上下文里偶发永不
+  返回，更新窗口永远等不到应用退出（黑窗卡住、关掉又弹新窗）。
+- 修复：去掉 cmd 与管道 —— `nsExec::ExecToStack` 直接 CreateProcess 起
+  `tasklist /FI "IMAGENAME eq ..." /FO CSV /NH`（不经 cmd.exe、无 `|`），
+  按 CSV 输出首字符是否为 `"` 判断进程存在（与系统语言无关），检查
+  「Deepseek Harness EAC / v2.0 / v1.0」三个 exe 名；等待循环有界
+  （20 次 × 500ms），超时仍按「应用未退出」处理并放行提示，不再挂死。
+  （曾尝试 electron-builder 自带 NSIS 的 nsProcess 插件，其自带 DLL 加载
+  不了函数、编译即报 "Plugin function not found"，未采用。）
+
+### 修复：插件安装与排队任务被 pnpm 的 allowBuilds 拦截失败
+- 根因：新版 pnpm 默认封锁依赖的 postinstall 构建脚本（报
+  `Ignored build scripts` / `ERR_PNPM_IGNORED_BUILDS`），插件安装、重启窗口期
+  排队任务、守护启动重试因此批量失败。
+- 修复：新增 allow-builds 处理器 —— 解析 pnpm 各类封锁报错格式，自动把缺失
+  的包写入 profile 的 `pnpm-workspace.yaml`（allowBuilds/onlyBuiltDependencies
+  块，行级编辑、幂等、防注入），安装/排队任务失败后自动重试一次；守护启动
+  失败时同样先补 allowBuilds 再重试，成功记入恢复记录。
+
+### 新增：插件安装前冲突预检
+- 市场安装确认前自动扫描候选插件与当前 profile 的冲突：同名 patch 行、与
+  内置插件同名、bundle 冲突（以上**阻止安装**）；依赖将被重装、设置命名空间
+  重合、核心共享依赖（koffi/schemastery/js-yaml/zod/nanoid 等）被覆盖
+  （以上**警告**）。扫描结果在确认弹窗逐条展示（✗ 红 / △ 黄），阻止项禁用
+  安装按钮；勾选「跳过冲突预检」可强制安装。
+
+### 新增：启动失败自动归因
+- 启动失败弹窗现在会尝试把错误归因到具体插件（patch 行、bundle 或依赖）：
+  命中时优先提供「停用插件 X 并重试」；有保护中心快照时提供「回滚到最后
+  良好快照并重试」，回退到上一版本/内置版本等原路径保留。
+
+### 新增：内置插件接管市场同名包（更新后插件树变化的通知）
+- 内置插件树同步前自动清理 profile 里的市场版残留（package.json 依赖/bundles
+  与 cordis.patch.yml 同名行），让内置版干净接管，杜绝 duplicate loader
+  entry / 模块双实例；`link:`/`file:` 本地链接依赖保留不动（用户 fork/开发
+  目录）。发生接管时保护中心先留快照，并弹系统通知告知本次启动的插件树整理。
+
+## [4.1.0] — 2026-08-18
+
+### 新增：错误日志一键复制（群友建议）
+- 启动失败 / DSH 服务已停止的报错弹窗新增**「复制日志」**按钮：一键把
+  `error-detail.js` 组装的诊断信息（错误消息、堆栈、日志目录、最近日志尾部）
+  复制到剪贴板，反馈时直接粘贴即可。
+
+### 新增：应用内反馈入口（群友建议）
+- chrome 栏 ⋯ 菜单与托盘菜单新增「反馈建议…」，直达 GitHub Issues
+  （`https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues`）；
+  「关于」对话框附交流群号（523412163）与反馈指引。
+
+### 新增：拖文件进对话（群友建议，dsh-file-drop 配套插件）
+- 对话区域拦截文件拖放（阻止浏览器打开文件）；文本/代码文件（常见文本扩展名
+  与无扩展名）自动读取并注入输入框（上限 256KB，带文件名头注释）；图片注入
+  路径提示配合 dsh-tool-vision 的 `inspect_image`；二进制/超大文件注入完整路径
+  提示。纯客户端实现，设置页可随时关闭。
+
+### 新增：设置页左侧边栏自定义（群友建议，dsh-settings-nav-custom 配套插件）
+- 设置面板左侧导航底部「自定义边栏」按钮：浮层内按需显示/隐藏与上移/下移排序
+  导航项（数据直接来自 slots 服务，第三方区段自动出现），localStorage 持久化
+  （`eac:settings-nav:v1`），默认全显、零行为改变。
+
+### 加固：更新保障四件套
+- ① 更新前强制快照：官方 dsh 更新与客户端更新开始前调用 plugin-guard 快照，
+  失败即中止更新（宁可不动，不可失去回滚点）。
+- ② 官方 dsh 更新后旧版备份保留：切换成功后旧版保留为 `agent-previous`，直到
+  下次启动确认新版健康（`confirmPreviousAgentHealthy`）才清理；新版启动失败时，
+  失败对话框优先提供「回退到上一版本并重试」。
+- ③ 客户端自更新崩溃自回退：便携版更新脚本成功替换后保留上一版 exe（`.bak`）
+  与 marker；新版启动失败（上次运行非干净退出）时下次启动自动还原上一版、
+  保留崩溃副本并弹系统通知；新版健康启动后自动清理备份。
+- ④ 更新完成弹窗明示「插件、皮肤、会话与配置全部保留」。
+
+### 修复：女仆皮肤设置按钮在窄侧边栏被帧图遮挡
+- `assets/skins/maid-atelier`：narrow 档侧边栏未豁免 settings 触发器按钮，
+  34px 边框帧 + 34px 内边距超出窄栏宽度，按钮内容被 `--maid-settings-frame-art`
+  完全遮挡。补 narrow 豁免：去掉帧图边框，还原为完整可点的金框按钮
+  （rail 档原有圆形按钮样式不受影响）。
 
 ## [4.0.0] — 2026-08-16
 

@@ -11,7 +11,7 @@
 //      "dsh-balance-changed" 事件，供 dsh-balance 插件消费。
 //   3. 把 Web UI 内容下移 36px（body padding-top），保证自绘栏不遮挡界面。
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const BAR_ID = '__dsh_desktop_chrome__';
 const BAR_HEIGHT = 36;
@@ -53,6 +53,32 @@ const dshDesktop = {
   guard: {
     action: (action, value) => ipcRenderer.invoke('guard:action', { action, value }),
   },
+  // 内置插件选择向导：设置页「插件 → 选择向导」（dsh-plugin-wizard 插件）
+  // 从这里二次打开向导窗口，按需启用/停用内置插件。
+  pluginWizard: {
+    open: () => ipcRenderer.invoke('onboard:open'),
+  },
+  // 插件管理（dsh-plugin-manager 插件「管理」标签）：列出配套/用户/核心插件
+  // 及启用状态，写入/移除 profile cordis.patch.yml 的 disabled 条目
+  // （完全退出并重启应用后生效，返回 { ok, restartRequired }）。
+  pluginManager: {
+    list: () => ipcRenderer.invoke('dsh:plugin-list'),
+    setEnabled: (id, enabled) => ipcRenderer.invoke('dsh:plugin-set-enabled', { id, enabled }),
+    // V4.2：移除（卸载语义）/恢复内置插件，返回 { ok, restartRequired }。
+    setRemoved: (id, removed) => ipcRenderer.invoke('dsh:plugin-set-removed', { id, removed }),
+  },
+  // 图片粘贴（V4.2，dsh-image-paste 插件）：把剪贴板图片存到临时目录
+  // （%TEMP%/dsh-paste/），返回 { ok, path, size } 供 agent 读取。
+  imagePaste: {
+    save: (payload) => ipcRenderer.invoke('dsh:image-paste-save', payload),
+  },
+  // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读取默认档/
+  // 当前覆盖、保存自定义价格（¥/百万 token）、恢复默认。
+  balancePrices: {
+    get: (model) => ipcRenderer.invoke('dsh:balance-prices-get', { model }),
+    set: (model, prices) => ipcRenderer.invoke('dsh:balance-prices-set', { model, prices }),
+    reset: (model) => ipcRenderer.invoke('dsh:balance-prices-reset', { model }),
+  },
   // 「文件」视图的还原请求：changes = [{path, op, oldText, newText}]（逆序）。
   revertFiles: (changes) => ipcRenderer.invoke('dsh:file-revert', { changes }),
   // 「全部文件」视图：用系统默认程序打开项目文件。
@@ -61,6 +87,12 @@ const dshDesktop = {
   openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
   // 复制文本到剪贴板（更新源地址等）。
   copyText: (text) => ipcRenderer.invoke('dsh:copy-text', { text }),
+  // 拖入文件（dsh-file-drop）：取浏览器 File 对象的完整磁盘路径
+  // （webUtils.getPathForFile，仅 Electron 环境；浏览器打开 WebUI 时
+  // 返回空字符串，插件自动降级为可读提示）。
+  getPathForFile: (file) => {
+    try { return webUtils.getPathForFile(file) || ''; } catch { return ''; }
+  },
   // 恢复页面（assets/recovery.html）使用的动作与状态读取。
   recovery: {
     getState: () => ipcRenderer.invoke('chrome:recovery-state'),
@@ -230,6 +262,7 @@ function renderMenu() {
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="open-browser">在浏览器中打开</button>
     <button class="dch-item" data-act="open-logs">打开日志目录</button>
+    <button class="dch-item" data-act="feedback">反馈建议</button>
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="about">关于 Deepseek Harness EAC</button>
     <button class="dch-item" data-danger="1" data-act="quit">退出</button>`;

@@ -126,4 +126,32 @@ function togglePluginInPatch(text, id, enabled, name) {
   return lines.join('\n');
 }
 
-module.exports = { togglePluginInPatch };
+/**
+ * 从 patch 中彻底移除某插件的全部登记点：顶层条目（缩进 0-2）+ insert 内层
+ * 条目（缩进 >=1）+ 关闭标记注释；顺带清理被掏空的孤立 `- insert:` 空块。
+ * 用于「移除内置插件」（区别于 toggle 的禁用——移除后 sync 不再写回该行）。
+ */
+function removePluginFromPatch(text, id) {
+  if (typeof text !== 'string') throw new TypeError('text must be a string');
+  if (typeof id !== 'string' || !id) throw new TypeError('id must be a non-empty string');
+  if (!ID_RE.test(id)) throw new TypeError('id 含非法字符（仅允许字母/数字/下划线/点/连字符）: ' + id);
+  let lines = text.split('\n');
+  // 先删内层（insert 块内），再删顶层；同一 id 的所有登记点都移除
+  for (const range of [[1, Infinity], [0, 2]]) {
+    for (;;) {
+      const block = findEntryBlock(lines, id, range[0], range[1]);
+      if (!block) break;
+      lines.splice(block.start, block.end - block.start);
+    }
+  }
+  lines = lines.filter((line, idx) => {
+    if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
+    let k = idx + 1;
+    while (k < lines.length && lines[k].trim() === '') k += 1;
+    return k < lines.length && /^[ \t]+- /.test(lines[k]);
+  });
+  lines = lines.filter((l) => !new RegExp('# [^\\n]*关闭 ' + id + '\\b').test(l));
+  return lines.join('\n');
+}
+
+module.exports = { togglePluginInPatch, removePluginFromPatch };

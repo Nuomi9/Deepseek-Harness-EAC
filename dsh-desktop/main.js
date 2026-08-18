@@ -43,9 +43,11 @@ const {
 } = require('./koffi-preflight');
 const { configLinesFor, healSoulMdPatchRow, healRowConfig, healRowDisabled, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
 const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync');
+const { buildErrorDetail } = require('./error-detail');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
 const { patchSessionManage } = require('./scripts/patch-session-manage');
-const { togglePluginInPatch } = require('./scripts/plugin-manager-patch');
+const { togglePluginInPatch, removePluginFromPatch } = require('./scripts/plugin-manager-patch');
+const onboardingLogic = require('./scripts/onboarding');
 const zlib = require('node:zlib');
 
 // ---------------------------------------------------------------------------
@@ -445,6 +447,58 @@ function notifyUncleanRestart(prev) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 客户端更新崩溃自回退（V4.1 更新保障③）：便携版更新脚本在成功替换后保留
+// 上一版 exe（%EXE%.bak）并写 marker；新版若崩溃（上次运行非干净退出且
+// marker 仍在 —— marker 只在健康启动成功链上被清），下次启动自动用上一版
+// 还原。崩溃副本留作诊断，另发系统通知告知。
+// ---------------------------------------------------------------------------
+function clientBackupPaths() {
+  if (!process.env.PORTABLE_EXECUTABLE_FILE) return null;
+  const exe = process.env.PORTABLE_EXECUTABLE_FILE;
+  return { exe, bak: exe + '.bak', marker: exe + '.bak.marker' };
+}
+
+function autoRollbackClientIfCrashed(prevUnclean) {
+  const p = clientBackupPaths();
+  if (!p || !prevUnclean) return false;
+  if (!fs.existsSync(p.bak) || !fs.existsSync(p.marker)) return false;
+  try {
+    fs.copyFileSync(p.exe, p.exe + '.crash-' + Date.now());
+    fs.copyFileSync(p.bak, p.exe);
+    fs.rmSync(p.marker, { force: true });
+    log('client-update', '检测到客户端更新后启动失败，已自动回退到上一版本');
+    try {
+      const n = new Notification({
+        title: 'Deepseek Harness EAC 已自动回退',
+        body: '更新后的版本启动失败，已自动回退到上一版本并保留崩溃副本。',
+        icon: path.join(__dirname, 'assets', 'icon.png'),
+      });
+      n.on('click', () => showMainWindow());
+      n.show();
+    } catch (err) {
+      log('client-update', '回退通知发送失败: ' + err.message);
+    }
+    return true;
+  } catch (err) {
+    log('client-update', '自动回退失败: ' + err.message);
+    return false;
+  }
+}
+
+// 新版健康启动（boot 成功链）后调用：清理上一版备份与 marker。
+function cleanupClientBackupIfHealthy() {
+  const p = clientBackupPaths();
+  if (!p || !fs.existsSync(p.marker)) return;
+  try {
+    fs.rmSync(p.bak, { force: true });
+    fs.rmSync(p.marker, { force: true });
+    log('client-update', '新版启动确认健康，已清理上一版备份');
+  } catch (err) {
+    log('client-update', '清理上一版备份失败: ' + err.message);
+  }
+}
+
 function startWatchdog() {
   // 仅安装版启用：开发模式下重启 Electron 会与调试流程互相干扰。
   if (!app.isPackaged || !IS_WIN) return;
@@ -694,7 +748,40 @@ async function startAndShowGuarded(overlays = []) {
     if (snaps.length) g.markGood(snaps[0].id);
     return url;
   });
-  return g.guardedBoot(() => startAndShow(overlays), () => '日志文件：' + path.join(logsDir, 'dsh-web.log'));
+  return g.guardedBoot(
+    () => startAndShow(overlays),
+    () => '日志文件：' + path.join(logsDir, 'dsh-web.log'),
+    // V4.2：pnpm 封锁构建脚本会让整棵 profile 起不来 —— 这是配置级问题，
+    // 体检（只扫插件层）发现不了，必须走 preRetry 钩子自动放行后重试。
+    { preRetry: allowBuildsPreRetry }
+  );
+}
+
+// V4.2：启动失败链的 pnpm allowBuilds 自动放行钩子（preRetry）。
+// 解析错误文案 + dsh-web.log 尾部，命中被封锁的包名就写入 profile 的
+// pnpm-workspace.yaml（allowBuilds / onlyBuiltDependencies），返回
+// { applied } 交给守护启动合并进修复项后重试一次。
+async function allowBuildsPreRetry(errText) {
+  try {
+    const ab = await allowBuilds();
+    if (typeof ab.parseBlockedBuildKeys !== 'function') return false;
+    const keys = ab.parseBlockedBuildKeys(String(errText || ''));
+    // 报错详情可能只落在 dsh-web.log 里，补充解析尾部。
+    try {
+      const tail = fs.readFileSync(path.join(logsDir, 'dsh-web.log'), 'utf8').slice(-40000);
+      for (const k of ab.parseBlockedBuildKeys(tail)) {
+        if (!keys.includes(k)) keys.push(k);
+      }
+    } catch {}
+    if (keys.length === 0) return false;
+    const r = await ab.ensureAllowBuilds(path.join(desktopProfileDir(), 'pnpm-workspace.yaml'), keys);
+    if (!r || !r.wrote) return false;
+    log('guard', '[allowBuilds] 启动失败疑似 pnpm 封锁构建脚本，已自动放行: ' + r.added.join(', '));
+    return { applied: ['pnpm allowBuilds 自动放行: ' + r.added.join(', ')] };
+  } catch (err) {
+    log('guard', '[allowBuilds] 预检失败: ' + String((err && err.message) || err));
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -751,19 +838,76 @@ function applyKoffiPreflightAsync() {
 function handleBootFailure(err) {
   const ov = updater.overlayBinPath(updCtx());
   if (ov && fs.existsSync(ov)) {
+    // V4.1 更新保障②：上次更新保留的上一版本备份可用时，优先提供
+    // 「回退到上一版本」（比退回内置版更贴近用户原状态）。
+    const prev = updater.previousAgentInfo(updCtx());
+    // V4.2 插件即时提醒：报错文案归因到 profile 里的插件时，提供
+    // 「停用插件 X 并重试」（写盘停用，重启不还原）；另有最后良好快照时
+    // 提供「回滚到最后良好快照并重试」。两项都失败才轮到版本级回退。
+    let blame = null;
+    let blameRow = null;
+    try {
+      const g = ensureGuard();
+      if (typeof g.attributeBootFailure === 'function') {
+        blame = g.attributeBootFailure(String((err && err.message) || err));
+      }
+      if (blame) {
+        try {
+          blameRow = pluginManagerCollect().find((r) => r.id === blame.rowId) || null;
+        } catch { blameRow = null; }
+      }
+    } catch {}
+    const lastGood = (() => { try { return ensureGuard().lastGoodSnapshot(); } catch { return null; } })();
+    const btnDisable = blameRow && blameRow.toggleable ? '停用插件 ' + blameRow.name + ' 并重试' : null;
+    const btnRollback = lastGood ? '回滚到最后良好快照并重试' : null;
+    const buttons = [
+      ...(btnDisable ? [btnDisable] : []),
+      ...(btnRollback ? [btnRollback] : []),
+      ...(prev ? ['回退到上一版本并重试', '回退到内置版本', '重试', '退出'] : ['回退到内置版本并重试', '重试', '退出']),
+    ];
+    const detailLines = [String((err && err.message) || err)];
+    if (blame) {
+      detailLines.push('', `报错指向插件「${blame.name}」（${blame.kind === 'patchRow' ? 'patch 行 ' + blame.rowId : blame.kind}），可先停用该插件后重试。`);
+    }
+    if (lastGood) {
+      detailLines.push(`存在最后良好快照（${lastGood.reason || lastGood.id}），可一键回滚后重试。`);
+    }
+    if (prev) detailLines.push('', `可回退到上一版本（v${prev.version}）或内置版本继续使用。`);
+    else detailLines.push('', '可回退到内置版本继续使用。');
     showBox({
       type: 'error',
       title: 'DeepSeek Harness 启动失败',
-      message: '更新后的 agent 无法启动。',
-      detail: (err && err.message || String(err)) + '\n\n可回退到内置版本继续使用。',
-      buttons: ['回退到内置版本并重试', '重试', '退出'],
+      message: prev ? '更新后的 agent 无法启动。' : 'DeepSeek Harness 无法启动。',
+      detail: detailLines.join('\n'),
+      buttons,
       defaultId: 0,
-      cancelId: 2,
+      cancelId: buttons.length - 1,
     }).then(({ response }) => {
-      if (response === 0) {
+      let i = 0;
+      const take = () => i++;
+      // 归因到插件时，优先给「停用插件」——
+      if (btnDisable && response === take()) {
+        try {
+          pluginManagerSetEnabled(blameRow.id, false);
+          log('plugin-manager', `启动失败后停用插件: ${blameRow.id}`);
+        } catch (e2) { log('plugin-manager', '停用插件失败: ' + ((e2 && e2.message) || e2)); }
+        startAndShow().catch((e2) => handleBootFailure(e2));
+        return;
+      }
+      if (btnRollback && response === take()) {
+        try {
+          ensureGuard().restore(lastGood.id);
+        } catch (e2) { log('guard', '回滚快照失败: ' + ((e2 && e2.message) || e2)); }
+        startAndShow().catch((e2) => handleBootFailure(e2));
+        return;
+      }
+      if (prev && response === take()) {
+        updater.rollbackToPrevious(updCtx());
+        startAndShow().catch((e2) => fatal('DeepSeek Harness 启动失败', e2));
+      } else if ((prev && response === take()) || (!prev && response === take())) {
         updater.rollback(updCtx());
         startAndShow().catch((e2) => fatal('DeepSeek Harness 启动失败', e2));
-      } else if (response === 1) {
+      } else if ((prev && response === take()) || (!prev && response === take())) {
         startAndShow().catch((e2) => handleBootFailure(e2));
       } else {
         app.quit();
@@ -989,6 +1133,125 @@ function createFloatWindow(sessionId, { title } = {}) {
   return win;
 }
 
+// ---------------------------------------------------------------------------
+// 内置插件选择向导（首次启动 first 模式 / 设置页二次打开 rerun 模式）
+// ---------------------------------------------------------------------------
+
+let wizardWindow = null;
+let wizardMode = 'first';
+let wizardDone = null;
+
+function closeWizard(result) {
+  const cb = wizardDone;
+  wizardDone = null;
+  if (wizardWindow && !wizardWindow.isDestroyed()) wizardWindow.destroy();
+  wizardWindow = null;
+  if (cb) cb(result);
+}
+
+// 包目录体积（递归字节数，带缓存）。首次同步前 assets 尚未落盘到 profile，
+// 以分发目录为准展示体积提示。
+const pluginDirSizeCache = new Map();
+function pluginDirSize(dirName) {
+  if (pluginDirSizeCache.has(dirName)) return pluginDirSizeCache.get(dirName);
+  let total = 0;
+  try {
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.isFile()) total += fs.statSync(full).size;
+      }
+    };
+    walk(path.join(__dirname, 'assets', 'plugins', dirName));
+  } catch {}
+  pluginDirSizeCache.set(dirName, total);
+  return total;
+}
+
+// 向导目录：核心/推荐标记 + 描述 + 包体积（数据来源与 sync 保持一致）。
+function buildOnboardingCatalog() {
+  return onboardingLogic.buildCatalog(COMPANION_PLUGINS, {
+    coreIds: onboardingLogic.CORE_PLUGIN_IDS,
+    recommendedIds: onboardingLogic.RECOMMENDED_PLUGIN_IDS,
+    describe: (name) => pluginManagerPackageDescription(name),
+    dirSize: (dirName) => pluginDirSize(dirName),
+  });
+}
+
+// patch + 注册表 → 各内置插件当前启用状态（rerun 模式预填勾选用）。
+function pluginCurrentState() {
+  const { entries } = pluginManagerReadPatch();
+  return onboardingLogic.pluginCurrentState(entries, COMPANION_PLUGINS);
+}
+
+// 打开向导窗口。返回 Promise：提交（{ok:true, applied, errors}）或关闭
+// （{ok:false, cancelled:true}）时 resolve；窗口已存在时聚焦并直接 resolve。
+function openPluginWizard({ mode = 'first' } = {}) {
+  return new Promise((resolve) => {
+    if (wizardWindow && !wizardWindow.isDestroyed()) {
+      wizardWindow.focus();
+      resolve({ ok: false, cancelled: true });
+      return;
+    }
+    wizardMode = mode === 'rerun' ? 'rerun' : 'first';
+    wizardDone = resolve;
+    const win = new BrowserWindow({
+      width: 920,
+      height: 700,
+      minWidth: 640,
+      minHeight: 520,
+      show: false,
+      title: '内置插件选择向导',
+      backgroundColor: '#0b1220',
+      icon: path.join(__dirname, 'assets', 'icon.png'),
+      ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
+      webPreferences: {
+        preload: path.join(__dirname, 'assets', 'onboarding-preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: false,
+      },
+    });
+    wizardWindow = win;
+    win.loadFile(path.join(__dirname, 'assets', 'onboarding.html'));
+    win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
+    win.on('closed', () => {
+      const cb = wizardDone;
+      wizardDone = null;
+      wizardWindow = null;
+      if (cb) cb({ ok: false, cancelled: true });
+    });
+    log('boot', '已打开内置插件选择向导（' + wizardMode + ' 模式）');
+  });
+}
+
+// 启动门控：全新用户展示向导并等待提交；升级用户静默跳过并记完成标记。
+// 关闭向导（取消）= 保持全部启用（等价老用户现状），只记完成标记不再打扰。
+// onboardingNeeded 必须在任何写盘之前由 computeOnboardingNeed 预计算：
+// settings.json 会在启动早期被迁移流程无条件创建，事后无法区分新老用户。
+async function runPluginOnboardingIfNeeded(onboardingNeeded) {
+  if (!onboardingNeeded) {
+    const settings = updater.loadSettings(updCtx());
+    if (!settings.pluginOnboardingDone) {
+      settings.pluginOnboardingDone = true;
+      updater.saveSettings(updCtx(), settings);
+      log('boot', '升级用户：跳过插件选择向导，插件保持全量现状');
+    }
+    return { ran: false };
+  }
+  log('boot', '全新用户：展示内置插件选择向导');
+  const result = await openPluginWizard({ mode: 'first' });
+  if (!result.ok) {
+    const s = updater.loadSettings(updCtx());
+    s.pluginOnboardingDone = true;
+    updater.saveSettings(updCtx(), s);
+    log('boot', '用户关闭插件选择向导：保持全部插件启用');
+  }
+  return { ran: true, ...result };
+}
+
 // 关闭全部浮窗（应用退出时调用）。
 function closeAllFloatWindows() {
   for (const win of floatWindows) {
@@ -1069,11 +1332,22 @@ function reloadMainWindow() {
 
 function fatal(title, err) {
   log('fatal', title + ': ' + ((err && (err.stack || err.message)) || err));
-  const detail = '错误：' + ((err && err.message) || err) + '\n\n日志目录：' + logsDir;
+  const detail = buildErrorDetail(err, logsDir, ['dsh-web.log', 'desktop.log']);
   if (!mainWindow || mainWindow.isDestroyed()) {
-    dialog.showErrorBox(title, detail);
-    markCleanExit(); // 启动失败属已知退出：避免看门狗反复拉起反复失败
-    app.exit(1);
+    dialog.showMessageBox({
+      type: 'error',
+      title,
+      message: title,
+      detail,
+      buttons: ['复制日志', '退出'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    }).then(({ response }) => {
+      if (response === 0) clipboard.writeText(detail);
+      markCleanExit(); // 启动失败属已知退出：避免看门狗反复拉起反复失败
+      app.exit(1);
+    });
     return;
   }
   showBox({
@@ -1081,11 +1355,13 @@ function fatal(title, err) {
     title,
     message: title,
     detail,
-    buttons: ['重试', '退出'],
+    buttons: ['复制日志', '重试', '退出'],
     defaultId: 0,
-    cancelId: 1,
+    cancelId: 2,
+    noLink: true,
   }).then(({ response }) => {
-    if (response === 0) startAndShow().catch((err2) => handleBootFailure(err2));
+    if (response === 0) clipboard.writeText(detail);
+    else if (response === 1) startAndShow().catch((err2) => handleBootFailure(err2));
     else app.quit();
   });
 }
@@ -1114,6 +1390,52 @@ function showUpdateWindow(version, kind = 'agent') {
   });
   win.once('ready-to-show', () => win.show());
   return win;
+}
+
+// 更新弹窗进度推送（agent / client 共用）：把结构化进度渲染成文案，节流后
+// 注入 updating.html 的 __setProgress(pct, receivedMB, totalMB, meta)。
+// meta = { stage, speedMBps, etaSec } —— stage 为文案时进度条走不定态。
+function makeUpdateProgressPusher(win) {
+  let last = 0;
+  const hostOf = (registry) => {
+    try { return String(registry || '').replace(/^https?:\/\//, '').replace(/\/+$/, ''); } catch { return ''; }
+  };
+  const push = (payload) => {
+    if (!win || win.isDestroyed()) return;
+    const now = Date.now();
+    if (now - last < 300 && !payload.force) return;
+    last = now;
+    const meta = payload.meta || {};
+    win.webContents
+      .executeJavaScript(
+        `window.__setProgress && window.__setProgress(${payload.pct}, ${payload.receivedMB || 0}, ${payload.totalMB || 0}, ${JSON.stringify(meta)})`
+      )
+      .catch(() => {});
+  };
+  return {
+    // 客户端更新：真实字节进度 + 速度 + 剩余时间（meta 可选追加）。
+    client: (received, total, meta) => {
+      const pct = total > 0 ? Math.round((received * 100) / total) : -1;
+      push({ pct, receivedMB: Math.round(received / 1048576), totalMB: Math.round(total / 1048576), meta });
+    },
+    force: (meta) => push({ pct: -1, meta, force: true }),
+    // agent 更新：npm 阶段/包数/耗时 + 镜像源切换
+    agent: (ev) => {
+      let stage;
+      if (ev.stage === 'fetch') {
+        stage = `下载依赖 · 已获取 ${ev.count || 0} 项 · 用时 ${ev.elapsed || ''}` + (ev.registry ? ' · 源：' + hostOf(ev.registry) : '');
+      } else if (ev.stage === 'install') {
+        stage = '正在安装依赖…';
+      } else if (ev.stage === 'done') {
+        stage = '安装完成，正在切换版本…';
+      } else if (ev.stage === 'mirror') {
+        stage = ev.registry ? '下载停滞，已自动切换镜像源：' + hostOf(ev.registry) : '下载失败，正在尝试其他镜像源…';
+      } else {
+        stage = '正在更新…';
+      }
+      push({ pct: -1, meta: { stage } });
+    },
+  };
 }
 
 async function runUpdateFlow(manual) {
@@ -1174,13 +1496,20 @@ async function runUpdateFlow(manual) {
 
   updateBusy = true;
   const progressWin = showUpdateWindow(latest);
+  const progress = makeUpdateProgressPusher(progressWin);
   try {
-    await updater.applyUpdate(ctx, latest);
+    // V4.1 更新保障①：更新前强制插件/配置快照，失败则中止更新
+    //（宁可不动，不可让用户失去回滚点）。
+    const snap = ensureGuard().snapshot('pre-update:dsh:' + latest);
+    if (!snap) {
+      throw new Error('更新前保护快照失败（profile 不可读），已中止更新以保证可回滚。');
+    }
+    await updater.applyUpdate(ctx, latest, { onProgress: (ev) => progress.agent(ev) });
     const { response: r2 } = await showBox({
       type: 'info',
       title: '更新完成',
       message: `已更新到 @deepseek-ai/dsh@${latest}`,
-      detail: '重启应用后生效。',
+      detail: '重启应用后生效。\n· 插件、皮肤与配置均保留在 profile，不受更新影响\n· 上一版本已备份，本次启动确认健康后自动清理',
       buttons: ['立即重启', '稍后重启'],
       defaultId: 0,
       cancelId: 1,
@@ -1302,7 +1631,8 @@ async function showAbout() {
     title: '关于 Deepseek Harness EAC',
     message: 'Deepseek Harness EAC（封装版本 ' + APP_VERSION + '）',
     detail: 'DeepSeek Harness 桌面客户端\n\nagent 版本：' + dshVersion() + '（' + dshVersionSource() + '）\n数据目录：' + userDataDir + '\nDSH_HOME：' + (dshHome || '（dsh 默认）') +
-      '\n\n项目仓库：\n  GitHub: ' + urls.github + '\n  Gitee:  ' + urls.gitee,
+      '\n\n项目仓库：\n  GitHub: ' + urls.github + '\n  Gitee:  ' + urls.gitee +
+      '\n\n交流群：EAC 交流群（群号 523412163）\n反馈问题：⋯ 菜单 → 反馈建议',
     buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
   });
   if (response === 0) clipboard.writeText(urls.github);
@@ -1433,6 +1763,7 @@ function registerChromeIpc() {
       case 'fullscreen': mainWindow.setFullScreen(!mainWindow.isFullScreen()); break;
       case 'open-browser': if (webUrl) shell.openExternal(webUrl); break;
       case 'open-logs': shell.openPath(logsDir); break;
+      case 'feedback': shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); break;
       case 'check-agent-update': runUpdateFlow(true); break;
       case 'check-client-update': runClientUpdateFlow(true); break;
       case 'toggle-notify': {
@@ -1556,6 +1887,101 @@ function registerChromeIpc() {
     }
   });
 
+  // 内置插件移除/恢复（V4.2）：移除 = 卸载语义（清 patch 行 + 删包副本 +
+  // 记入 settings.removedPlugins 跳过下次 sync）；恢复 = 清跳过清单 + 立即
+  // 复制包与行。两者都需重启 Web 服务生效。
+  ipcMain.handle('dsh:plugin-set-removed', async (event, { id, removed } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    try {
+      const res = pluginManagerSetRemoved(String(id), !!removed);
+      return res.ok ? { ok: true, restartRequired: true } : res;
+    } catch (err) {
+      log('plugin-manager', '移除/恢复插件 ' + id + ' 失败: ' + ((err && err.message) || err));
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  // 图片粘贴（V4.2，dsh-image-paste 插件）：把剪贴板图片存到临时目录供
+  // agent 的 inspect_image 读取。只接受 image/* 的 data URL，限 15MB，
+  // 文件名清洗（防路径穿越），写入路径固定为 %TEMP%/dsh-paste/。
+  ipcMain.handle('dsh:image-paste-save', async (event, { dataUrl, name } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    try {
+      const res = imagePasteSave(String(dataUrl || ''), String(name || '粘贴图片'));
+      if (!res.ok) return res;
+      log('plugin-manager', '已保存粘贴图片: ' + res.path);
+      return res;
+    } catch (err) {
+      log('plugin-manager', '保存粘贴图片失败: ' + ((err && err.message) || err));
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  // 内置插件选择向导（assets/onboarding.html，onboarding-preload.js 桥）：
+  //   list   —— 目录（核心/推荐标记 + 描述 + 体积）+ 模式 + 当前启停状态
+  //   submit —— 校验选择 → 写 disabled/裸条目 → 持久化 settings → 关窗；
+  //             rerun 模式随后重启 Web 服务使 host 侧插件生效
+  //   close  —— 用户点「跳过」/关闭窗口（走 closed 事件的 cancelled 分支）
+  // 来源校验：只接受向导窗口自身的 webContents。
+  ipcMain.handle('onboard:list', async (event) => {
+    if (!wizardWindow || event.sender !== wizardWindow.webContents) return null;
+    return {
+      mode: wizardMode,
+      catalog: buildOnboardingCatalog(),
+      current: wizardMode === 'rerun' ? pluginCurrentState() : null,
+    };
+  });
+
+  ipcMain.handle('onboard:submit', async (event, { ids } = {}) => {
+    if (!wizardWindow || event.sender !== wizardWindow.webContents) return { ok: false, error: 'unauthorized' };
+    // 首次向导时 sync 尚未运行、profile 目录可能还不存在：先按官方模板初始化
+    // （package.json / pnpm-workspace.yaml / 空 patch 层），否则写盘 ENOENT。
+    ensureDesktopProfileInit();
+    const want = onboardingLogic.sanitizeSelection(ids, COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS);
+    // 首次：patch 行尚未写全，normalize 全部非核心插件（current=null）；
+    // 二次：只切换与用户选择不同的插件。
+    const current = wizardMode === 'rerun' ? pluginCurrentState() : null;
+    const ops = onboardingLogic.buildSelectionOps(COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS, want, current);
+    const errors = [];
+    for (const op of ops) {
+      try {
+        const res = pluginManagerSetEnabled(op.id, op.enable);
+        if (!res.ok) errors.push(op.id + ': ' + (res.error || 'unknown'));
+        else log('plugin-manager', '向导已' + (op.enable ? '启用' : '停用') + '内置插件 ' + op.id);
+      } catch (err) {
+        errors.push(op.id + ': ' + ((err && err.message) || err));
+      }
+    }
+    const s = updater.loadSettings(updCtx());
+    s.pluginOnboardingDone = true;
+    s.builtinPluginSelection = Array.from(want);
+    updater.saveSettings(updCtx(), s);
+    log('boot', '插件选择向导已应用：' + ops.length + ' 个插件状态变更' + (errors.length ? '，失败 ' + errors.join('; ') : ''));
+    const mode = wizardMode;
+    closeWizard({ ok: true, applied: ops.length, errors });
+    if (mode === 'rerun' && serverProc && serverProc.exitCode === null) {
+      // 二次向导：重启 Web 服务让 host 侧插件生效（与插件市场安装后同路径）。
+      restartWebServiceCore();
+    }
+    return { ok: true, applied: ops.length, errors };
+  });
+
+  ipcMain.on('onboard:close', (event) => {
+    if (!wizardWindow || event.sender !== wizardWindow.webContents) return;
+    closeWizard({ ok: false, cancelled: true });
+  });
+
+  // 设置页「插件 → 选择向导」（dsh-plugin-wizard 插件）二次打开入口。
+  ipcMain.handle('onboard:open', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    if (wizardWindow && !wizardWindow.isDestroyed()) {
+      wizardWindow.focus();
+      return { ok: true, reused: true };
+    }
+    openPluginWizard({ mode: 'rerun' });
+    return { ok: true };
+  });
+
   // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口（校验来源与
   // 数量上限）；浮窗自己只允许关闭自身。
   ipcMain.handle('chrome:float-window', (event, { action, sessionId } = {}) => {
@@ -1603,6 +2029,53 @@ function registerChromeIpc() {
   ipcMain.handle('dsh:balance-refresh', async (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return balanceCache;
     return refreshBalance();
+  });
+
+  // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读写
+  // settings.json 的 balancePrices.<model>.{peak,offpeak}（¥/百万 token，
+  // 三字段 cacheMiss/cacheHit/output，必须为 >= 0 的数字）。保存后立即
+  // 重推余额数据，dock 的费用估算即时生效。
+  ipcMain.handle('dsh:balance-prices-get', async (event, { model } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const s = updater.loadSettings(updCtx());
+    const defaults = balance.DEFAULT_PRICES[String(model || '')] || balance.FALLBACK_PRICES;
+    const current = (s.balancePrices && s.balancePrices[String(model || '')]) || null;
+    return { ok: true, model: String(model || ''), defaults, current };
+  });
+
+  ipcMain.handle('dsh:balance-prices-set', async (event, { model, prices } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const m = String(model || '');
+    if (!balance.DEFAULT_PRICES[m]) return { ok: false, error: '未知模型: ' + m };
+    try {
+      const cleaned = balance.sanitizePrices(prices);
+      const ctx = updCtx();
+      const s = updater.loadSettings(ctx);
+      if (!s.balancePrices || typeof s.balancePrices !== 'object') s.balancePrices = {};
+      s.balancePrices[m] = cleaned;
+      updater.saveSettings(ctx, s);
+      await refreshBalance();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  ipcMain.handle('dsh:balance-prices-reset', async (event, { model } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const m = String(model || '');
+    try {
+      const ctx = updCtx();
+      const s = updater.loadSettings(ctx);
+      if (s.balancePrices && s.balancePrices[m]) {
+        delete s.balancePrices[m];
+        updater.saveSettings(ctx, s);
+      }
+      await refreshBalance();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
   });
 
   // 文件还原（「文件」视图的回退）：按会话日志里已持久化的写前/写后全文，
@@ -1732,6 +2205,8 @@ function createTray() {
       // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
       { label: '重启 Web 服务', click: () => { showMainWindow(); restartWebServiceCore(); } },
       { type: 'separator' },
+      { label: '反馈建议…', click: () => { showMainWindow(); shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
+      { type: 'separator' },
       { label: '退出', click: () => { forceQuit = true; app.quit(); } },
     ]);
     tray.setContextMenu(menu);
@@ -1768,12 +2243,7 @@ async function refreshBalance() {
   const pricing = balance.computePricingState(s.pricing && s.pricing.peakWindows);
   const base = table[model] || balance.FALLBACK_PRICES;
   const ov = (s.balancePrices && s.balancePrices[model]) || {};
-  const ovDual = typeof ov.peak === 'object' && ov.peak !== null && typeof ov.offpeak === 'object' && ov.offpeak !== null;
-  const tier = (src) => ({
-    ...(balance.FALLBACK_PRICES[src] || balance.FALLBACK_PRICES),
-    ...(base[src] || base),
-    ...(ovDual ? ov[src] : ov),
-  });
+  const tier = (src) => balance.tierPrices(base, ov, src);
   result.prices = tier(pricing.period);
   result.pricing = { ...pricing, prices: { peak: tier('peak'), offpeak: tier('offpeak') } };
   balanceCache = result;
@@ -1877,6 +2347,10 @@ const COMPANION_PLUGINS = [
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  // 插件选择向导入口（设置页「插件 → 选择向导」分区）：重新打开首次启动的
+  // 内置插件选择向导，按需启用/停用内置插件。纯客户端 UI + 壳层 IPC
+  // （onboard:*），host 半边 no-op；核心插件组内锁定，永不被向导停用。
+  { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
   // 微信 ClawBot / OpenClaw 桥（openclaw-dsh-bridge v0.7.0，MIT）：设置页
   // 「ClawBot」栏（扫码绑定微信官方 ClawBot 小程序）+ OpenAI 兼容端点
   // （/openclaw-bridge/v1/chat/completions）。前置依赖 dsh-host-apiproxy 的
@@ -1892,6 +2366,10 @@ const COMPANION_PLUGINS = [
   // 等待/完成/错误 六态 + 项目状态卡）。默认禁用 —— 在「设置 → 插件 →
   // 管理」里启用（含 49MB PyInstaller helper，按需开启）。
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu', disabled: true },
+  // 桌宠设置分区（V4.2，dsh-pet-settings）：设置页「桌宠」分区，集中管理
+  // 页面桌宠（dsh-pet 开关，重启生效）与大肥鱼桌面伴侣（启用/角色大小/
+  // 空闲微动作频率/减少动态，走 dsh-dafeiyu config 端点即时生效）。
+  { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
   // 峰谷价格卫士（dsh-offpeak，christophersmith2737-commits，MIT）：DeepSeek
   // 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）在发送前
   // 拦截提醒，可一键继续或定时到闲时价自动执行（浏览器不在线也会到点
@@ -1899,6 +2377,22 @@ const COMPANION_PLUGINS = [
   // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
   // 可在「设置 → 插件 → 管理」关闭。
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
+  // 拖入文件到对话（V4.1，用户建议）：文本/代码文件拖进输入框自动注入
+  // 内容（上限 256KB），图片/二进制/超大文件注入路径提示配合
+  // inspect_image 与文件工具；纯客户端实现（host 半边 no-op）。
+  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop' },
+  // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
+  // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
+  // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
+  { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom', dir: 'dsh-settings-nav-custom' },
+  // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
+  // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
+  // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
+  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
+  // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
+  // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
+  // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。
+  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste' },
 ];
 
 // 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
@@ -2072,6 +2566,10 @@ function pendingMarketMarkers() {
         if (job && typeof job.target === 'string' && job.target
           && typeof job.profile === 'string' && /^[A-Za-z0-9_-]+$/.test(job.profile)
           && (job.kind === 'install' || job.kind === 'uninstall')) {
+          // V4.2：旧版 host 可能把目录默认 profile 'web' 写进标记（桌面壳跑
+          // 在 web-desktop，profiles/web 不存在）—— 归一化后再执行，避免对
+          // 不存在的 profile 跑 pnpm（spawn 报 node.exe ENOENT）。
+          job.profile = job.profile === 'web' ? desktopProfile() : job.profile;
           out.push({ marker, job });
         } else {
           log('market-pending', '标记字段不完整，已删除: ' + marker);
@@ -2124,6 +2622,22 @@ async function artifactKeep() {
     artifactKeepMod = {};
   }
   return artifactKeepMod;
+}
+
+// V4.2：pnpm allowBuilds 自动放行（排队任务 + 守护启动失败链共用同一份
+// ESM：assets/plugins/dsh-webui-market/lib/allow-builds.mjs）。
+const ALLOW_BUILDS_MODULE = path.join(__dirname, 'assets', 'plugins', 'dsh-webui-market', 'lib', 'allow-builds.mjs');
+let allowBuildsMod = null;
+
+async function allowBuilds() {
+  if (allowBuildsMod) return allowBuildsMod;
+  try {
+    allowBuildsMod = await import(pathToFileURL(ALLOW_BUILDS_MODULE).href);
+  } catch (err) {
+    log('allow-builds', '模块加载失败: ' + err.message);
+    allowBuildsMod = {};
+  }
+  return allowBuildsMod;
 }
 
 function profileDirFor(profile) {
@@ -2193,14 +2707,17 @@ async function processPendingMarketOps() {
   }
   await new Promise((resolve) => {
     let idx = 0;
-    const next = () => {
+    // V4.2：allowBuilds 自动放行后的重试只允许一次（同一 marker）。
+    const retriedMarkers = new Set();
+    const next = async () => {
       if (idx >= items.length) {
         // pnpm 可能重新 hoist 出 @deepseek-ai 遮蔽拷贝，装完立刻清理，
         // 避免模块双实例（Symbol 身份不一致）问题拖到下次启动。
         healProfileModules();
         return resolve();
       }
-      const { marker, job } = items[idx++];
+      const { marker, job } = items[idx];
+      const retried = retriedMarkers.has(marker);
       const attempts = Number(job.attempts || 0) + 1;
       const action = job.kind === 'uninstall' ? 'remove' : 'add';
       // 安装前快照（保护中心）：排队任务改的是 profile 配置面，出问题可
@@ -2235,12 +2752,34 @@ async function processPendingMarketOps() {
         clearTimeout(timer);
         if (marketOpChild === child) marketOpChild = null;
         finishMarketMarker(marker, job, attempts, false, String(err.message));
+        idx += 1;
         next();
       });
-      child.on('close', (code) => {
+      child.on('close', async (code) => {
         clearTimeout(timer);
         if (marketOpChild === child) marketOpChild = null;
+        // V4.2：pnpm 封锁构建脚本硬失败时，从输出解析包名、自动写入
+        // pnpm-workspace.yaml 的 allowBuilds（兼容旧名 onlyBuiltDependencies）
+        // 后重试同一任务一次（不消耗 attempts）。
+        if (code !== 0 && !retried) {
+          try {
+            const ab = await allowBuilds();
+            const keys = (ab.parseBlockedBuildKeys || (() => []))(tail);
+            if (keys.length > 0) {
+              const r = await ab.ensureAllowBuilds(path.join(profileDirFor(job.profile), 'pnpm-workspace.yaml'), keys);
+              if (r && r.wrote) {
+                log('market-pending', `[allowBuilds] 已自动放行 ${r.added.join(', ')}，自动重试`);
+                retriedMarkers.add(marker);
+                next();
+                return;
+              }
+            }
+          } catch (err) {
+            log('market-pending', '[allowBuilds] 自动放行失败: ' + String((err && err.message) || err));
+          }
+        }
         finishMarketMarker(marker, job, attempts, code === 0, tail);
+        idx += 1;
         next();
       });
     };
@@ -2429,26 +2968,32 @@ function pluginManagerCollect() {
     bundles = (m && m.dsh && m.dsh.profile && Array.isArray(m.dsh.profile.bundles)) ? m.dsh.profile.bundles : [];
   } catch {}
   const companionNames = new Set(COMPANION_PLUGINS.map((p) => p.name));
+  const removedIds = removedPluginIds();
 
   const seen = new Set();
   const rows = [];
-  const addRow = (id, name, group) => {
+  const addRow = (id, name, group, extra) => {
     if (!id || seen.has(id)) return;
     seen.add(id);
     const user = userById.get(id);
     const userDisabled = !!(user && user.disabled);
     const hasConfig = !!(user && user.hasConfig);
+    const isRemoved = !!(extra && extra.removed);
+    const isCore = !!(extra && extra.core);
     const toggleable = group !== 'core' && !(hasConfig && !userDisabled);
     rows.push({
       id,
       name: name || id,
       description: pluginManagerPackageDescription(name || id),
-      enabled: !userDisabled,
-      toggleable,
+      enabled: !userDisabled && !isRemoved,
+      toggleable: toggleable && !isRemoved,
+      removable: group === 'companion' && !isCore && !isRemoved,
+      removed: isRemoved,
+      core: isCore,
       group,
     });
   };
-  for (const p of COMPANION_PLUGINS) addRow(p.id, p.name, 'companion');
+  for (const p of COMPANION_PLUGINS) addRow(p.id, p.name, 'companion', { removed: removedIds.has(p.id), core: onboardingLogic.CORE_PLUGIN_IDS.has(p.id) });
   for (const [id, name] of insertById) if (!companionById.has(id)) addRow(id, name, 'other');
   for (const [id, u] of userById) if (!companionById.has(id)) addRow(id, u.name, 'other');
   for (const name of bundles) {
@@ -2471,6 +3016,128 @@ function pluginManagerResolveName(id) {
     }
   }
   return '';
+}
+
+// ---------------------------------------------------------------------------
+// 内置插件「移除」（V4.2）：把插件的 id 记入 settings.removedPlugins 跳过
+// syncCompanionPlugins，同时清掉 profile 里的 patch 行与 node_modules 副本。
+// 区别于「禁用」（停用但保留，随时可开）——移除是卸载语义，重启不还原；
+// 市场里重复安装同名内置包也不被拒绝（内置清单已不含它）。
+// ---------------------------------------------------------------------------
+
+function removedPluginIds() {
+  try {
+    const s = updater.loadSettings(updCtx());
+    return new Set(Array.isArray(s.removedPlugins) ? s.removedPlugins : []);
+  } catch { return new Set(); }
+}
+
+function saveRemovedPluginIds(ids) {
+  const ctx = updCtx();
+  const s = updater.loadSettings(ctx);
+  s.removedPlugins = Array.from(ids);
+  updater.saveSettings(ctx, s);
+}
+
+// 恢复单个配套插件：立即复制包 + 补写 patch 行（与 syncCompanionPlugins
+// 的写入规则一致），重启服务后生效。
+function restoreCompanionPlugin(p) {
+  const profileDirP = desktopProfileDir();
+  const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() : p.name);
+  const src = path.join(__dirname, 'assets', 'plugins', dirName);
+  if (!fs.existsSync(path.join(src, 'package.json'))) {
+    return { ok: false, error: '配套插件源目录无效: ' + src };
+  }
+  copyPluginPackage(profileDirP, src, p.name);
+  const patchFile = path.join(profileDirP, 'cordis.patch.yml');
+  let patch = '';
+  try { patch = fs.readFileSync(patchFile, 'utf8'); } catch {}
+  if (!new RegExp('id:\\s*' + p.id + '\\b').test(patch)) {
+    let bundled = [];
+    try { bundled = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
+    if (!bundled.includes(p.name)) {
+      let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
+      if (p.config) block += configLinesFor(p.config);
+      if (p.disabled) block += `      disabled: true\n`;
+      if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/\[\]/m, block);
+      else if (patch.trim() === '') patch = '# dsh web profile patch（由 DSH Desktop 维护）\n' + block;
+      else patch = patch.replace(/\s*$/, '\n') + block;
+      try { fs.writeFileSync(patchFile, patch); } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+// removed=true 移除（卸载语义）；removed=false 恢复。核心插件拒绝移除。
+function pluginManagerSetRemoved(id, removed) {
+  const p = COMPANION_PLUGINS.find((x) => x.id === id);
+  if (!p) return { ok: false, error: '未知内置插件: ' + String(id) };
+  if (onboardingLogic.CORE_PLUGIN_IDS.has(id)) {
+    return { ok: false, error: '核心插件不可移除: ' + String(id) };
+  }
+  const removedSet = removedPluginIds();
+  const patchFile = path.join(desktopProfileDir(), 'cordis.patch.yml');
+  try {
+    if (removed) {
+      // 1) 清 patch 行（顶层 + insert 内层）
+      let text = '';
+      try { text = fs.readFileSync(patchFile, 'utf8'); } catch {}
+      const patched = removePluginFromPatch(text, id);
+      if (patched !== text) fs.writeFileSync(patchFile, patched, 'utf8');
+      // 2) 删 profile node_modules 里的包副本（copyPluginPackage 的产物）
+      const pkgDir = path.join(desktopProfileDir(), 'node_modules', p.name);
+      fs.rmSync(pkgDir, { recursive: true, force: true });
+      // 3) 记入跳过清单（下次 sync 不再写回）
+      removedSet.add(id);
+      saveRemovedPluginIds(removedSet);
+      log('plugin-manager', '已移除内置插件 ' + id);
+      return { ok: true, restartRequired: true };
+    }
+    // 恢复：清出跳过清单 + 立即复制包与行
+    removedSet.delete(id);
+    saveRemovedPluginIds(removedSet);
+    const res = restoreCompanionPlugin(p);
+    if (!res.ok) return res;
+    log('plugin-manager', '已恢复内置插件 ' + id);
+    return { ok: true, restartRequired: true };
+  } catch (err) {
+    log('plugin-manager', '移除/恢复插件 ' + id + ' 失败: ' + ((err && err.message) || err));
+    return { ok: false, error: String((err && err.message) || err) };
+  }
+}
+
+// 图片粘贴保存（dsh-image-paste 插件）：只接受 image/* 的 data URL，
+// base64 解码后原子写入 %TEMP%/dsh-paste/<清洗名>-<时间戳><ext>，返回
+// { ok, path, size }。文件在临时目录，随系统清理，不污染工作区。
+const IMAGE_PASTE_MAX_BYTES = 15 * 1024 * 1024;
+const IMAGE_PASTE_EXT = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+  'image/gif': '.gif',
+  'image/bmp': '.bmp',
+  'image/avif': '.avif',
+  'image/ico': '.ico',
+  'image/x-icon': '.ico',
+  'image/tiff': '.tiff',
+};
+
+function imagePasteSave(dataUrl, name) {
+  const m = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!m) return { ok: false, error: '不是合法的图片 data URL' };
+  const mime = m[1].toLowerCase();
+  if (!IMAGE_PASTE_EXT[mime]) return { ok: false, error: '不支持的图片类型: ' + mime };
+  const buf = Buffer.from(m[2], 'base64');
+  if (buf.length === 0) return { ok: false, error: '图片内容为空' };
+  if (buf.length > IMAGE_PASTE_MAX_BYTES) return { ok: false, error: '图片超过 15MB 上限' };
+  const dir = path.join(os.tmpdir(), 'dsh-paste');
+  fs.mkdirSync(dir, { recursive: true });
+  const base = String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim().slice(0, 40) || '粘贴图片';
+  const file = path.join(dir, base + '-' + Date.now() + IMAGE_PASTE_EXT[mime]);
+  fs.writeFileSync(file, buf);
+  return { ok: true, path: file, size: buf.length };
 }
 
 // 写入/移除用户层 disabled 条目（纯文本手术见 scripts/plugin-manager-patch.js）：
@@ -2532,7 +3199,17 @@ function syncCompanionPlugins() {
     else if (defaultResult === 'kept') log('boot', '用户已设置默认 agent preset，保持不变');
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending = [];
+    const removedIds = removedPluginIds();
+    // V4.2：用户曾从市场安装过与内置插件同名的包时，写包前先迁移残留
+    // （package.json 依赖/bundles + patch 行），让内置版干净接管，避免
+    // duplicate loader entry；完成后系统通知告知「插件树变化」。
+    const migratedBuiltins = [];
     for (const p of COMPANION_PLUGINS) {
+      // V4.2：用户移除过的内置插件不再复制/登记（见 pluginManagerSetRemoved）。
+      if (removedIds.has(p.id)) {
+        log('boot', `已按用户选择跳过被移除的内置插件: ${p.id}`);
+        continue;
+      }
       // 非 @deepseek-ai 作用域的配套包用显式 dir 指定 assets/plugins 下的目录名；
       // 回退解析按「最后一个路径段」取（@scope/name → name；无 scope → 原名）。
       // V4 修复：旧回退是 name.slice('@deepseek-ai/'.length) —— 对无 scope 的
@@ -2544,10 +3221,47 @@ function syncCompanionPlugins() {
         log('boot', `配套插件源目录无效，跳过: ${p.id} → ${src}`);
         continue;
       }
+      try {
+        const { removeMarketDuplicate } = require('./builtin-collision');
+        // 先快照（保护中心）：迁移属于配置面手术，出问题可一键回滚。
+        const dupPreCheck = (() => {
+          try {
+            const pkg = readJsonFile(path.join(profileDirP, 'package.json'));
+            const spec = pkg && pkg.dependencies && pkg.dependencies[p.name];
+            if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
+            if (pkg && pkg.dsh && pkg.dsh.profile && Array.isArray(pkg.dsh.profile.bundles) && pkg.dsh.profile.bundles.includes(p.name)) return true;
+            const patchText = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8');
+            const esc = String(p.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return new RegExp("name:\\s*['\"]?" + esc + "['\"]?\\s*$", 'm').test(patchText);
+          } catch { return false; }
+        })();
+        if (dupPreCheck) ensureGuard().snapshot('builtin-migrate:' + p.id);
+        const migrated = removeMarketDuplicate(profileDirP, p.name, { log: (m) => log('boot', m) });
+        if (migrated.changed && migrated.ok) {
+          migratedBuiltins.push({ name: p.name, dep: migrated.removedDep.length > 0, rows: migrated.removedRows });
+          log('boot', `内置插件 ${p.name} 已接管市场同名包（移除依赖 ${migrated.removedDep.length} 个、patch 行 ${migrated.removedRows.length} 个）`);
+        }
+      } catch (err) {
+        log('boot', `内置插件同名迁移失败(${p.id}): ${String((err && err.message) || err)}`);
+      }
       copyPluginPackage(profileDirP, src, p.name);
       // p.disabled: true 的配套插件默认以禁用行注册（如 dsh-dafeiyu 桌宠），
       // 用户可在「设置 → 插件 → 管理」里启用；已有行不重写，用户选择优先。
       pending.push({ id: p.id, name: p.name, disabled: p.disabled === true, config: p.config });
+    }
+    if (migratedBuiltins.length) {
+      try {
+        const names = migratedBuiltins.map((m) => m.name).join('、');
+        const n = new Notification({
+          title: '内置插件已接管同名市场包',
+          body: `检测到市场安装的重复包，已改用内置版本（${names}）。插件树已自动整理，本次启动生效。`,
+          icon: path.join(__dirname, 'assets', 'icon.png'),
+        });
+        n.on('click', () => showMainWindow());
+        n.show();
+      } catch (err) {
+        log('boot', '内置接管通知发送失败: ' + err.message);
+      }
     }
     // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
     for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
@@ -3088,17 +3802,39 @@ async function runClientUpdateFlow(manual) {
 
   clientUpdateBusy = true;
   const progressWin = showUpdateWindow(release.version, 'client');
+  const progress = makeUpdateProgressPusher(progressWin);
   try {
+    // V4.1 更新保障①：客户端更新前同样强制插件/配置快照，失败则中止
+    //（下载与安装都不动 profile，但多一道回滚点总比少一道强）。
+    if (!ensureGuard().snapshot('pre-update:client:' + release.version)) {
+      throw new Error('更新前保护快照失败（profile 不可读），已中止客户端更新。');
+    }
+    // V4.2：探测其余发布源的同版本 release 作为备用下载源（GitHub ↔ Gitee），
+    // 主源多次失败/卡住时自动切换，全程在弹窗内提示。
+    const fallbacks = await clientUpdater.releaseFallbacks(ctx, release);
+    const speedState = { t: 0, bytes: 0, speed: null };
     const { filePath, size } = await clientUpdater.downloadRelease(ctx, release, {
+      fallbacks,
+      onSourceChange: (source, idx, urls) => {
+        log('client-update', `切换备用下载源（${idx + 1}/${urls.length}）`);
+        progress.force({ stage: '下载停滞，已自动切换下载源（' + (idx + 1) + '/' + urls.length + '）…' });
+      },
       onProgress: (received, total) => {
-        const pct = total > 0 ? Math.round((received * 100) / total) : -1;
-        if (progressWin && !progressWin.isDestroyed()) {
-          progressWin.webContents
-            .executeJavaScript(
-              `window.__setProgress && window.__setProgress(${pct}, ${Math.round(received / 1048576)}, ${Math.round(total / 1048576)})`
-            )
-            .catch(() => {});
+        const now = Date.now();
+        if (speedState.t && now - speedState.t >= 500) {
+          const inst = (received - speedState.bytes) / ((now - speedState.t) / 1000);
+          speedState.speed = speedState.speed == null ? inst : speedState.speed * 0.7 + inst * 0.3;
         }
+        speedState.t = now;
+        speedState.bytes = received;
+        const sp = speedState.speed || 0;
+        const pct = total > 0 ? Math.round((received * 100) / total) : -1;
+        const meta = {};
+        if (pct >= 0 && sp > 0 && received < total) {
+          meta.speedMBps = sp / 1048576;
+          meta.etaSec = (total - received) / sp;
+        }
+        progress.client(received, total, meta);
       },
     });
     settings.pendingClientUpdate = { version: release.version, path: filePath, source: release.source };
@@ -3109,7 +3845,7 @@ async function runClientUpdateFlow(manual) {
       type: 'info',
       title: '下载完成',
       message: `已准备好 Deepseek Harness EAC 封装 v${release.version}（${Math.round(size / 1048576)} MB）。`,
-      detail: '立即重启应用完成更新？\n· 重启后自动安装新版本并启动\n· 选择稍后重启：下次启动时再提示安装',
+      detail: '立即重启应用完成更新？\n· 重启后自动安装新版本并启动\n· 插件、皮肤、会话与配置全部保留（仅替换程序本体）\n· 选择稍后重启：下次启动时再提示安装',
       buttons: ['立即重启', '稍后重启'],
       defaultId: 0,
       cancelId: 1,
@@ -3150,7 +3886,7 @@ function offerPendingClientUpdate() {
     type: 'info',
     title: '有待安装的客户端更新',
     message: `已下载 Deepseek Harness EAC 封装 v${pending.version}，是否现在安装并重启？`,
-    detail: '安装包保存在数据目录的 updates 文件夹中。',
+    detail: '安装包保存在数据目录的 updates 文件夹中。\n插件、皮肤、会话与配置全部保留（仅替换程序本体）。',
     buttons: ['立即重启', '稍后'],
     defaultId: 0,
     cancelId: 1,
@@ -3268,7 +4004,19 @@ function verifyBundledModules() {
   });
 }
 
-function boot() {
+// 全新 vs 老用户判定（须在 run-state / migrate 标记 / 稳定端口等任何写盘
+// 之前调用）：settings.json 在迁移流程里会被无条件创建，事后无法区分。
+function computeOnboardingNeed() {
+  const settings = updater.loadSettings(updCtx());
+  return onboardingLogic.needsPluginOnboarding({
+    settings,
+    settingsFileExists: fs.existsSync(updater.settingsPath(updCtx())),
+    profileDirExists: fs.existsSync(path.join(desktopProfileDir(), 'node_modules')),
+    sharedProfileExists: fs.existsSync(path.join(dshHome || path.join(os.homedir(), '.dsh'), 'profiles', 'web')),
+  });
+}
+
+async function boot() {
   // Portable builds keep all data next to the exe.
   if (!app.isPackaged && process.env.DSH_DESKTOP_USERDATA) {
     app.setPath('userData', process.env.DSH_DESKTOP_USERDATA);
@@ -3291,16 +4039,26 @@ function boot() {
   startPreviewStaticServer();
   registerChromeIpc();
   createTray();
+  // 新老用户判定必须在任何写盘之前：run-state / migrate 标记 / 稳定端口
+  // 都会在启动早期创建 settings.json，事后无法区分全新安装与升级。
+  const onboardingNeeded = computeOnboardingNeed();
   // 看门狗 + 运行状态标记（安装版）：意外崩溃后自动拉起并告知用户。
   writeRunState();
   startWatchdog();
   const uncleanPrev = detectUncleanPreviousRun();
+  // V4.1 更新保障③：便携版客户端更新后若新版崩溃（非干净退出 + 上一版
+  // 备份 marker 仍在），先用上一版还原再继续启动，随后再告知用户。
+  autoRollbackClientIfCrashed(uncleanPrev);
   if (uncleanPrev) notifyUncleanRestart(uncleanPrev);
   // 渲染进程崩溃/挂起自恢复状态机：必须在 createWindow 之前装配。
   initRendererRecovery();
   startHeartbeatLoop();
   // 一次性迁移：从共享 web profile 切到桌面专属 profile（与原生 CLI 共存）。
   migrateFromSharedWebProfile();
+  // 首次启动内置插件选择向导：仅全新用户展示（升级用户静默跳过）。提交的
+  // 选择在 onboard:submit 里已写入 patch（disabled/裸条目），此后 sync 的
+  // 「已有行不重写」规则天然保留用户选择。
+  await runPluginOnboardingIfNeeded(onboardingNeeded);
   syncCompanionPlugins();
   syncBundledSkills();
   healProfileModules();
@@ -3335,6 +4093,10 @@ function boot() {
     .then(() => verifyBundledModules())
     .then(() => startAndShowGuarded())
     .then(() => {
+      // V4.1 更新保障②/③：新版健康启动 —— 清理官方 dsh 上一版本备份与
+      // 便携版客户端旧 exe 备份（崩溃自回退的保险丝就此解除）。
+      updater.confirmPreviousAgentHealthy(updCtx());
+      cleanupClientBackupIfHealthy();
       // Session-completion notifications: watch dsh session logs under the
       // effective DSH_HOME (same config the CLI uses).
       const s = loadSettings(updCtx());

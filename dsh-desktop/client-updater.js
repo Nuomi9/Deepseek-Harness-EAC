@@ -347,6 +347,19 @@ function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
   });
 }
 
+/** 判断是否“磁盘空间不足”类错误：重试不会好转，必须立即停下并提示用户。 */
+function isNoSpaceError(err) {
+  if (!err) return false;
+  if (err.code === 'ENOSPC') return true;
+  return /no space left on device/i.test(String(err.message || ''));
+}
+
+function noSpaceError(msg) {
+  const e = new Error(msg);
+  e.code = 'ENOSPC';
+  return e;
+}
+
 /** 带断点续传 + 指数退避重试的下载。慢链路上 167MB 直连常被 RST
  *  （net::ERR_CONNECTION_RESET），一锤子流下载必然偶发失败；每次重试
  *  从已落盘的 .part 断点继续，而不是整包重来。 */
@@ -362,6 +375,7 @@ async function downloadFile(url, dest, { onProgress, ctx = null, maxAttempts = 1
       return await downloadFileOnce(url, dest, { onProgress, resumeFrom });
     } catch (err) {
       lastErr = err;
+      if (isNoSpaceError(err)) break; // 磁盘满：重试只会继续写失败，直接终止并提示
       if (err.message === 'RESUME_INVALID') continue; // .part 已作废，立即全新重试
       if (attempt < maxAttempts) {
         const delay = Math.min(3000 * 2 ** (attempt - 1), 30000);
@@ -370,6 +384,31 @@ async function downloadFile(url, dest, { onProgress, ctx = null, maxAttempts = 1
       }
     }
   }
+  if (isNoSpaceError(lastErr)) {
+    throw noSpaceError('磁盘空间不足，无法下载更新包。请清理磁盘空间（如临时文件、旧安装包）后重试。');
+  }
+  throw lastErr || new Error('下载失败');
+}
+
+// 同源多次失败后自动切换镜像源（GitHub ↔ Gitee 等）：切换时丢弃旧 .part
+//（不同来源的文件可能不一致，断点续传不安全），整包重新下载。
+async function downloadWithSourceSwitch(urls, dest, { onProgress, ctx = null, onSourceChange = null } = {}) {
+  let lastErr;
+  for (let i = 0; i < urls.length; i++) {
+    if (i > 0) {
+      try { fs.rmSync(dest + '.part', { force: true }); } catch {}
+      try { fs.rmSync(dest, { force: true }); } catch {}
+      ctx?.log?.('client-update', `当前下载源失败（${lastErr && lastErr.message}），切换备用源 ${i + 1}/${urls.length}`);
+      if (onSourceChange) { try { onSourceChange(i); } catch {} }
+    }
+    try {
+      return await downloadFile(urls[i], dest, { onProgress, ctx, maxAttempts: i === 0 ? 4 : 6 });
+    } catch (err) {
+      lastErr = err;
+      if (isNoSpaceError(err)) throw err; // 磁盘满：换源也不会好转
+    }
+  }
+  if (isNoSpaceError(lastErr)) throw lastErr;
   throw lastErr || new Error('下载失败');
 }
 
@@ -453,7 +492,32 @@ async function expectedSha256(ctx, release, sel) {
   return null;
 }
 
-async function downloadRelease(ctx, release, { onProgress } = {}) {
+// 尽力补齐同一版本在其余发布源（GitHub ↔ Gitee）的 release 对象，供下载
+// 中途切换源使用。任一源失败/无该版本都静默跳过（仅记日志）。
+async function releaseFallbacks(ctx, release, { apiEndpointsList = null } = {}) {
+  const eps = apiEndpointsList || apiEndpoints();
+  const fallbacks = [];
+  for (const ep of eps) {
+    if (ep.name === release.source) continue;
+    try {
+      const data = await httpGetJson(ep.url, ep.headers || {});
+      const rawList = Array.isArray(data) ? data : [data];
+      const same = rawList
+        .filter((r) => r && !r.draft && !r.prerelease)
+        .map((r) => normalizeRelease(ep.name, r))
+        .find((r) => r.version === release.version);
+      if (!same) { ctx.log('client-update', `[${ep.name}] 无 ${release.version} 的 release（跳过备用源）`); continue; }
+      try { selectAsset(same); } catch { continue; } // 该源没有可用资产，跳过
+      fallbacks.push(same);
+      ctx.log('client-update', `[${ep.name}] 已就绪为 ${release.version} 的备用下载源`);
+    } catch (err) {
+      ctx.log('client-update', `[${ep.name}] 备用源探测失败: ${err.message}`);
+    }
+  }
+  return fallbacks;
+}
+
+async function downloadRelease(ctx, release, { onProgress, onSourceChange, fallbacks = [] } = {}) {
   const dir = path.join(ctx.userDataDir, 'updates');
   fs.mkdirSync(dir, { recursive: true });
   const sel = selectAsset(release);
@@ -461,12 +525,24 @@ async function downloadRelease(ctx, release, { onProgress } = {}) {
   const finalPath = path.join(dir, sel.name);
   const partPaths = [];
   let merged = 0;
+  // 备用源按相同的分片名对齐（命名规则一致时索引即对应；对不上就跳过）。
+  const fbSelections = [];
+  for (const fb of fallbacks) {
+    try {
+      const fbSel = selectAsset(fb);
+      if (fbSel.parts.length === sel.parts.length && fbSel.parts.every((p, i) => p.name === sel.parts[i].name)) fbSelections.push(fbSel);
+    } catch {}
+  }
   for (let i = 0; i < sel.parts.length; i++) {
     const p = sel.parts[i];
     ctx.log('client-update', `下载 ${p.name}（${Math.round(p.size / 1048576)} MB）`);
     const dest = split ? finalPath + '.part' + (i + 1) : finalPath;
-    const res = await downloadFile(p.url, dest, {
+    const urls = [p.url, ...fbSelections.map((f) => (f.parts[i] && f.parts[i].url) || '').filter(Boolean)];
+    const res = await downloadWithSourceSwitch(urls, dest, {
       ctx,
+      onSourceChange: (idx) => {
+        if (onSourceChange) onSourceChange(release.source, idx, urls);
+      },
       onProgress: (r) => {
         if (onProgress) onProgress(split ? merged + r : r, sel.totalSize);
       },
@@ -475,7 +551,12 @@ async function downloadRelease(ctx, release, { onProgress } = {}) {
   }
   if (split) {
     ctx.log('client-update', `合并 ${partPaths.length} 个分片 → ${sel.name}`);
-    await concatFiles(partPaths, finalPath);
+    try {
+      await concatFiles(partPaths, finalPath);
+    } catch (err) {
+      if (isNoSpaceError(err)) throw noSpaceError('磁盘空间不足，无法合并更新分片。请清理磁盘空间后重试。');
+      throw err;
+    }
   }
   const stat = fs.statSync(finalPath);
   if (stat.size < MIN_VALID_BYTES) {
@@ -545,8 +626,12 @@ function buildApplyScript({ newExe, oldExe, portable }) {
       'copy /y "%NEW%" "%OLD%" >nul 2>&1',
       'if errorlevel 1 goto failed',
       'del "%NEW%" >nul 2>&1',
+      // V4.1 更新保障③：成功路径也保留 %OLD%.bak（上一版 exe）并落 marker。
+      // 新版若崩溃（run-state 非干净退出 + marker 存在），下次启动自动回退。
+      // 新版健康启动后由主进程清理（cleanupClientBackupIfHealthy）。
+      'if exist "%OLD%.bak" copy /y "%OLD%" "%OLD%.crash" >nul 2>&1',
       'start "" "%OLD%"',
-      'if exist "%OLD%.bak" del "%OLD%.bak" >nul 2>&1',
+      'echo updated %date% %time% > "%OLD%.bak.marker"',
       'del "%~f0" >nul 2>&1',
       'exit /b 0',
       ':failed',
@@ -634,4 +719,4 @@ function applyUpdate(ctx, pending) {
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, buildApplyScript, buildSpawnCommandLine, isPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, DEFAULT_REPOS };
+module.exports = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildSpawnCommandLine, isPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, DEFAULT_REPOS };
