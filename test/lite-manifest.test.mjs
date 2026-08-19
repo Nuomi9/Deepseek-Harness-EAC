@@ -17,14 +17,14 @@ const KEEP_SKINS = [
 
 const KEEP_PLUGIN_DIRS = [
   'dsh-auto-compact', 'dsh-better-sidebar', 'dsh-plugin-manager',
-  'dsh-plugin-marketplace', 'dsh-plugin-shield', 'dsh-plugin-wizard',
+  'dsh-plugin-marketplace', 'dsh-plugin-shield',
   'dsh-skin-switch', 'dsh-undo-savepoint', 'dsh-webui-market',
 ].sort();
 
 // main.js COMPANION_PLUGINS 里保留的注册 id（含新补登记的 plugin-marketplace）。
 const KEEP_PLUGIN_IDS = [
   'auto-compact', 'better-sidebar', 'dsh-market-plugin', 'dsh-undo',
-  'plugin-manager', 'plugin-marketplace', 'plugin-shield', 'plugin-wizard',
+  'plugin-manager', 'plugin-marketplace', 'plugin-shield',
   'skin-switch',
 ].sort();
 
@@ -37,7 +37,8 @@ const FORBIDDEN_TOKENS = [
   'font-custom', 'change-review', 'float-window', 'dsh-navbar', 'session-manager',
   'conversation-tweaks', 'prompt-custom', 'third-party-thinking', 'side-session',
   'dafeiyu', 'offpeak', 'file-drop', 'image-paste', 'settings-nav-custom',
-  'settings-groups', 'patch-session-manage',
+  'settings-groups', 'patch-session-manage', 'plugin-wizard', 'onboard:',
+  'pluginOnboardingDone',
 ];
 
 const FORBIDDEN_FILES = [
@@ -47,6 +48,7 @@ const FORBIDDEN_FILES = [
   'scripts/analyze-session-log.js', 'scripts/inspect-session.js',
   'scripts/repair-session-log.js', 'scripts/tmp-dbg-chat.cjs',
   'scripts/tmp-dbg2.cjs', 'scripts/tmp-instrument.cjs',
+  'scripts/onboarding.js', 'assets/onboarding.html', 'assets/onboarding-preload.js',
 ];
 
 // 移除功能的测试文件（随功能一并删除，防止遗留测试被带回来）。
@@ -59,6 +61,7 @@ const FORBIDDEN_TESTS = [
   'pricing-window.test.mjs', 'settings-groups-core.test.mjs',
   'settings-nav-core.test.mjs', 'tool-vision-stream-guard.test.mjs',
   'update-mirror-chain.test.mjs', 'widget-theme.test.mjs',
+  'onboarding-selection.test.mjs',
 ];
 
 test('皮肤：assets/skins 恰为 9 款（无 maid-atelier）', () => {
@@ -79,7 +82,7 @@ test('皮肤：dsh-skin-switch 不再引用 maid-atelier', () => {
   assert.ok(!/maid-atelier|srcMaid|licMaid|creditMaid|noticeMaid|repoMaid/.test(client));
 });
 
-test('插件：assets/plugins 恰为保留的 9 个目录', () => {
+test('插件：assets/plugins 恰为保留的 8 个目录', () => {
   const dirs = readdirSync(join(root, 'assets', 'plugins'), { withFileTypes: true })
     .filter((e) => e.isDirectory()).map((e) => e.name).sort();
   assert.deepEqual(dirs, KEEP_PLUGIN_DIRS);
@@ -88,7 +91,7 @@ test('插件：assets/plugins 恰为保留的 9 个目录', () => {
   }
 });
 
-test('插件：main.js COMPANION_PLUGINS 注册表恰为保留的 9 个 id', () => {
+test('插件：main.js COMPANION_PLUGINS 注册表恰为保留的 8 个 id', () => {
   const main = read('main.js');
   const m = main.match(/const COMPANION_PLUGINS = \[([\s\S]*?)\];/);
   assert.ok(m, 'main.js 中找不到 COMPANION_PLUGINS 定义');
@@ -96,14 +99,15 @@ test('插件：main.js COMPANION_PLUGINS 注册表恰为保留的 9 个 id', () 
   assert.deepEqual(ids, KEEP_PLUGIN_IDS);
 });
 
-test('插件：向导核心组（CORE）与推荐组（RECOMMENDED）为 v4Lite 清单', () => {
-  const onb = read('scripts/onboarding.js');
-  const core = onb.match(/CORE_PLUGIN_IDS = new Set\(\[([\s\S]*?)\]\)/);
-  const rec = onb.match(/RECOMMENDED_PLUGIN_IDS = new Set\(\[([\s\S]*?)\]\)/);
-  assert.ok(core && rec, 'onboarding.js 中找不到 CORE/RECOMMENDED 定义');
+test('插件：核心组（CORE_PLUGIN_IDS）为 v4Lite 清单，选择向导已整体移除', () => {
+  const main = read('main.js');
+  const core = main.match(/const CORE_PLUGIN_IDS = new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(core, 'main.js 中找不到 CORE_PLUGIN_IDS 定义');
   const ids = (s) => [...s[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort();
-  assert.deepEqual(ids(core), ['plugin-manager', 'plugin-shield', 'plugin-wizard']);
-  assert.deepEqual(ids(rec), ['dsh-market-plugin', 'plugin-marketplace', 'skin-switch']);
+  assert.deepEqual(ids(core), ['plugin-manager', 'plugin-shield']);
+  for (const rel of ['scripts/onboarding.js', 'assets/onboarding.html', 'assets/onboarding-preload.js', 'assets/plugins/dsh-plugin-wizard']) {
+    assert.ok(!existsSync(join(root, rel)), rel + ' 仍存在');
+  }
 });
 
 test('壳层：main.js / preload.js 无已移除功能的残留引用', () => {

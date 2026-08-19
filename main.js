@@ -41,7 +41,13 @@ const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync'
 const { buildErrorDetail } = require('./error-detail');
 const { togglePluginInPatch, removePluginFromPatch, hasEntryId } = require('./scripts/plugin-manager-patch');
 const { collectPluginRows } = require('./plugin-manager-state');
-const onboardingLogic = require('./scripts/onboarding');
+// v4Lite 核心内置插件（壳运行必需）：插件市场/保护中心/启停管理。
+// 其他内置插件可被「插件 → 管理」移除，核心组拒绝移除（原选择向导的
+// 锁定语义，向导本身已移除）。
+const CORE_PLUGIN_IDS = new Set([
+  'plugin-manager',
+  'plugin-shield',
+]);
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -997,22 +1003,6 @@ function createWindow({ startHidden = false } = {}) {
   wireWindowRecovery();
 }
 
-// ---------------------------------------------------------------------------
-// 内置插件选择向导（首次启动 first 模式 / 设置页二次打开 rerun 模式）
-// ---------------------------------------------------------------------------
-
-let wizardWindow = null;
-let wizardMode = 'first';
-let wizardDone = null;
-
-function closeWizard(result) {
-  const cb = wizardDone;
-  wizardDone = null;
-  if (wizardWindow && !wizardWindow.isDestroyed()) wizardWindow.destroy();
-  wizardWindow = null;
-  if (cb) cb(result);
-}
-
 // 包目录体积（递归字节数，带缓存）。首次同步前 assets 尚未落盘到 profile，
 // 以分发目录为准展示体积提示。
 const pluginDirSizeCache = new Map();
@@ -1031,89 +1021,6 @@ function pluginDirSize(dirName) {
   } catch {}
   pluginDirSizeCache.set(dirName, total);
   return total;
-}
-
-// 向导目录：核心/推荐标记 + 描述 + 包体积（数据来源与 sync 保持一致）。
-function buildOnboardingCatalog() {
-  return onboardingLogic.buildCatalog(COMPANION_PLUGINS, {
-    coreIds: onboardingLogic.CORE_PLUGIN_IDS,
-    recommendedIds: onboardingLogic.RECOMMENDED_PLUGIN_IDS,
-    describe: (name) => pluginManagerPackageDescription(name),
-    dirSize: (dirName) => pluginDirSize(dirName),
-  });
-}
-
-// patch + 注册表 → 各内置插件当前启用状态（rerun 模式预填勾选用）。
-function pluginCurrentState() {
-  const { entries } = pluginManagerReadPatch();
-  return onboardingLogic.pluginCurrentState(entries, COMPANION_PLUGINS);
-}
-
-// 打开向导窗口。返回 Promise：提交（{ok:true, applied, errors}）或关闭
-// （{ok:false, cancelled:true}）时 resolve；窗口已存在时聚焦并直接 resolve。
-function openPluginWizard({ mode = 'first' } = {}) {
-  return new Promise((resolve) => {
-    if (wizardWindow && !wizardWindow.isDestroyed()) {
-      wizardWindow.focus();
-      resolve({ ok: false, cancelled: true });
-      return;
-    }
-    wizardMode = mode === 'rerun' ? 'rerun' : 'first';
-    wizardDone = resolve;
-    const win = new BrowserWindow({
-      width: 920,
-      height: 700,
-      minWidth: 640,
-      minHeight: 520,
-      show: false,
-      title: '内置插件选择向导',
-      backgroundColor: '#0b1220',
-      icon: path.join(__dirname, 'assets', 'icon.png'),
-      ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
-      webPreferences: {
-        preload: path.join(__dirname, 'assets', 'onboarding-preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: false,
-      },
-    });
-    wizardWindow = win;
-    win.loadFile(path.join(__dirname, 'assets', 'onboarding.html'));
-    win.once('ready-to-show', () => { if (!win.isDestroyed()) win.show(); });
-    win.on('closed', () => {
-      const cb = wizardDone;
-      wizardDone = null;
-      wizardWindow = null;
-      if (cb) cb({ ok: false, cancelled: true });
-    });
-    log('boot', '已打开内置插件选择向导（' + wizardMode + ' 模式）');
-  });
-}
-
-// 启动门控：全新用户展示向导并等待提交；升级用户静默跳过并记完成标记。
-// 关闭向导（取消）= 保持全部启用（等价老用户现状），只记完成标记不再打扰。
-// onboardingNeeded 必须在任何写盘之前由 computeOnboardingNeed 预计算：
-// settings.json 会在启动早期被迁移流程无条件创建，事后无法区分新老用户。
-async function runPluginOnboardingIfNeeded(onboardingNeeded) {
-  if (!onboardingNeeded) {
-    const settings = updater.loadSettings(updCtx());
-    if (!settings.pluginOnboardingDone) {
-      settings.pluginOnboardingDone = true;
-      updater.saveSettings(updCtx(), settings);
-      log('boot', '升级用户：跳过插件选择向导，插件保持全量现状');
-    }
-    return { ran: false };
-  }
-  log('boot', '全新用户：展示内置插件选择向导');
-  const result = await openPluginWizard({ mode: 'first' });
-  if (!result.ok) {
-    const s = updater.loadSettings(updCtx());
-    s.pluginOnboardingDone = true;
-    updater.saveSettings(updCtx(), s);
-    log('boot', '用户关闭插件选择向导：保持全部插件启用');
-  }
-  return { ran: true, ...result };
 }
 
 // ---------------------------------------------------------------------------
@@ -1674,71 +1581,6 @@ function registerChromeIpc() {
     }
   });
 
-  // 内置插件选择向导（assets/onboarding.html，onboarding-preload.js 桥）：
-  //   list   —— 目录（核心/推荐标记 + 描述 + 体积）+ 模式 + 当前启停状态
-  //   submit —— 校验选择 → 写 disabled/裸条目 → 持久化 settings → 关窗；
-  //             rerun 模式随后重启 Web 服务使 host 侧插件生效
-  //   close  —— 用户点「跳过」/关闭窗口（走 closed 事件的 cancelled 分支）
-  // 来源校验：只接受向导窗口自身的 webContents。
-  ipcMain.handle('onboard:list', async (event) => {
-    if (!wizardWindow || event.sender !== wizardWindow.webContents) return null;
-    return {
-      mode: wizardMode,
-      catalog: buildOnboardingCatalog(),
-      current: wizardMode === 'rerun' ? pluginCurrentState() : null,
-    };
-  });
-
-  ipcMain.handle('onboard:submit', async (event, { ids } = {}) => {
-    if (!wizardWindow || event.sender !== wizardWindow.webContents) return { ok: false, error: 'unauthorized' };
-    // 首次向导时 sync 尚未运行、profile 目录可能还不存在：先按官方模板初始化
-    // （package.json / pnpm-workspace.yaml / 空 patch 层），否则写盘 ENOENT。
-    ensureDesktopProfileInit();
-    const want = onboardingLogic.sanitizeSelection(ids, COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS);
-    // 首次：patch 行尚未写全，normalize 全部非核心插件（current=null）；
-    // 二次：只切换与用户选择不同的插件。
-    const current = wizardMode === 'rerun' ? pluginCurrentState() : null;
-    const ops = onboardingLogic.buildSelectionOps(COMPANION_PLUGINS, onboardingLogic.CORE_PLUGIN_IDS, want, current);
-    const errors = [];
-    for (const op of ops) {
-      try {
-        const res = pluginManagerSetEnabled(op.id, op.enable);
-        if (!res.ok) errors.push(op.id + ': ' + (res.error || 'unknown'));
-        else log('plugin-manager', '向导已' + (op.enable ? '启用' : '停用') + '内置插件 ' + op.id);
-      } catch (err) {
-        errors.push(op.id + ': ' + ((err && err.message) || err));
-      }
-    }
-    const s = updater.loadSettings(updCtx());
-    s.pluginOnboardingDone = true;
-    s.builtinPluginSelection = Array.from(want);
-    updater.saveSettings(updCtx(), s);
-    log('boot', '插件选择向导已应用：' + ops.length + ' 个插件状态变更' + (errors.length ? '，失败 ' + errors.join('; ') : ''));
-    const mode = wizardMode;
-    closeWizard({ ok: true, applied: ops.length, errors });
-    if (mode === 'rerun' && serverProc && serverProc.exitCode === null) {
-      // 二次向导：重启 Web 服务让 host 侧插件生效（与插件市场安装后同路径）。
-      restartWebServiceCore();
-    }
-    return { ok: true, applied: ops.length, errors };
-  });
-
-  ipcMain.on('onboard:close', (event) => {
-    if (!wizardWindow || event.sender !== wizardWindow.webContents) return;
-    closeWizard({ ok: false, cancelled: true });
-  });
-
-  // 设置页「插件 → 选择向导」（dsh-plugin-wizard 插件）二次打开入口。
-  ipcMain.handle('onboard:open', (event) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
-    if (wizardWindow && !wizardWindow.isDestroyed()) {
-      wizardWindow.focus();
-      return { ok: true, reused: true };
-    }
-    openPluginWizard({ mode: 'rerun' });
-    return { ok: true };
-  });
-
   // preload 转发的页面异常（window.onerror / unhandledrejection）。
   ipcMain.on('dsh:page-error', (event, payload) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return;
@@ -1830,10 +1672,6 @@ const COMPANION_PLUGINS = [
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
-  // 插件选择向导入口（设置页「插件 → 选择向导」分区）：重新打开首次启动的
-  // 内置插件选择向导，按需启用/停用内置插件。纯客户端 UI + 壳层 IPC
-  // （onboard:*），host 半边 no-op；核心插件组内锁定，永不被向导停用。
-  { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
   // 崩溃急救/撤销回退（dsh-undo-savepoint，lire1131，MIT）：配置文件 + 插件
   // 代码树快照、undo/redo、一键安全模式、密钥脱敏 vault。与插件保护中心
   // （配置面快照）和「文件」还原（会话内改动）互补，覆盖「配置改坏、dsh
@@ -1846,7 +1684,7 @@ const COMPANION_PLUGINS = [
 //
 // 只登记「上游仍在 npm / GitHub 发布」的社区插件 —— 内置分发的副本可以
 // 跟随上游修复而更新。EAC 独占插件（package.json 标记 private，如
-// dsh-skin-switch / dsh-plugin-shield / dsh-plugin-wizard / dsh-auto-compact
+// dsh-skin-switch / dsh-plugin-shield / dsh-auto-compact
 // / dsh-better-sidebar 之外的私有包）绝不登记。
 // 运行时 npm 404（未上架/改名）优雅降级为「无上游」，绝不阻塞。
 // ---------------------------------------------------------------------------
@@ -2350,7 +2188,7 @@ function pluginManagerCollect() {
   } catch {}
   return collectPluginRows(entries, {
     companion: COMPANION_PLUGINS.map((p) => ({ id: p.id, name: p.name })),
-    coreIds: onboardingLogic.CORE_PLUGIN_IDS,
+    coreIds: CORE_PLUGIN_IDS,
     removedIds: removedPluginIds(),
     describe: (name) => pluginManagerPackageDescription(name),
     bundles,
@@ -2427,7 +2265,7 @@ function restoreCompanionPlugin(p) {
 function pluginManagerSetRemoved(id, removed) {
   const p = COMPANION_PLUGINS.find((x) => x.id === id);
   if (!p) return { ok: false, error: '未知内置插件: ' + String(id) };
-  if (onboardingLogic.CORE_PLUGIN_IDS.has(id)) {
+  if (CORE_PLUGIN_IDS.has(id)) {
     return { ok: false, error: '核心插件不可移除: ' + String(id) };
   }
   const removedSet = removedPluginIds();
@@ -3105,18 +2943,6 @@ function verifyBundledModules() {
   });
 }
 
-// 全新 vs 老用户判定（须在 run-state / migrate 标记 / 稳定端口等任何写盘
-// 之前调用）：settings.json 在迁移流程里会被无条件创建，事后无法区分。
-function computeOnboardingNeed() {
-  const settings = updater.loadSettings(updCtx());
-  return onboardingLogic.needsPluginOnboarding({
-    settings,
-    settingsFileExists: fs.existsSync(updater.settingsPath(updCtx())),
-    profileDirExists: fs.existsSync(path.join(desktopProfileDir(), 'node_modules')),
-    sharedProfileExists: fs.existsSync(path.join(dshHome || DEFAULT_DSH_HOME, 'profiles', 'web')),
-  });
-}
-
 async function boot() {
   // Dev override for userData (v4Lite has no portable target).
   if (!app.isPackaged && process.env.DSH_DESKTOP_USERDATA) {
@@ -3139,9 +2965,6 @@ async function boot() {
   startPreviewStaticServer();
   registerChromeIpc();
   createTray();
-  // 新老用户判定必须在任何写盘之前：run-state / migrate 标记 / 稳定端口
-  // 都会在启动早期创建 settings.json，事后无法区分全新安装与升级。
-  const onboardingNeeded = computeOnboardingNeed();
   // 看门狗 + 运行状态标记（安装版）：意外崩溃后自动拉起并告知用户。
   writeRunState();
   startWatchdog();
@@ -3152,10 +2975,6 @@ async function boot() {
   startHeartbeatLoop();
   // 一次性迁移：从共享 web profile 切到桌面专属 profile（与原生 CLI 共存）。
   migrateFromSharedWebProfile();
-  // 首次启动内置插件选择向导：仅全新用户展示（升级用户静默跳过）。提交的
-  // 选择在 onboard:submit 里已写入 patch（disabled/裸条目），此后 sync 的
-  // 「已有行不重写」规则天然保留用户选择。
-  await runPluginOnboardingIfNeeded(onboardingNeeded);
   syncCompanionPlugins();
   healProfileModules();
   createWindow();

@@ -44,11 +44,6 @@ const dshDesktop = {
   guard: {
     action: (action, value) => ipcRenderer.invoke('guard:action', { action, value }),
   },
-  // 内置插件选择向导：设置页「插件 → 选择向导」（dsh-plugin-wizard 插件）
-  // 从这里二次打开向导窗口，按需启用/停用内置插件。
-  pluginWizard: {
-    open: () => ipcRenderer.invoke('onboard:open'),
-  },
   // 插件管理（dsh-plugin-manager 插件「管理」标签）：列出配套/用户/核心插件
   // 及启用状态，写入/移除 profile cordis.patch.yml 的 disabled 条目
   // （完全退出并重启应用后生效，返回 { ok, restartRequired }）。

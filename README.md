@@ -10,7 +10,7 @@
 - ✅ **退出即清理**：退出应用有界等待 dsh 进程树真正退出（优雅 → 强杀），不留孤儿进程
 - ✅ **数据目录隔离**：默认使用 `DSH_HOME = ~\.dsh-v4lite`（与原版 `~\.dsh` 完全隔离，两端可并行安装运行），已有会话/API Key 可复制 `~\.dsh\settings.yaml` 迁移
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 9 款 Web UI 皮肤，互斥切换、默认不启用、重启生效；随包标注出处与许可
-- ✅ **内置社区插件套件**（9 个，详见「内置插件」章节）：插件市场 ×2 / 插件保护中心 / 启停管理 / 选择向导 / 崩溃急救撤销 / 右侧栏工作台 / 自动压缩 / 皮肤切换，全部随包分发、开箱即用
+- ✅ **内置社区插件套件**（8 个，详见「内置插件」章节）：插件市场 ×2 / 插件保护中心 / 启停管理 / 崩溃急救撤销 / 右侧栏工作台 / 自动压缩 / 皮肤切换，全部随包分发、开箱即用
 - ✅ **崩溃急救与撤销（dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
 - ✅ **错误日志一键复制**：启动失败 / DSH 服务停止的报错弹窗带「复制日志」按钮，一键复制完整诊断信息供反馈
 - ✅ **快捷方式自动维护**：按「目标 exe」识别既有快捷方式（用户改名/换图标不再重复新建），自定义图标绝不覆盖
@@ -57,15 +57,14 @@
 
 ## 内置插件（v4Lite）
 
-以下 9 个插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；启动时的 heal 流程会自动清理模块双实例遮蔽包。
+以下 8 个插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；启动时的 heal 流程会自动清理模块双实例遮蔽包。
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
 | `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测）；目录中已被客户端内置的插件显示「已内置」徽标并拒绝重复安装 | 设置 → 插件 → 插件市场 |
-| `dsh-plugin-marketplace` | 第二插件市场（Zat 可视化市场）：GitHub `dsh-plugin` topic 检索、中文插件简介、国内镜像兜底 | 设置 → 插件 → 插件市场 |
-| `dsh-plugin-manager` | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停 | 设置 → 插件 → 管理 |
+| `dsh-plugin-marketplace` | 第二插件市场（npm 检索）：搜索 npm 上的 dsh 插件并一键安装（跑在桌面专属 profile，与原版完全隔离） | 设置 → 插件 → 插件市场 |
+| `dsh-plugin-manager` | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停；核心组（启停管理/保护中心）拒绝移除 | 设置 → 插件 → 管理 |
 | `dsh-plugin-shield` | 插件保护中心 UI：快照列表/一键回滚/健康检查/事故报告，经桌面壳 IPC（`guard:action`）驱动 plugin-guard.js 引擎 | 设置 → 插件 → 保护中心 |
-| `dsh-plugin-wizard` | 插件选择向导：重新打开首次启动的内置插件选择向导，按需启用/停用内置插件；核心插件组内锁定，永不被向导停用 | 设置 → 插件 → 选择向导 |
 | `dsh-skin-switch` | 皮肤切换（见「界面皮肤」）：列出/切换/恢复 9 款内置皮肤 | 设置 → 皮肤 |
 | `dsh-undo-savepoint` | 崩溃急救与撤销：配置文件 + 插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault | 对话顶部 undo/redo 按钮 + 快照面板 |
 | `dsh-better-sidebar` | VSCode 风格右侧边栏：文件树 / 编辑器 / 终端 / Git，按会话隔离（lib/ 预编译自包含，codemirror、xterm 已内嵌） | 右侧边栏 |
@@ -103,6 +102,7 @@
 | 内置 Skills 分发（eac-desktop-tips） | `assets/skills/` 清空 |
 | 浮窗皮肤 maid-atelier（CC BY-NC-SA 4.0） | 皮肤数 10 → 9 |
 | 便携版目标 | 仅 NSIS 安装版；`patch-portable-template.js` / 便携缓存目录 / `warnTempRun` 移除 |
+| 内置插件选择向导（onboarding） | 首次启动向导窗口、设置页「选择向导」二次入口、`dsh-plugin-wizard` 插件、`scripts/onboarding.js` 全部移除；内置插件默认全量启用，核心组（启停管理/保护中心）仍拒绝移除 |
 
 插件与配置格式与 4.4.0 完全兼容：插件、配置、会话均可复用，升级/降级不破坏数据。
 
@@ -186,12 +186,11 @@ dsh-desktop-lite/
 ├── preload.js            # 沙箱预加载（自绘玻璃标题栏 + 窗口控制/菜单 IPC）
 ├── assets/               # 加载页、图标、托盘图标、配套 dsh 插件
 │   ├── skins/            # 9 款 Web UI 皮肤包
-│   └── plugins/          # 9 个内置插件（见「内置插件」），全部自动同步进 web profile
+│   └── plugins/          # 8 个内置插件（见「内置插件」），全部自动同步进 web profile
 ├── scripts/
 │   ├── fetch-node.js     # 内置 node.exe 复制脚本
 │   ├── fetch-npm.js      # 内置 npm CLI 复制脚本
 │   ├── build-icon.ps1    # 生成应用图标（透明圆角蒙版）+ 托盘图标
-│   ├── onboarding.js     # 内置插件选择向导（CORE/RECOMMENDED + ops 计算）
 │   ├── plugin-manager-patch.js # cordis.patch.yml 行级手术
 │   └── patch-row-heal.js # 补丁行去重 / 配置行规整
 ├── build/icon.png        # electron-builder 图标源
@@ -219,12 +218,12 @@ A Windows desktop wrapper around [@deepseek-ai/dsh](https://www.npmjs.com/packag
 - ✅ Isolated data home (`DSH_HOME` = `~\.dsh-v4lite` by default): never touches the original EAC / dsh CLI `~\.dsh`, so both editions can be installed and run side by side
 - ✅ No update interface at all: no official dsh update checks, no client self-update — new versions are manual installer swaps from Releases
 - ✅ 9 Web UI skins (exclusive switch, off by default, restart to apply; attribution & licenses shipped)
-- ✅ 9 bundled community plugins (see table): webui market ×2, plugin shield, enable/disable manager, selection wizard, undo-savepoint crash rescue, VSCode-style sidebar, auto-compact, skin switch
+- ✅ 8 bundled community plugins (see table): webui market ×2, plugin shield, enable/disable manager, undo-savepoint crash rescue, VSCode-style sidebar, auto-compact, skin switch
 - ✅ Crash rescue & undo (`dsh-undo-savepoint`): config/plugin snapshots, undo/redo, safe mode, key-redacted vault
 - ✅ One-click error log copy on startup failure
 - ✅ Shortcut auto-maintenance (per-target-exe, custom icon never overwritten)
 
-**Differences from EAC 4.4.0** (all removed): multi-window / float sessions (Ctrl+Shift+S), balance widget (`dsh-balance`), file-change tracking / AI review / in-session terminal, session-completion notifications (`session-watcher.js`), client self-update (`client-updater.js`), official dsh agent update flow (`updater.js` chain: menu/tray entries, boot timers, progress window), portable target (NSIS only), session delete/archive manager, ClawBot/OpenClaw bridge, one-click migration, pets (`dsh-pet` / `dsh-dafeiyu`), long-term memory (`dsh-tdai-memory`), soul.md persona card, external vision model (`dsh-tool-vision`), off-peak price guard, mobile-fix, bundled skills (`eac-desktop-tips`), and the maid-atelier skin (10 → 9).
+**Differences from EAC 4.4.0** (all removed): multi-window / float sessions (Ctrl+Shift+S), balance widget (`dsh-balance`), file-change tracking / AI review / in-session terminal, session-completion notifications (`session-watcher.js`), client self-update (`client-updater.js`), official dsh agent update flow (`updater.js` chain: menu/tray entries, boot timers, progress window), portable target (NSIS only), built-in plugin selection wizard (first-run window + settings rerun entry + `dsh-plugin-wizard`), session delete/archive manager, ClawBot/OpenClaw bridge, one-click migration, pets (`dsh-pet` / `dsh-dafeiyu`), long-term memory (`dsh-tdai-memory`), soul.md persona card, external vision model (`dsh-tool-vision`), off-peak price guard, mobile-fix, bundled skills (`eac-desktop-tips`), and the maid-atelier skin (10 → 9).
 
 **Isolation from the original 4.4.0** (install and run both side by side): separate data home (`~\.dsh-v4lite`), separate app data (`%APPDATA%\Deepseek Harness EAC v4Lite`), separate shortcuts / AUMID (`com.deepseek.dsh.desktop.lite`). API keys and sessions are NOT shared — copy `~\.dsh\settings.yaml` to `~\.dsh-v4lite\settings.yaml` if you want to reuse them.
 

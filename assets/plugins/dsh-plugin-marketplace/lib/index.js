@@ -21,7 +21,13 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
  * button restarts it in place).
  */
 
-const PROFILE_NAME = "web";
+// v4Lite 桌面壳把 dsh 跑在专属 profile（web-desktop，见 DSH_DESKTOP_PROFILE）。
+// 硬编码 'web' 会让 npm 操作落在 $DSH_HOME/profiles/web：v4Lite 下该目录
+// 不存在，spawn 报 "ENOENT"（Node 把 cwd 缺失记到可执行文件名头上，误导排查），
+// 且与 CLI 版的原生 web profile 同名、共用 DSH_HOME 时互相踩踏。桌面壳下
+// 跟随 DSH_DESKTOP_PROFILE 落到桌面专属 profile（与原版完全隔离）；CLI 直连
+// 无该变量时回落 'web'，行为不变。
+const PROFILE_NAME = process.env.DSH_DESKTOP_PROFILE || "web";
 const INSTALL_TIMEOUT_MS = 5 * 60 * 1000;
 const SEARCH_TIMEOUT_MS = 60 * 1000;
 const OUTPUT_CAP = 65536;
@@ -289,7 +295,10 @@ class PluginMarketplaceGateway extends TypertRemoteService {
 	async search(query) {
 		const text = String(query ?? "").trim();
 		const terms = text.length > 0 ? `keywords:dsh-plugin ${text}` : "keywords:dsh-plugin";
-		const run = await runNpm(["search", "--json", "--searchlimit=25", terms], SEARCH_TIMEOUT_MS);
+		// 搜索强制官方 registry：镜像（如 npmmirror）的 /-/v1/search 端点
+		// 对 npm 11 返回空结果（实测 []），官方端点结果完整；安装/更新仍走
+		// 用户 registry（镜像下载更快），不受影响。
+		const run = await runNpm(["search", "--json", "--searchlimit=25", "--registry=https://registry.npmjs.org/", terms], SEARCH_TIMEOUT_MS);
 		if (run.code !== 0) throw new Error(npmFailure(run, "search"));
 		let parsed;
 		try {
