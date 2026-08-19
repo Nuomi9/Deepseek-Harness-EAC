@@ -40,24 +40,29 @@ taskkill /F /T /IM "Deepseek Harness EAC.exe"
 
 可以避免按镜像名误杀，但批处理需要借助 `tasklist/find` 或其他外部命令判断 PID，容易重新引入管道挂死和窗口闪现问题。
 
-### 方案 C：安装版改用隐藏 PowerShell 辅助脚本
+### 方案 C：隐藏 PowerShell 等待进程，再调用安装动作 CMD
 
-安装版生成 `apply-update.ps1`，直接使用 PowerShell 的进程 API：
+安装版生成 `apply-update.ps1` 和 `apply-update.cmd`。PowerShell 只负责进程
+生命周期，CMD 保留 v4.4 已有的四目录备份、manifest、静默安装和失败回滚：
 
 - 按当前主进程 PID 有界等待；
 - 超时只对该 PID 执行 `Stop-Process -Force`；
-- 使用 `Start-Process -Wait -PassThru` 启动 Setup；
+- 主进程退出后，在隐藏控制台中同步调用安装动作 CMD；
+- 安装动作 CMD 不再包含 `ping`、`tasklist` 或 `taskkill`；
 - 全程写入 `apply-update.log`；
 - PowerShell 窗口通过 `-WindowStyle Hidden` 与 Node `windowsHide: true` 双重隐藏。
 
-该方案不需要 `ping`、`find`、`tasklist` 或 `taskkill /T`，选择此方案。
+该方案不需要 `ping`、`find`、`tasklist` 或 `taskkill /T`，同时不回退 v4.4
+新增的更新前备份与安装失败回滚能力，选择此方案。
 
 ## 更新流程
 
 ### 正式安装版
 
 1. 下载 Setup 并完成大小及 SHA-256 校验。
-2. 写入 `apply-update.ps1`。
+2. 写入两个辅助脚本：
+   - `apply-update.ps1`：等待并精确结束当前主进程；
+   - `apply-update.cmd`：执行四目录备份、manifest、Setup 与失败回滚。
 3. 将以下参数直接传给 PowerShell，不通过字符串拼接：
    - Setup 完整路径；
    - 当前安装版 exe 完整路径；
@@ -67,16 +72,19 @@ taskkill /F /T /IM "Deepseek Harness EAC.exe"
 5. EAC 主进程按现有流程执行 `app.exit(0)`。
 6. PowerShell 最多等待主进程退出 20 秒。
 7. 若超时，仅执行 `Stop-Process -Id <当前主进程 PID> -Force`，再短暂等待。
-8. 启动 Setup 并等待退出。
-9. Setup 返回 0：
+8. PowerShell 同步调用隐藏的安装动作 CMD。
+9. CMD 完成四目录备份后，以 `/S` 启动 Setup 并等待退出。
+10. Setup 返回 0：
    - 写入成功日志；
    - 删除 Setup；
-   - 删除 PowerShell 辅助脚本。
-10. Setup 返回非 0 或启动失败：
+   - 删除 CMD 与 PowerShell 辅助脚本；
+   - 写入 `.backup-ts` 供新版确认备份清理。
+11. Setup 返回非 0 或启动失败：
     - 写入失败日志；
     - 保留 Setup 和日志；
+    - 从备份回滚四个目录；
     - 如果旧版 exe 仍存在，重新启动旧版；
-    - 辅助脚本退出非 0。
+    - 两个辅助脚本退出或保留为非成功状态。
 
 ### 便携版
 
@@ -98,11 +106,13 @@ taskkill /F /T /IM "Deepseek Harness EAC.exe"
   - 新增 `buildInstalledApplyScript()`，生成 PowerShell 脚本。
   - 安装版 `applyUpdate()` 改为启动隐藏 PowerShell。
   - 便携版继续使用现有 CMD 生成与启动逻辑。
-  - 删除安装版脚本中的 `ping`、`taskkill /T` 和 `call Setup`。
+  - 安装动作 CMD 保留备份/回滚和 `call Setup /S`，删除其中的进程等待、
+    `ping` 与 `taskkill /T`。
 - `test/client-updater-apply.test.mjs`
   - 更新安装版静态约束。
   - 增加 PowerShell 脚本参数、安全和清理测试。
-  - Windows 下执行端到端测试：等待指定 PID、启动伪 Setup、完成清理。
+  - Windows 下执行端到端测试：等待指定 PID、四目录备份、启动伪 Setup、
+    成功清理与失败回滚。
 
 ## 测试
 
@@ -112,12 +122,13 @@ taskkill /F /T /IM "Deepseek Harness EAC.exe"
 2. 只按传入 PID 等待和强制结束。
 3. 等待时间有上限。
 4. Setup 在旧主进程退出之后启动。
-5. Setup 成功时删除 Setup 和辅助脚本。
+5. Setup 成功时删除 Setup 和两个辅助脚本。
 6. Setup 失败时保留 Setup、写日志并重启旧版。
 7. 路径包含空格和中文时参数保持完整。
 8. PowerShell 辅助进程使用隐藏窗口参数。
-9. 便携版原有备份、替换和回滚测试继续通过。
-10. 完整 `npm test` 与构建语法检查通过。
+9. 安装版四目录备份、manifest 和失败回滚继续通过。
+10. 便携版原有备份、替换和回滚测试继续通过。
+11. 完整 `npm test` 与构建语法检查通过。
 
 ## 验收标准
 
