@@ -11,21 +11,17 @@ import {
 } from '../scripts/onboarding.js';
 import { togglePluginInPatch } from '../scripts/plugin-manager-patch.js';
 
-// 与 main.js COMPANION_PLUGINS 保持一致的样本注册表（id / 默认 disabled 标志）。
+// 与 main.js COMPANION_PLUGINS 保持一致的 v4Lite 样本注册表（9 个保留插件）。
 const REGISTRY = [
-  { id: 'balance', name: '@deepseek-ai/dsh-balance' },
-  { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
-  { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
-  { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
+  { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin', dir: 'dsh-webui-market' },
-  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
-  { id: 'plugin-shield', name: 'dsh-plugin-shield', dir: 'dsh-plugin-shield' },
-  { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
-  { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet' },
-  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu', disabled: true },
-  { id: 'zat-market', name: 'zat-dsh-engine', dir: 'zat-dsh-engine' },
-  { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
+  { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace', dir: 'dsh-plugin-marketplace' },
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
+  { id: 'auto-compact', name: 'dsh-auto-compact', dir: 'dsh-auto-compact' },
+  { id: 'plugin-shield', name: 'dsh-plugin-shield', dir: 'dsh-plugin-shield' },
+  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
+  { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -73,27 +69,27 @@ test('needsPluginOnboarding：已确认过向导 → false（即使环境像全�
 
 test('pluginCurrentState：patch 条目优先于注册表默认', () => {
   const entries = [
-    { insert: [{ id: 'balance', name: '@deepseek-ai/dsh-balance' }, { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', disabled: true }] },
-    { id: 'dsh-pet', name: 'dsh-pet', disabled: true },
-    { id: 'offpeak', name: 'dsh-offpeak' }, // 裸顶层条目 = 启用
+    { insert: [{ id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' }, { id: 'dsh-undo', name: 'dsh-undo-savepoint', disabled: true }] },
+    { id: 'auto-compact', name: 'dsh-auto-compact', disabled: true },
+    { id: 'better-sidebar', name: 'dsh-better-sidebar' }, // 裸顶层条目 = 启用
   ];
   const state = pluginCurrentState(entries, REGISTRY);
-  assert.equal(state.balance, true);
-  assert.equal(state['dsh-dafeiyu'], false);
-  assert.equal(state['dsh-pet'], false);
-  assert.equal(state.offpeak, true);
+  assert.equal(state['skin-switch'], true);
+  assert.equal(state['dsh-undo'], false);
+  assert.equal(state['auto-compact'], false);
+  assert.equal(state['better-sidebar'], true);
 });
 
 test('pluginCurrentState：无 patch 条目时取注册表默认', () => {
   const state = pluginCurrentState([], REGISTRY);
-  assert.equal(state.balance, true);
-  assert.equal(state['dsh-dafeiyu'], false, '注册表 disabled:true → 默认停用');
-  assert.equal(state['zat-market'], true);
+  assert.equal(state['skin-switch'], true);
+  assert.equal(state['plugin-marketplace'], true);
+  assert.equal(state['dsh-undo'], true);
 });
 
 test('pluginCurrentState：容忍空/畸形条目', () => {
   const state = pluginCurrentState([null, 42, { insert: 'oops' }], REGISTRY);
-  assert.equal(state.balance, true);
+  assert.equal(state['skin-switch'], true);
 });
 
 // ---------------------------------------------------------------------------
@@ -101,9 +97,9 @@ test('pluginCurrentState：容忍空/畸形条目', () => {
 // ---------------------------------------------------------------------------
 
 test('sanitizeSelection：丢弃未知/非字符串 id，核心恒在集合内', () => {
-  const want = sanitizeSelection(['balance', 'dsh-pet', 'not-a-plugin', 123, null], REGISTRY, CORE_PLUGIN_IDS);
-  assert.ok(want.has('balance'));
-  assert.ok(want.has('dsh-pet'));
+  const want = sanitizeSelection(['skin-switch', 'dsh-undo', 'not-a-plugin', 123, null], REGISTRY, CORE_PLUGIN_IDS);
+  assert.ok(want.has('skin-switch'));
+  assert.ok(want.has('dsh-undo'));
   assert.ok(!want.has('not-a-plugin'));
   assert.ok(!want.has('123'));
   for (const c of CORE_PLUGIN_IDS) assert.ok(want.has(c), '核心 id 必须存在: ' + c);
@@ -133,28 +129,30 @@ test('buildSelectionOps：首次向导（current=null）→ 所有非核心都�
 });
 
 test('buildSelectionOps：首次向导选中项 → enable', () => {
-  const want = sanitizeSelection(['dsh-pet', 'offpeak'], REGISTRY, CORE_PLUGIN_IDS);
+  const want = sanitizeSelection(['dsh-undo', 'auto-compact'], REGISTRY, CORE_PLUGIN_IDS);
   const ops = buildSelectionOps(REGISTRY, CORE_PLUGIN_IDS, want, null);
-  assert.equal(ops.find((o) => o.id === 'dsh-pet').enable, true);
-  assert.equal(ops.find((o) => o.id === 'offpeak').enable, true);
-  assert.equal(ops.find((o) => o.id === 'zat-market').enable, false);
+  assert.equal(ops.find((o) => o.id === 'dsh-undo').enable, true);
+  assert.equal(ops.find((o) => o.id === 'auto-compact').enable, true);
+  assert.equal(ops.find((o) => o.id === 'better-sidebar').enable, false);
 });
 
 test('buildSelectionOps：二次向导只切换与当前不同的插件', () => {
   const current = {
-    balance: true, 'file-changes': true, 'client-file-changes': true, terminal: true,
-    'dsh-market-plugin': true, 'plugin-manager': true, 'plugin-shield': true, 'plugin-wizard': true,
-    'dsh-pet': false, 'dsh-dafeiyu': false, 'zat-market': true, offpeak: true, 'better-sidebar': true,
+    'skin-switch': true, 'dsh-market-plugin': true, 'plugin-marketplace': true,
+    'better-sidebar': true, 'auto-compact': true,
+    'plugin-shield': true, 'plugin-manager': true, 'plugin-wizard': true,
+    'dsh-undo': false,
   };
-  // 用户新勾选 dsh-pet，取消 zat-market / offpeak / better-sidebar
-  const want = sanitizeSelection(['dsh-pet'], REGISTRY, CORE_PLUGIN_IDS);
+  // 用户新勾选 dsh-undo，取消 better-sidebar / auto-compact / skin-switch
+  //（dsh-market-plugin / plugin-marketplace 保持勾选）
+  const want = sanitizeSelection(['dsh-undo', 'dsh-market-plugin', 'plugin-marketplace'], REGISTRY, CORE_PLUGIN_IDS);
   const ops = buildSelectionOps(REGISTRY, CORE_PLUGIN_IDS, want, current);
   const byId = new Map(ops.map((o) => [o.id, o]));
-  assert.equal(ops.length, 4, '应有 4 个变更（pet 启用、zat/offpeak/better-sidebar 停用）');
-  assert.deepEqual(byId.get('dsh-pet'), { id: 'dsh-pet', enable: true });
-  assert.deepEqual(byId.get('zat-market'), { id: 'zat-market', enable: false });
-  assert.deepEqual(byId.get('offpeak'), { id: 'offpeak', enable: false });
+  assert.equal(ops.length, 4, '应有 4 个变更（undo 启用、better-sidebar/auto-compact/skin-switch 停用）');
+  assert.deepEqual(byId.get('dsh-undo'), { id: 'dsh-undo', enable: true });
   assert.deepEqual(byId.get('better-sidebar'), { id: 'better-sidebar', enable: false });
+  assert.deepEqual(byId.get('auto-compact'), { id: 'auto-compact', enable: false });
+  assert.deepEqual(byId.get('skin-switch'), { id: 'skin-switch', enable: false });
 });
 
 // ---------------------------------------------------------------------------
@@ -166,18 +164,18 @@ test('buildCatalog：核心/推荐/体积/描述标记正确', () => {
     coreIds: CORE_PLUGIN_IDS,
     recommendedIds: RECOMMENDED_PLUGIN_IDS,
     describe: (name) => 'desc-of-' + name,
-    dirSize: (dir) => ({ 'dsh-pet': 15728640, 'dsh-dafeiyu': 60817408 }[dir] || 0),
+    dirSize: (dir) => ({ 'dsh-undo-savepoint': 15728640 }[dir] || 0),
   });
   const byId = new Map(catalog.map((c) => [c.id, c]));
-  assert.equal(byId.get('dsh-market-plugin').core, true);
+  assert.equal(byId.get('plugin-manager').core, true);
   assert.equal(byId.get('plugin-wizard').core, true);
+  assert.equal(byId.get('dsh-market-plugin').core, false);
   assert.equal(byId.get('better-sidebar').core, false);
-  assert.equal(byId.get('better-sidebar').recommended, true);
-  assert.equal(byId.get('offpeak').recommended, true);
-  assert.equal(byId.get('dsh-pet').recommended, false, '桌宠不进推荐');
-  assert.equal(byId.get('dsh-dafeiyu').recommended, false, '注册表默认禁用的不进推荐');
-  assert.equal(byId.get('dsh-dafeiyu').registryDisabled, true);
-  assert.equal(byId.get('dsh-pet').size, 15728640);
+  assert.equal(byId.get('better-sidebar').recommended, false, 'better-sidebar 不进推荐');
+  assert.equal(byId.get('dsh-market-plugin').recommended, true);
+  assert.equal(byId.get('plugin-marketplace').recommended, true);
+  assert.equal(byId.get('skin-switch').recommended, true);
+  assert.equal(byId.get('dsh-undo').size, 15728640);
   assert.equal(byId.get('better-sidebar').description, 'desc-of-dsh-better-sidebar');
 });
 
@@ -187,24 +185,24 @@ test('buildCatalog：核心/推荐/体积/描述标记正确', () => {
 
 test('首次向导全流程：patch 写入 disabled 行，sync 不重写（已有行优先）', () => {
   // 模拟 syncCompanionPlugins 刚写出的 insert 行（无任何用户层条目）
-  let patch = "- insert:\n    - id: balance\n      name: '@deepseek-ai/dsh-balance'\n    - id: dsh-pet\n      name: 'dsh-pet'\n    - id: dsh-dafeiyu\n      name: 'dsh-dafeiyu'\n      disabled: true\n    - id: zat-market\n      name: 'zat-dsh-engine'\n";
-  // 用户只勾选 dsh-pet（其余停用）
-  const want = sanitizeSelection(['dsh-pet'], REGISTRY, CORE_PLUGIN_IDS);
+  let patch = "- insert:\n    - id: skin-switch\n      name: '@deepseek-ai/dsh-skin-switch'\n    - id: dsh-undo\n      name: 'dsh-undo-savepoint'\n    - id: plugin-shield\n      name: 'dsh-plugin-shield'\n";
+  // 用户只勾选 dsh-undo（其余停用）
+  const want = sanitizeSelection(['dsh-undo'], REGISTRY, CORE_PLUGIN_IDS);
   const ops = buildSelectionOps(REGISTRY, CORE_PLUGIN_IDS, want, null);
   for (const op of ops) {
     if (op.enable) patch = togglePluginInPatch(patch, op.id, true, op.id);
     else patch = togglePluginInPatch(patch, op.id, false, op.id);
   }
   // 停用项应有顶层 disabled 条目
-  assert.ok(/- id: zat-market\n  name: 'zat-market'\n  disabled: true/.test(patch), 'zat-market 应带 disabled');
-  // 核心插件不受影响：balance 保持 insert 内层无 disabled
-  assert.ok(/- id: balance\n      name: '@deepseek-ai\/dsh-balance'/.test(patch), 'balance 行应保持原样');
+  assert.ok(/- id: better-sidebar\n  name: 'better-sidebar'\n  disabled: true/.test(patch), 'better-sidebar 应带 disabled');
+  // 核心插件不受影响：plugin-shield 保持 insert 内层无 disabled
+  assert.ok(/- id: plugin-shield\n      name: 'dsh-plugin-shield'/.test(patch), 'plugin-shield 行应保持原样');
 
   // 模拟下次启动 sync 的「已有行不重写」：新写 insert 行时应跳过已有 id
   const finalState = pluginCurrentState(parsePatchEntries(patch), REGISTRY);
-  assert.equal(finalState['zat-market'], false);
-  assert.equal(finalState['dsh-pet'], true);
-  assert.equal(finalState.balance, true);
+  assert.equal(finalState['better-sidebar'], false);
+  assert.equal(finalState['dsh-undo'], true);
+  assert.equal(finalState['plugin-shield'], true);
 });
 
 // 轻量解析 cordis.patch.yml：顶层 `- id:` 条目与 `- insert:` 内层条目，

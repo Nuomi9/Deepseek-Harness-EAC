@@ -100,15 +100,14 @@ test('healthCheck flags shadow copies of closure packages', () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('healthCheck flags duplicate patch row ids and missing soul-md config', () => {
+test('healthCheck flags duplicate patch row ids', () => {
   const t0 = { after: (fn) => fn };
   const { home, profile, guard } = makeHome(t0);
   writeFileSync(join(profile, 'cordis.patch.yml'),
-    '- insert:\n    - id: soul-md\n      name: \'dsh-soul-md\'\n' +
-    '- insert:\n    - id: soul-md\n      name: \'dsh-soul-md\'\n');
+    '- insert:\n    - id: dsh-undo\n      name: \'dsh-undo-savepoint\'\n' +
+    '- insert:\n    - id: dsh-undo\n      name: \'dsh-undo-savepoint\'\n');
   const { findings } = guard.healthCheck();
   assert.ok(findings.some((f) => f.code === 'PATCH_DUP_ID'), 'duplicate row id must be flagged');
-  assert.ok(findings.some((f) => f.code === 'PATCH_SOUL_CONFIG'), 'soul-md row without config must be flagged');
   rmSync(home, { recursive: true, force: true });
 });
 

@@ -3,7 +3,7 @@
 // 首次启动「内置插件选择向导」—— 纯逻辑层（无 fs / electron 依赖，可直接
 // 被 node --test 单元测试）。
 //
-// 背景：33 个内置插件（COMPANION_PLUGINS）每次启动被 syncCompanionPlugins
+// 背景：9 个内置插件（COMPANION_PLUGINS）每次启动被 syncCompanionPlugins
 // 无条件全量复制 + 注册到 web profile，对只需要其中一部分的用户显得臃肿。
 // 本模块只负责「判定 / 目录 / 状态 / 操作清单」四件纯函数事，写盘与 IPC 由
 // main.js 完成。
@@ -12,35 +12,16 @@
 // 核心必装插件（向导中锁定，不可取消勾选）：主界面 / 设置页的底座，卸载会
 // 破坏界面。其中 plugin-wizard 是设置页「重新打开向导」的入口，永远在场。
 const CORE_PLUGIN_IDS = new Set([
-  'balance',
-  'file-changes',
-  'client-file-changes',
-  'terminal',
-  'dsh-market-plugin',
   'plugin-manager',
   'plugin-shield',
   'plugin-wizard',
 ]);
 
-// 向导默认勾选（推荐）：核心之外保留常用增强；重/冷门项（桌宠、第二市场、
-// 外观微调、自动压缩、ClawBot 桥、会话浮窗等）默认不勾，用户按需勾选。
+// 向导默认勾选（推荐）：核心之外保留常用增强。
 const RECOMMENDED_PLUGIN_IDS = new Set([
+  'dsh-market-plugin',
+  'plugin-marketplace',
   'skin-switch',
-  'easy-setup',
-  'tool-vision',
-  'soul-md',
-  'tdai-memory',
-  'mobile-fix',
-  'better-sidebar',
-  'message-rewind',
-  'dock-settings',
-  'change-review',
-  'dsh-navbar',
-  'dsh-session-manager',
-  'conversation-tweaks',
-  'prompt-custom',
-  'third-party-thinking',
-  'offpeak',
 ]);
 
 /**

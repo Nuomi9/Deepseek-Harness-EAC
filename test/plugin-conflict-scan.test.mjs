@@ -16,10 +16,10 @@ const { parsePatchRows, scanCandidate, collectProfileState } = mod;
 const EMPTY_PROFILE = { builtinNames: [], bundles: [], dependencies: {}, patchRows: [], installed: [] };
 
 const CANDIDATE = (over = {}) => ({
-  name: 'dsh-pet',
-  spec: 'github:owner/dsh-pet',
-  manifest: { name: 'dsh-pet', dependencies: {} },
-  patchText: '- id: dsh-pet\n  name: dsh-pet\n',
+  name: 'dsh-undo',
+  spec: 'github:owner/dsh-undo',
+  manifest: { name: 'dsh-undo', dependencies: {} },
+  patchText: '- id: dsh-undo\n  name: dsh-undo\n',
   ...over,
 });
 
@@ -30,16 +30,16 @@ function issuesOf(candidate, profile) {
 
 test('parsePatchRows：解析顶层与 insert 内层的 id/name 行', () => {
   const text = [
-    '- id: dsh-tool-vision',
-    "  name: 'dsh-tool-vision'",
+    '- id: dsh-better-sidebar',
+    "  name: 'dsh-better-sidebar'",
     '- insert:',
     '    - id: mkt-1',
-    "      name: 'dsh-pet'",
+    "      name: 'dsh-undo'",
     '',
   ].join('\n');
   assert.deepEqual(parsePatchRows(text), [
-    { id: 'dsh-tool-vision', name: 'dsh-tool-vision' },
-    { id: 'mkt-1', name: 'dsh-pet' },
+    { id: 'dsh-better-sidebar', name: 'dsh-better-sidebar' },
+    { id: 'mkt-1', name: 'dsh-undo' },
   ]);
 });
 
@@ -50,22 +50,22 @@ test('scanCandidate：无冲突 → ok', () => {
 });
 
 test('scanCandidate：patch 行 id 与现有行重复 → refuse', () => {
-  const v = issuesOf(CANDIDATE(), { ...EMPTY_PROFILE, patchRows: [{ id: 'dsh-pet', name: 'dsh-pet' }] });
+  const v = issuesOf(CANDIDATE(), { ...EMPTY_PROFILE, patchRows: [{ id: 'dsh-undo', name: 'dsh-undo' }] });
   assert.equal(v.level, 'refuse');
   assert.ok(v.issues.some((i) => i.code === 'PATCH_DUP_ID' && i.severity === 'refuse'));
 });
 
 test('scanCandidate：patch 行 name 与现有行 name 重复 → refuse', () => {
   const v = issuesOf(
-    CANDIDATE({ patchText: '- id: other-id\n  name: dsh-pet\n' }),
-    { ...EMPTY_PROFILE, patchRows: [{ id: 'mkt-9', name: 'dsh-pet' }] }
+    CANDIDATE({ patchText: '- id: other-id\n  name: dsh-undo\n' }),
+    { ...EMPTY_PROFILE, patchRows: [{ id: 'mkt-9', name: 'dsh-undo' }] }
   );
   assert.equal(v.level, 'refuse');
   assert.ok(v.issues.some((i) => i.code === 'PATCH_DUP_NAME'));
 });
 
 test('scanCandidate：包名撞内置插件 → refuse', () => {
-  const v = issuesOf(CANDIDATE({ name: 'dsh-tool-vision' }), { ...EMPTY_PROFILE, builtinNames: ['dsh-tool-vision'] });
+  const v = issuesOf(CANDIDATE({ name: 'dsh-better-sidebar' }), { ...EMPTY_PROFILE, builtinNames: ['dsh-better-sidebar'] });
   assert.equal(v.level, 'refuse');
   assert.ok(v.issues.some((i) => i.code === 'BUILTIN_COLLISION'));
 });
@@ -77,23 +77,23 @@ test('scanCandidate：包名已在 bundle 里 → refuse', () => {
 });
 
 test('scanCandidate：同名依赖不同 spec → warn（重复安装提醒）', () => {
-  const v = issuesOf(CANDIDATE(), { ...EMPTY_PROFILE, dependencies: { 'dsh-pet': 'github:other/dsh-pet' } });
+  const v = issuesOf(CANDIDATE(), { ...EMPTY_PROFILE, dependencies: { 'dsh-undo': 'github:other/dsh-undo' } });
   assert.equal(v.level, 'warn');
   assert.ok(v.issues.some((i) => i.code === 'DEP_REINSTALL'));
 });
 
 test('scanCandidate：settings 命名空间与已装插件冲突 → warn', () => {
-  const cand = CANDIDATE({ manifest: { name: 'dsh-pet', dsh: { settings: { key: 'dsh-pet' } } } });
+  const cand = CANDIDATE({ manifest: { name: 'dsh-undo', dsh: { settings: { key: 'dsh-undo' } } } });
   const v = issuesOf(cand, {
     ...EMPTY_PROFILE,
-    installed: [{ name: 'dsh-other', manifest: { dsh: { settings: { key: 'dsh-pet' } } } }],
+    installed: [{ name: 'dsh-other', manifest: { dsh: { settings: { key: 'dsh-undo' } } } }],
   });
   assert.equal(v.level, 'warn');
   assert.ok(v.issues.some((i) => i.code === 'SETTINGS_NS_CLASH'));
 });
 
 test('scanCandidate：核心共享依赖版本冲突 → warn（轻量版）', () => {
-  const cand = CANDIDATE({ manifest: { name: 'dsh-pet', dependencies: { koffi: '^3.1.0' } } });
+  const cand = CANDIDATE({ manifest: { name: 'dsh-undo', dependencies: { koffi: '^3.1.0' } } });
   const v = issuesOf(cand, {
     ...EMPTY_PROFILE,
     installed: [{ name: 'dsh-other', manifest: { dependencies: { koffi: '^2.9.0' } } }],
@@ -106,7 +106,7 @@ test('scanCandidate：refuse 优先级高于 warn', () => {
   const v = issuesOf(CANDIDATE({ name: 'api-gateway' }), {
     ...EMPTY_PROFILE,
     bundles: ['api-gateway'],
-    dependencies: { 'dsh-pet': 'github:other/dsh-pet' },
+    dependencies: { 'dsh-undo': 'github:other/dsh-undo' },
   });
   assert.equal(v.level, 'refuse');
 });
@@ -120,15 +120,15 @@ test('collectProfileState：读取真实 profile 形态（temp 目录）', () =>
       dependencies: { 'meow-memory': 'github:zhang-meow/meow-memory' },
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } },
     }, null, 2) + '\n');
-    writeFileSync(join(profile, 'cordis.patch.yml'), '- id: dsh-tool-vision\n  name: dsh-tool-vision\n');
-    writeFileSync(join(profile, '.dsh-builtin-plugins.json'), JSON.stringify({ names: ['dsh-tool-vision'] }));
+    writeFileSync(join(profile, 'cordis.patch.yml'), '- id: dsh-better-sidebar\n  name: dsh-better-sidebar\n');
+    writeFileSync(join(profile, '.dsh-builtin-plugins.json'), JSON.stringify({ names: ['dsh-better-sidebar'] }));
     writeFileSync(join(profile, 'node_modules', 'meow-memory', 'package.json'),
       JSON.stringify({ name: 'meow-memory', dsh: { settings: { key: 'meow-memory' } } }));
     const st = collectProfileState(profile);
-    assert.deepEqual(st.builtinNames, ['dsh-tool-vision']);
+    assert.deepEqual(st.builtinNames, ['dsh-better-sidebar']);
     assert.deepEqual(st.bundles, ['@deepseek-ai/dsh-base']);
     assert.deepEqual(Object.keys(st.dependencies), ['meow-memory']);
-    assert.deepEqual(st.patchRows, [{ id: 'dsh-tool-vision', name: 'dsh-tool-vision' }]);
+    assert.deepEqual(st.patchRows, [{ id: 'dsh-better-sidebar', name: 'dsh-better-sidebar' }]);
     assert.equal(st.installed[0].name, 'meow-memory');
     assert.equal(st.installed[0].manifest.dsh.settings.key, 'meow-memory');
   } finally { rmSync(t, { recursive: true, force: true }); }

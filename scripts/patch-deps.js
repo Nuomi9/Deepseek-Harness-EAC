@@ -75,9 +75,44 @@ function patchSettingsNavScroll() {
   console.log('[patch-deps] 已补丁 settings-general：设置弹窗左栏可滚动，底部条目不再被裁掉');
 }
 
+// dev 闭包注入：dsh-app-boot 从「内置 dsh 包」出发做 BFS 维护 profile 的
+// fallback closure（profiles/node_modules junctions）。配套插件
+// better-sidebar 的依赖 schemastery 只在 app 层 package.json 里（app 闭包），
+// BFS 从 dsh 包出发不可达 → 全新 profile（独立 DSH_HOME）首次启动
+// dsh web 因 ERR_MODULE_NOT_FOUND 崩溃（exit 1）。机制级修复：把 schemastery
+// 声明进内置 dsh 包的 dependencies，BFS 就能经 app 闭包解析到它并维护
+// junction；幂等（已有声明则跳过），npm ci 后由 postinstall 自动恢复。
+function injectDshClosureExtras() {
+  const dshPkgPath = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
+  if (!fs.existsSync(dshPkgPath)) return;
+  let dshPkg;
+  try {
+    dshPkg = JSON.parse(fs.readFileSync(dshPkgPath, 'utf8'));
+  } catch {
+    console.log('[patch-deps] 内置 dsh 包不可解析，跳过闭包注入');
+    return;
+  }
+  dshPkg.dependencies = dshPkg.dependencies || {};
+  if (dshPkg.dependencies.schemastery) {
+    console.log('[patch-deps] dsh 闭包已声明 schemastery，跳过');
+    return;
+  }
+  let version = '';
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', 'schemastery', 'package.json'), 'utf8')).version || '';
+  } catch {
+    console.log('[patch-deps] app 闭包缺少 schemastery，跳过');
+    return;
+  }
+  dshPkg.dependencies.schemastery = '^' + version;
+  fs.writeFileSync(dshPkgPath, JSON.stringify(dshPkg, null, 2) + '\n');
+  console.log('[patch-deps] 已注入 dsh 闭包：schemastery@^' + version);
+}
+
 function main() {
   patchPickerWorker();
   patchSettingsNavScroll();
+  injectDshClosureExtras();
 }
 
 main();

@@ -184,8 +184,7 @@ function createGuard(opts) {
     // pnpm 链接）→ 模块双实例 → Symbol 身份不一致 → 「设置命名空间不可用」。
     findings.push(...shadowFindings(dir));
 
-    // patch 行体检：重复 entry id（duplicate loader entry → 整树崩溃）、
-    // soul-md 行缺 config.path（v2.0.0 存量坏行）。
+    // patch 行体检：重复 entry id（duplicate loader entry → 整树崩溃）。
     findings.push(...patchFindings(dir));
 
     // junction 归属（原生 dsh 共存冲突，见 checkJunctionOwnership 注释）。
@@ -324,12 +323,6 @@ function createGuard(opts) {
       for (const id of [...new Set(dup)]) {
         out.push({ code: 'PATCH_DUP_ID', severity: 'high', message: `patch 行 id 重复：${id}（会以 duplicate loader entry 拖垮整棵插件树）`, fixable: true });
       }
-      if (/id:\s*soul-md\b/.test(text)) {
-        const bad = /(^[\t ]*- id: soul-md\b[^\n]*\n[\t ]*name: ['"]?[^'"\n]+['"]?\n)(?![\t ]*config:)/m.test(text);
-        if (bad) {
-          out.push({ code: 'PATCH_SOUL_CONFIG', severity: 'medium', message: 'soul-md 行缺少 config.path（dsh web 退出码 1 的历史根因）', fixable: true });
-        }
-      }
     } catch { /* 读不了按无发现处理 */ }
     return out;
   }
@@ -394,13 +387,11 @@ function createGuard(opts) {
       }
     }
 
-    if (list.some((f) => f.code === 'PATCH_DUP_ID' || f.code === 'PATCH_SOUL_CONFIG')) {
+    if (list.some((f) => f.code === 'PATCH_DUP_ID')) {
       try {
-        const { healSoulMdPatchRow, removeBundledRowDuplicates } = require('./patch-row-heal');
+        const { removeBundledRowDuplicates } = require('./patch-row-heal');
         const file = path.join(dir, 'cordis.patch.yml');
         let patch = fs.readFileSync(file, 'utf8');
-        const healed = healSoulMdPatchRow(patch);
-        if (healed.healed.length) { patch = healed.patch; applied.push('补写 soul-md 行 config.path'); }
         const ids = {};
         for (const id of patchRowIds(patch)) ids[id] = ids[id] || null;
         let bundled = [];
@@ -410,7 +401,7 @@ function createGuard(opts) {
           patch = deduped;
           applied.push('移除与 bundle 重复的 patch 行: ' + removed.join(', '));
         }
-        if (healed.healed.length || removed.length) fs.writeFileSync(file, patch);
+        if (removed.length) fs.writeFileSync(file, patch);
       } catch (err) {
         log('guard', '修复 patch 行失败: ' + err.message);
       }

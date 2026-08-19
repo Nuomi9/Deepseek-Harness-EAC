@@ -39,10 +39,10 @@ function zIndexValues(src) {
 }
 
 /**
- * z-index 声明是否落在「模态层容器」规则上（maid-atelier 有意把模态层本身
- * 抬到 4000，让设置弹窗盖过所有皮肤 chrome 与默认 1000 层 —— 这正是
- * 「女仆皮肤遮挡」的修复方式）。这类值豁免「必须 < 1000」的检查：规则要
- * 拦的是 chrome 条盖住模态层，而不是模态层自身的层级。
+ * z-index 声明是否落在「模态层容器」规则上（皮肤若有意识把模态层本身
+ * 抬到 4000，让设置弹窗盖过所有皮肤 chrome 与默认 1000 层）。这类值豁免
+ * 「必须 < 1000」的检查：规则要拦的是 chrome 条盖住模态层，而不是模态层
+ * 自身的层级。
  */
 function isModalLayerRule(src, m) {
   const before = src.slice(Math.max(0, m.index - 120), m.index);

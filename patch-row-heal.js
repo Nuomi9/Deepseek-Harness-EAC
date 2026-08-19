@@ -3,22 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 
-// cordis.patch.yml row heal for dsh-soul-md.
+// cordis.patch.yml row maintenance helpers.
 //
-// v2.0.0 shipped the bundled dsh-soul-md plugin whose config schema declared
-// `path` as REQUIRED with no default, while the profile patch row written by
-// syncCompanionPlugins carried only id + name (no config). On a fresh install
-// config validation then failed for that row, which took down the ENTIRE
-// plugin tree: `dsh web` exited with code 1 and the app showed "启动失败"
-// (persistent crash loop — the exe re-syncs the row on every boot, so users
-// could not delete their way out of it).
-//
-// The plugin schema now defaults `path` to "soul.md" (missing file → empty
-// fallback → NO prompt section → the stock official system prompt is used
-// untouched), so a config-less row boots fine again. New rows are also
-// written WITH an explicit config block (see configLinesFor below), and this
-// heal pass fixes ALREADY-BROKEN rows living in existing user profiles, so
-// upgrading to the fixed build repairs them without any manual edit.
+// The sync pass writes companion-plugin rows into the profile patch and must
+// never duplicate rows the profile already mounts through its own package.json
+// bundle list (the loader aborts the whole tree with "duplicate loader entry
+// id" → `dsh web` exits 1). The helpers below serialize config blocks with the
+// exact indentation each row kind expects and strip duplicate overlay rows.
 
 /**
  * Serialize a config object as patch-row YAML lines. `baseIndent` is the
@@ -83,54 +74,6 @@ function normalizeRowConfigIndent(patch, id) {
     }
   }
   return changed ? lines.join('\n') : patch;
-}
-
-/**
- * Ensure every soul-md row in `patch` carries config.path.
- * Idempotent: rows that already have a config block are left untouched.
- * Returns { patch, healed } — healed lists row ids that were modified.
- */
-function healSoulMdPatchRow(patch, config = { path: 'soul.md' }) {
-  const healed = [];
-  if (typeof patch !== 'string' || patch === '') return { patch, healed };
-  const normalized = normalizeRowConfigIndent(patch, 'soul-md');
-  if (normalized !== patch) healed.push('soul-md');
-  patch = normalized;
-  // A row looks like:
-  //   - insert:
-  //       - id: soul-md
-  //         name: 'dsh-soul-md'
-  //         (config: ... optional)
-  // or a top-level row (plugin manager / onboarding wizard, id at column 0).
-  // Match the `id:` + `name:` lines; only rewrite when the NEXT non-blank
-  // line is not a `config:` key (negative lookahead keeps healed rows stable).
-  // The config block mirrors the row's own indent (id indent + 2 / + 4).
-  const rowRe = /(^[\t ]*- id: soul-md\b[^\n]*\n[\t ]*name: ['"]?[^'"\n]+['"]?\n)(?![\t ]*config:)/gm;
-  let out = patch.replace(rowRe, (m) => m + configLinesFor(config, (m.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length));
-  if (out !== patch) healed.push('soul-md');
-  return { patch: out, healed };
-}
-
-/**
- * V4 修复：给已存在但缺 config 块的行补 config。dsh-pet 的 apply 读
- * config.fullRoot（无守卫），无 config 的行会让 loader 传 undefined 直接
- * 拖垮整棵插件树（v3.1.0 全新安装即「启动失败」的根因；老用户因市场装
- * 过的行自带 config 才幸免）。与 healSoulMdPatchRow 同一手法：id+name 行
- * 后跟负向先行断言，已带 config 的行不动（幂等，用户改过的值优先）。
- */
-function healRowConfig(patch, id, config) {
-  const healed = [];
-  if (typeof patch !== 'string' || patch === '' || !id || !config) return { patch, healed };
-  const normalized = normalizeRowConfigIndent(patch, id);
-  if (normalized !== patch) healed.push(id);
-  patch = normalized;
-  const rowRe = new RegExp(
-    `(^[\\t ]*- id: ${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_.-])[^\\n]*\\n[\\t ]*name: ['"]?[^'"\\n]+['"]?\\n)(?![\\t ]*config:)`,
-    'gm'
-  );
-  const out = patch.replace(rowRe, (m) => m + configLinesFor(config, (m.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length));
-  if (out !== patch) healed.push(id);
-  return { patch: out, healed };
 }
 
 /**
@@ -238,4 +181,4 @@ function removeBundledRowDuplicates(patch, rowIds, bundleNames, bundleEntryIds) 
   return { patch: text, removed };
 }
 
-module.exports = { configLinesFor, normalizeRowConfigIndent, healSoulMdPatchRow, healRowConfig, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds };
+module.exports = { configLinesFor, normalizeRowConfigIndent, removeBundledRowDuplicates, bundlePatchEntryIds, collectBundleEntryIds };

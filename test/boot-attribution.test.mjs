@@ -25,13 +25,13 @@ function makeHome(root) {
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'api-gateway'] } },
   }, null, 2) + '\n');
   writeFileSync(join(profile, 'cordis.patch.yml'), [
-    '- id: dsh-tool-vision',
-    "  name: 'dsh-tool-vision'",
+    '- id: dsh-undo',
+    "  name: 'dsh-undo-savepoint'",
     "  config:",
-    "    vision: true",
+    "    path: undo.json",
     '- insert:',
     '    - id: mkt-1',
-    "      name: 'dsh-pet'",
+    "      name: 'better-sidebar'",
     '',
   ].join('\n'));
   return { home, profile, guard: createGuard({ getHome: () => home, getProfile: () => 'web-desktop', dshBin: () => '', log: () => {} }) };
@@ -41,8 +41,8 @@ test('attributeBootFailure：命中 patch 行 id（duplicate loader entry）', (
   const t = mkdtempSync(join(tmpdir(), 'attr-'));
   try {
     const { guard } = makeHome(t);
-    const hit = guard.attributeBootFailure("duplicate loader entry 'dsh-tool-vision'");
-    assert.deepEqual(hit, { name: 'dsh-tool-vision', kind: 'patchRow', rowId: 'dsh-tool-vision' });
+    const hit = guard.attributeBootFailure("duplicate loader entry 'dsh-undo'");
+    assert.deepEqual(hit, { name: 'dsh-undo-savepoint', kind: 'patchRow', rowId: 'dsh-undo' });
   } finally { rmSync(t, { recursive: true, force: true }); }
 });
 
@@ -50,8 +50,8 @@ test('attributeBootFailure：命中 insert 内层行的 name（Cannot find modul
   const t = mkdtempSync(join(tmpdir(), 'attr-'));
   try {
     const { guard } = makeHome(t);
-    const hit = guard.attributeBootFailure('Cannot find module "dsh-pet"');
-    assert.deepEqual(hit, { name: 'dsh-pet', kind: 'patchRow', rowId: 'mkt-1' });
+    const hit = guard.attributeBootFailure('Cannot find module "better-sidebar"');
+    assert.deepEqual(hit, { name: 'better-sidebar', kind: 'patchRow', rowId: 'mkt-1' });
   } finally { rmSync(t, { recursive: true, force: true }); }
 });
 

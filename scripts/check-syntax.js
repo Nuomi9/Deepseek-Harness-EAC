@@ -16,9 +16,6 @@ const entryFiles = [
   'main.js',
   'preload.js',
   'updater.js',
-  'client-updater.js',
-  'balance.js',
-  'session-watcher.js',
   'renderer-recovery.js',
   'watchdog.js',
   'stable-port.js',
@@ -26,6 +23,8 @@ const entryFiles = [
   'profile-module-heal.js',
   'patch-row-heal.js',
   'plugin-guard.js',
+  'plugin-manager-state.js',
+  'plugin-updater.js',
   'preset-sync.js',
 ];
 

@@ -1,7 +1,7 @@
 // TDD acceptance tests for bundling the upstream dsh-better-sidebar plugin
 // (VSCode-like right sidebar: explorer / editor / terminal / git views).
 //
-// Distribution model (same as dsh-tool-vision & friends):
+// Distribution model (same as the other companion plugins):
 //   - plugin package vendored under assets/plugins/dsh-better-sidebar
 //     (prebuilt lib/, no TS sources needed at runtime)
 //   - registered in COMPANION_PLUGINS so syncCompanionPlugins copies it into

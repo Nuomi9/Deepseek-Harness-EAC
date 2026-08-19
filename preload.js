@@ -7,20 +7,17 @@
 //      标题/版本、菜单按钮（⋯）、最小化/最大化/关闭按钮，替代被移除的
 //      原生标题栏与 文件/视图/帮助 菜单栏。
 //   2. 通过 contextBridge 暴露 window.dshDesktop（窗口控制 / 菜单动作 /
-//      余额刷新），并把主进程推送的余额数据转发成 window 上的
-//      "dsh-balance-changed" 事件，供 dsh-balance 插件消费。
+//      插件市场与保护中心等）。
 //   3. 把 Web UI 内容下移 36px（body padding-top），保证自绘栏不遮挡界面。
 
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 const BAR_ID = '__dsh_desktop_chrome__';
 const BAR_HEIGHT = 36;
-const FLOAT_BAR_ID = '__dsh_desktop_floatbar__';
-const FLOAT_BAR_HEIGHT = 24;
 
 // ---------------------------------------------------------------------------
-// Bridge (always exposed; the balance plugin reads it, the web UI keeps the
-// legacy dshDesktop.appVersion field working).
+// Bridge (always exposed; the web UI keeps the legacy dshDesktop.appVersion
+// field working).
 // ---------------------------------------------------------------------------
 
 const dshDesktop = {
@@ -40,14 +37,8 @@ const dshDesktop = {
     action: (action, payload) => ipcRenderer.invoke('chrome:menu', { action, ...payload }),
   },
   getInfo: () => ipcRenderer.invoke('chrome:init'),
-  refreshBalance: () => ipcRenderer.invoke('dsh:balance-refresh'),
   // 插件市场：请求主进程原地重启 dsh web 服务（安装/卸载插件后生效）。
   restartService: () => ipcRenderer.invoke('chrome:restart-service', { intent: 'restart-service' }),
-  // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口；浮窗关闭自身。
-  floatWindow: {
-    open: (sessionId) => ipcRenderer.invoke('chrome:float-window', { action: 'open', sessionId }),
-    close: () => ipcRenderer.send('float:close'),
-  },
   // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
   // 设置页「插件保护」分区（dsh-plugin-shield 插件）从这里驱动主进程引擎。
   guard: {
@@ -74,32 +65,8 @@ const dshDesktop = {
     update: (id) => ipcRenderer.invoke('dsh:plugin-update', { id }),
     setAutoUpdate: (enabled) => ipcRenderer.invoke('dsh:plugin-auto-update', { enabled }),
   },
-  // 图片粘贴（V4.2，dsh-image-paste 插件）：把剪贴板图片存到临时目录
-  // （%TEMP%/dsh-paste/），返回 { ok, path, size } 供 agent 读取。
-  imagePaste: {
-    save: (payload) => ipcRenderer.invoke('dsh:image-paste-save', payload),
-  },
-  // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读取默认档/
-  // 当前覆盖、保存自定义价格（¥/百万 token）、恢复默认。
-  balancePrices: {
-    get: (model) => ipcRenderer.invoke('dsh:balance-prices-get', { model }),
-    set: (model, prices) => ipcRenderer.invoke('dsh:balance-prices-set', { model, prices }),
-    reset: (model) => ipcRenderer.invoke('dsh:balance-prices-reset', { model }),
-  },
-  // 「文件」视图的还原请求：changes = [{path, op, oldText, newText}]（逆序）。
-  revertFiles: (changes) => ipcRenderer.invoke('dsh:file-revert', { changes }),
-  // 「全部文件」视图：用系统默认程序打开项目文件。
-  openPath: (path) => ipcRenderer.invoke('dsh:file-open', { path }),
   // 预览面板：用系统浏览器打开 URL（端口预览等）。
   openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
-  // 复制文本到剪贴板（更新源地址等）。
-  copyText: (text) => ipcRenderer.invoke('dsh:copy-text', { text }),
-  // 拖入文件（dsh-file-drop）：取浏览器 File 对象的完整磁盘路径
-  // （webUtils.getPathForFile，仅 Electron 环境；浏览器打开 WebUI 时
-  // 返回空字符串，插件自动降级为可读提示）。
-  getPathForFile: (file) => {
-    try { return webUtils.getPathForFile(file) || ''; } catch { return ''; }
-  },
   // 恢复页面（assets/recovery.html）使用的动作与状态读取。
   recovery: {
     getState: () => ipcRenderer.invoke('chrome:recovery-state'),
@@ -111,40 +78,12 @@ const dshDesktop = {
 
 contextBridge.exposeInMainWorld('dshDesktop', dshDesktop);
 
-// ---------------------------------------------------------------------------
-// 浮窗模式检测（V4 多窗口，移植自上游 dsh_desktop）：process.argv 由
-// webPreferences.additionalArguments 注入。浮窗内暴露 window.__DSH_FLOAT__ =
-// { sessionId } 供 dsh-float-window 插件识别，并预置目标会话到持久化，
-// 让 Web UI 一启动就选中目标会话（比启动后 sessions.open() 可靠：会话服务
-// 在 boot 早期尚未就绪时 open() 会抛 unknown session）。
-// ---------------------------------------------------------------------------
-const FLOAT_ARG = process.argv.find((a) => a.startsWith('--dsh-float='));
-const FLOAT_MODE = FLOAT_ARG ? { sessionId: FLOAT_ARG.slice('--dsh-float='.length) } : null;
-if (FLOAT_MODE) {
-  contextBridge.exposeInMainWorld('__DSH_FLOAT__', FLOAT_MODE);
-  try {
-    const key = 'dsh.sessions.current';
-    const raw = localStorage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : {};
-    if (parsed && typeof parsed === 'object') {
-      parsed.sessionId = String(FLOAT_MODE.sessionId);
-      delete parsed.subagentAddress;
-      localStorage.setItem(key, JSON.stringify(parsed));
-    }
-  } catch (_e) { /* 忽略持久化失败 */ }
-}
-
 // 页面异常 → 主进程日志（desktop.log），便于排查插件空白视图。
 window.addEventListener('error', (e) => {
   try { ipcRenderer.send('dsh:page-error', 'window.onerror: ' + ((e && (e.message || e.error)) || 'unknown')); } catch {}
 });
 window.addEventListener('unhandledrejection', (e) => {
   try { ipcRenderer.send('dsh:page-error', 'unhandledrejection: ' + String((e && e.reason && (e.reason.message || e.reason)) || e)); } catch {}
-});
-
-// 余额推送 → window 事件（dsh-balance 插件订阅）。
-ipcRenderer.on('dsh:balance', (_e, data) => {
-  try { window.dispatchEvent(new CustomEvent('dsh-balance-changed', { detail: data })); } catch {}
 });
 
 // ---------------------------------------------------------------------------
@@ -225,7 +164,7 @@ const GLYPHS = {
 let menuOpen = false;
 let menuEl = null;
 let maxBtn = null;
-let state = { appVersion: '', agentVersion: '', agentSource: '', notifyOnTurnEnd: true, closeToTray: true, exitAction: 'ask', shortcutPolicy: 'auto' };
+let state = { appVersion: '', agentVersion: '', agentSource: '', closeToTray: true, exitAction: 'ask', shortcutPolicy: 'auto' };
 
 const EXIT_ACTIONS = [
   { value: 'ask', label: '每次询问' },
@@ -242,20 +181,6 @@ function renderMenu() {
       <div class="dch-mh-title">Deepseek Harness EAC <span style="font-weight:400;color:var(--dsw-alias-label-tertiary)">封装 v${esc(state.appVersion)}</span></div>
       <div class="dch-mh-sub"><span>agent v${esc(state.agentVersion)}</span><span>${esc(state.agentSource)}</span></div>
     </div>
-    <button class="dch-item" data-act="check-agent-update">检查 dsh 更新…</button>
-    <button class="dch-item" data-act="check-client-update">检查客户端更新…</button>
-    <div class="dch-repos">
-      <div class="dch-repos-title">更新源（点击复制）</div>
-      <div class="dch-repo-row">
-        <span class="dch-repo-url" title="${esc(state.repoUrls ? state.repoUrls.github : '')}">${esc(state.repoUrls ? state.repoUrls.github : '')}</span>
-        <button class="dch-copy" data-copy="github" title="复制地址">复制</button>
-      </div>
-      <div class="dch-repo-row">
-        <span class="dch-repo-url" title="${esc(state.repoUrls ? state.repoUrls.gitee : '')}">${esc(state.repoUrls ? state.repoUrls.gitee : '')}</span>
-        <button class="dch-copy" data-copy="gitee" title="复制地址">复制</button>
-      </div>
-    </div>
-    <button class="dch-item" data-act="toggle-notify"><span>会话完成通知</span>${state.notifyOnTurnEnd ? '<span class="dch-check">✓</span>' : ''}</button>
     <button class="dch-item" data-act="toggle-shortcut-policy"><span>桌面快捷方式自动维护</span>${state.shortcutPolicy !== 'never' ? '<span class="dch-check">✓</span>' : ''}</button>
     <div class="dch-exit-group">
       <div class="dch-exit-title">关闭窗口时</div>
@@ -269,19 +194,12 @@ function renderMenu() {
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="open-browser">在浏览器中打开</button>
     <button class="dch-item" data-act="open-logs">打开日志目录</button>
-    <button class="dch-item" data-act="feedback">反馈建议</button>
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="about">关于 Deepseek Harness EAC</button>
     <button class="dch-item" data-danger="1" data-act="quit">退出</button>`;
   menuEl.querySelectorAll('.dch-item').forEach((item) => {
     item.addEventListener('click', async () => {
       const act = item.dataset.act;
-      if (act === 'toggle-notify') {
-        const next = await dshDesktop.menu.action(act);
-        if (next) state = { ...state, ...next };
-        renderMenu();
-        return;
-      }
       if (act === 'toggle-shortcut-policy') {
         const next = await dshDesktop.menu.action(act);
         if (next) state = { ...state, ...next };
@@ -296,21 +214,6 @@ function renderMenu() {
       }
       closeMenu();
       dshDesktop.menu.action(act);
-    });
-  });
-  // 更新源复制按钮
-  menuEl.querySelectorAll('.dch-copy').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const kind = btn.dataset.copy;
-      const url = state.repoUrls && (kind === 'github' ? state.repoUrls.github : state.repoUrls.gitee);
-      if (!url) return;
-      const r = await dshDesktop.copyText(url);
-      if (r && r.ok) {
-        const prev = btn.textContent;
-        btn.textContent = '已复制 ✓';
-        setTimeout(() => { btn.textContent = prev; }, 1200);
-      }
     });
   });
 }
@@ -341,38 +244,7 @@ function setMaximized(isMax) {
   maxBtn.setAttribute('aria-label', maxBtn.title);
 }
 
-// 浮窗的细拖拽条（纯拖拽 + 关闭按钮，跳过完整自绘标题栏）。
-function injectFloatBar() {
-  if (document.getElementById(FLOAT_BAR_ID)) return;
-  const style = document.createElement('style');
-  style.textContent = `
-  #${FLOAT_BAR_ID}{position:fixed;top:0;left:0;right:0;height:${FLOAT_BAR_HEIGHT}px;z-index:2147483000;
-    display:flex;align-items:center;justify-content:flex-end;gap:2px;padding:0 6px 0 10px;
-    -webkit-app-region:drag;user-select:none;box-sizing:border-box;
-    background:color-mix(in srgb,var(--dsw-alias-bg-base,#0b1220) 70%,transparent);
-    border-bottom:1px solid color-mix(in srgb,var(--dsw-alias-border-l1,rgba(255,255,255,.09)) 50%,transparent)}
-  #${FLOAT_BAR_ID} button{width:26px;height:22px;display:grid;place-items:center;border:none;border-radius:7px;
-    background:transparent;color:var(--dsw-alias-label-secondary,#b8c5ea);cursor:pointer;padding:0;
-    -webkit-app-region:no-drag;outline:none;transition:background .12s,color .12s}
-  #${FLOAT_BAR_ID} button:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.09));
-    color:var(--dsw-alias-label-primary,#eef2ff)}
-  #${FLOAT_BAR_ID} button.df-close:hover{background:#e81123;color:#fff}`;
-  document.head.appendChild(style);
-  const layout = document.createElement('style');
-  layout.textContent = `body{box-sizing:border-box!important;padding-top:${FLOAT_BAR_HEIGHT}px!important}`;
-  document.head.appendChild(layout);
-  // 向页面声明浮窗拖拽条高度：fixed 定位的侧边栏（dsh-better-sidebar）读取
-  // 该属性自动下移顶部标签条，body padding 只对普通流内容生效。
-  document.documentElement.setAttribute('data-dsh-title-bar-height', String(FLOAT_BAR_HEIGHT));
-  const bar = document.createElement('div');
-  bar.id = FLOAT_BAR_ID;
-  bar.innerHTML = `<button class="df-close" title="关闭" aria-label="关闭">${GLYPHS.close}</button>`;
-  document.body.appendChild(bar);
-  bar.querySelector('.df-close').addEventListener('click', () => dshDesktop.floatWindow.close());
-}
-
 function injectChrome() {
-  if (FLOAT_MODE) { injectFloatBar(); return; }
   if (document.getElementById(BAR_ID)) return;
   const style = document.createElement('style');
   style.textContent = CHROME_CSS;

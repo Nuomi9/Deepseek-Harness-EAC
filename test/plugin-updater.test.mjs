@@ -47,17 +47,17 @@ describe('版本判定', () => {
     const profile = mkdtempSync(join(tmpdir(), 'dsh-profile-'));
     t.after(() => { rmSync(assets, { recursive: true, force: true }); rmSync(profile, { recursive: true, force: true }); });
     writePkg(join(assets, 'pkg'), '1.0.0');
-    writePkg(join(profile, 'node_modules', 'dsh-soul-md'), '1.2.0');
-    const update = { npm: 'dsh-soul-md' };
+    writePkg(join(profile, 'node_modules', 'dsh-auto-compact'), '1.2.0');
+    const update = { npm: 'dsh-auto-compact' };
     assert.equal(pu.currentVersionOf(ctx, join(assets, 'pkg'), update, profile), '1.2.0');
     assert.equal(pu.currentVersionOf(ctx, join(assets, 'pkg'), update, null), '1.0.0');
   });
 
   it('sourceKind / sourceName 解析', () => {
-    assert.equal(pu.sourceKind({ npm: 'dsh-pet' }), 'npm');
+    assert.equal(pu.sourceKind({ npm: 'dsh-undo' }), 'npm');
     assert.equal(pu.sourceKind({ github: 'lire1131/dsh-undo-savepoint' }), 'github');
     assert.equal(pu.sourceKind({}), null);
-    assert.equal(pu.sourceName({ npm: 'dsh-pet' }), 'dsh-pet');
+    assert.equal(pu.sourceName({ npm: 'dsh-undo' }), 'dsh-undo');
     assert.equal(pu.sourceName({ github: 'lire1131/dsh-undo-savepoint' }), 'lire1131/dsh-undo-savepoint');
   });
 });
@@ -117,14 +117,14 @@ describe('npmLatest / githubLatest（stub 网络）', () => {
       if (calls.length === 1) throw new Error('主源不可达');
       return '1.9.0\n';
     } };
-    const v = await pu.npmLatest(ctx, 'dsh-pet');
+    const v = await pu.npmLatest(ctx, 'dsh-undo');
     assert.equal(v, '1.9.0');
     assert.ok(calls.length >= 2, '主源失败后应切换镜像');
   });
 
   it('npmLatest 全源失败抛错', async (t) => {
     const ctx = { ...tmpCtx(t), runNpm: async () => { throw new Error('网络错误'); } };
-    await assert.rejects(() => pu.npmLatest(ctx, 'dsh-pet'), /无法获取/);
+    await assert.rejects(() => pu.npmLatest(ctx, 'dsh-undo'), /无法获取/);
   });
 
   it('githubLatest 解析 releases 标签并去掉 v 前缀', async (t) => {
@@ -161,8 +161,8 @@ describe('npmLatest / githubLatest（stub 网络）', () => {
   it('findInstalledDir: npm 源按包名定位；GitHub 源扫描直子目录', (t) => {
     const staging = mkdtempSync(join(tmpdir(), 'dsh-fid-'));
     t.after(() => rmSync(staging, { recursive: true, force: true }));
-    writePkg(join(staging, 'node_modules', 'dsh-pet'), '1.0.0');
-    assert.equal(pu.findInstalledDir(staging, { npm: 'dsh-pet' }), join(staging, 'node_modules', 'dsh-pet'));
+    writePkg(join(staging, 'node_modules', 'dsh-undo'), '1.0.0');
+    assert.equal(pu.findInstalledDir(staging, { npm: 'dsh-undo' }), join(staging, 'node_modules', 'dsh-undo'));
     assert.equal(pu.findInstalledDir(staging, { npm: 'dsh-other' }), null);
     // GitHub 形态：主包 + 依赖共存时选 name === basename 的那个
     writePkg(join(staging, 'node_modules', 'some-dep'), '0.1.0');
@@ -177,8 +177,8 @@ describe('全量检测', () => {
     const ctx = { ...tmpCtx(t), resolveLatest: async () => '1.5.0' };
     const assets = mkdtempSync(join(tmpdir(), 'dsh-src-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const sources = [{ id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } }];
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const sources = [{ id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } }];
     pu.invalidateCache();
     const list = await pu.checkPluginUpdates(ctx, sources, { force: true });
     assert.equal(list.length, 1);
@@ -217,13 +217,13 @@ describe('全量检测', () => {
     const ctx = { ...tmpCtx(t), resolveLatest: async () => '1.5.0' };
     const assets = mkdtempSync(join(tmpdir(), 'dsh-src3-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const sources = [{ id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } }];
-    pu.rememberSkip(ctx, 'dsh-pet', '1.5.0');
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const sources = [{ id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } }];
+    pu.rememberSkip(ctx, 'dsh-undo', '1.5.0');
     pu.invalidateCache();
     const list = await pu.checkPluginUpdates(ctx, sources, { force: true });
     assert.equal(list[0].skipped, true);
-    pu.rememberSkip(ctx, 'dsh-pet', '1.5.1');
+    pu.rememberSkip(ctx, 'dsh-undo', '1.5.1');
     pu.invalidateCache();
     const list2 = await pu.checkPluginUpdates(ctx, sources, { force: true });
     assert.equal(list2[0].skipped, false);
@@ -234,8 +234,8 @@ describe('全量检测', () => {
     const ctx = { ...tmpCtx(t), resolveLatest: async () => { calls += 1; return '1.5.0'; } };
     const assets = mkdtempSync(join(tmpdir(), 'dsh-src4-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const sources = [{ id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } }];
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const sources = [{ id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } }];
     pu.invalidateCache();
     await pu.checkPluginUpdates(ctx, sources);      // 未命中缓存 → 1 次
     await pu.checkPluginUpdates(ctx, sources);      // 缓存命中 → 0 次
@@ -253,8 +253,8 @@ describe('应用更新（applyBuiltinPluginUpdate）', () => {
     const ctx = tmpCtx(t);
     const assets = mkdtempSync(join(tmpdir(), 'dsh-apply-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const source = { id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } };
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const source = { id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } };
     const r = await pu.applyBuiltinPluginUpdate(ctx, source, { latest: '1.0.0' });
     assert.equal(r.ok, true);
     assert.equal(r.noop, true);
@@ -264,15 +264,15 @@ describe('应用更新（applyBuiltinPluginUpdate）', () => {
   it('完整流程: 下载 → 合并覆盖层 → 拷 profile', async (t) => {
     const ctx = tmpCtx(t);
     ctx.runNpm = async () => {
-      // 模拟 npm install --prefix staging：在 staging/node_modules/dsh-pet 放新版本
+      // 模拟 npm install --prefix staging：在 staging/node_modules/dsh-undo 放新版本
       const staging = join(ctx.userDataDir, 'plugin-update-staging', 'pkg');
-      writePkg(join(staging, 'node_modules', 'dsh-pet'), '1.5.0');
+      writePkg(join(staging, 'node_modules', 'dsh-undo'), '1.5.0');
     };
     const assets = mkdtempSync(join(tmpdir(), 'dsh-apply2-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    writeFileSync(join(assets, 'dsh-pet', 'extra.txt'), 'eac-only\n'); // EAC 附加文件
-    const source = { id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } };
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    writeFileSync(join(assets, 'dsh-undo', 'extra.txt'), 'eac-only\n'); // EAC 附加文件
+    const source = { id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } };
     let copied = null;
     const r = await pu.applyBuiltinPluginUpdate(ctx, source, {
       latest: '1.5.0',
@@ -281,7 +281,7 @@ describe('应用更新（applyBuiltinPluginUpdate）', () => {
     assert.equal(r.ok, true);
     assert.equal(r.latest, '1.5.0');
     assert.equal(r.restartRequired, false);
-    const overlay = join(ctx.userDataDir, 'builtin-plugin-updates', 'dsh-pet');
+    const overlay = join(ctx.userDataDir, 'builtin-plugin-updates', 'dsh-undo');
     assert.equal(JSON.parse(readFileSync(join(overlay, 'package.json'), 'utf8')).version, '1.5.0');
     // EAC 附加文件保留（合并以资产副本为底）
     assert.equal(readFileSync(join(overlay, 'extra.txt'), 'utf8'), 'eac-only\n');
@@ -292,8 +292,8 @@ describe('应用更新（applyBuiltinPluginUpdate）', () => {
     const ctx = tmpCtx(t);
     const assets = mkdtempSync(join(tmpdir(), 'dsh-apply3-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const source = { id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } };
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const source = { id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } };
     await assert.rejects(
       () => pu.applyBuiltinPluginUpdate(ctx, source, { latest: '1.5.0', guard: { snapshot: () => null } }),
       /保护快照失败/
@@ -304,12 +304,12 @@ describe('应用更新（applyBuiltinPluginUpdate）', () => {
     const ctx = tmpCtx(t);
     ctx.runNpm = async () => {
       const staging = join(ctx.userDataDir, 'plugin-update-staging', 'pkg');
-      writePkg(join(staging, 'node_modules', 'dsh-pet'), '1.5.0', { engines: { dsh: '>=5.0.0' } });
+      writePkg(join(staging, 'node_modules', 'dsh-undo'), '1.5.0', { engines: { dsh: '>=5.0.0' } });
     };
     const assets = mkdtempSync(join(tmpdir(), 'dsh-apply4-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const source = { id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } };
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const source = { id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } };
     await assert.rejects(
       () => pu.applyBuiltinPluginUpdate(ctx, source, { latest: '1.5.0', bundledDshVersion: '4.2.0' }),
       /要求 dsh 内核 >= 5.0.0/
@@ -320,8 +320,8 @@ describe('应用更新（applyBuiltinPluginUpdate）', () => {
     const ctx = { ...tmpCtx(t), runNpm: async () => { throw new Error('镜像全挂了'); } };
     const assets = mkdtempSync(join(tmpdir(), 'dsh-apply5-'));
     t.after(() => rmSync(assets, { recursive: true, force: true }));
-    writePkg(join(assets, 'dsh-pet'), '1.0.0');
-    const source = { id: 'dsh-pet', name: 'dsh-pet', assetsDir: join(assets, 'dsh-pet'), update: { npm: 'dsh-pet' } };
+    writePkg(join(assets, 'dsh-undo'), '1.0.0');
+    const source = { id: 'dsh-undo', name: 'dsh-undo', assetsDir: join(assets, 'dsh-undo'), update: { npm: 'dsh-undo' } };
     await assert.rejects(() => pu.applyBuiltinPluginUpdate(ctx, source, { latest: '1.5.0' }), /下载失败/);
     assert.equal(existsSync(pu.stagingRoot(ctx)), false);
   });

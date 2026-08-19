@@ -48,16 +48,11 @@ window.__ModuleLoader__.load({
 			openRepo: "查看仓库",
 			srcDshWebUi: "dsh-web-ui 系列皮肤",
 			licBsd: "许可：BSD-3-Clause",
-			srcMaid: "maid-atelier · 深海女仆工坊",
-			licMaid: "许可：CC BY-NC-SA 4.0（署名-非商业性使用-相同方式共享，禁止商业使用）",
-			creditMaid: "角色原作：上善（Pixiv 62155430 · B站「上善无形」）；DeepSeek 元素二次设计：ZipZipPipe（Pixiv 18604994 · B站「ZipZipPipe」）",
-			noticeMaid: "完整版权链见皮肤包 NOTICE（assets/skins/maid-atelier/）。",
 			srcUnknown: "出处见皮肤包内 LICENSE",
 			creditsTitle: "来源与版权",
 			creditsIntro: "以下皮肤均为第三方开源作品，版权归原作者所有，DSH Desktop 仅负责内置分发与切换管理：",
 			repoDshWebUi: "dsh-web-ui（zhu1090093659）· https://github.com/zhu1090093659/dsh-web-ui",
-			repoMaid: "dsh-deep-whale（Small-tailqwq）· https://github.com/Small-tailqwq/dsh-deep-whale",
-			creditsNote: "皮肤内容遵循各自许可；maid-atelier 禁止商业使用。"
+			creditsNote: "皮肤内容遵循各自许可。"
 		};
 		const en = {
 			tab: "Skins",
@@ -82,16 +77,11 @@ window.__ModuleLoader__.load({
 			openRepo: "Repository",
 			srcDshWebUi: "dsh-web-ui skin series",
 			licBsd: "License: BSD-3-Clause",
-			srcMaid: "maid-atelier · Abyssal Maid Atelier",
-			licMaid: "License: CC BY-NC-SA 4.0 (Attribution-NonCommercial-ShareAlike, no commercial use)",
-			creditMaid: "Character original: 上善 (Pixiv 62155430 · Bilibili “上善无形”); DeepSeek-flavored redesign: ZipZipPipe (Pixiv 18604994 · Bilibili “ZipZipPipe”)",
-			noticeMaid: "Full credit chain is in the skin package NOTICE (assets/skins/maid-atelier/).",
 			srcUnknown: "See LICENSE inside the skin package",
 			creditsTitle: "Sources & Credits",
 			creditsIntro: "The skins below are third-party open-source works. All rights belong to their original authors; DSH Desktop only bundles and manages them:",
 			repoDshWebUi: "dsh-web-ui (zhu1090093659) · https://github.com/zhu1090093659/dsh-web-ui",
-			repoMaid: "dsh-deep-whale (Small-tailqwq) · https://github.com/Small-tailqwq/dsh-deep-whale",
-			creditsNote: "Each skin follows its own license; maid-atelier is non-commercial."
+			creditsNote: "Each skin follows its own license."
 		};
 		const NS = "settings.dshSkinSwitch";
 		//#endregion
@@ -106,8 +96,7 @@ window.__ModuleLoader__.load({
 			"ui-skin-qq98": "dsh-web-ui",
 			"ui-skin-ths": "dsh-web-ui",
 			"ui-skin-dragon-heir": "dsh-web-ui",
-			"ui-skin-miku": "dsh-web-ui",
-			"ui-skin-maid-atelier": "maid"
+			"ui-skin-miku": "dsh-web-ui"
 		};
 		//#endregion
 		//#region remote face
@@ -211,18 +200,7 @@ window.__ModuleLoader__.load({
 						(0, react_jsx_runtime.jsxs)("div", {
 							className: s.src,
 							children: [
-								kind === "maid" ? (0, react_jsx_runtime.jsxs)("span", {
-									children: [
-										t("srcMaid") + " · " + t("byAuthor") + " Small-tailqwq · ",
-										(0, react_jsx_runtime.jsx)("a", {
-											href: "https://github.com/Small-tailqwq/dsh-deep-whale",
-											target: "_blank",
-											rel: "noreferrer noopener",
-											children: t("openRepo")
-										}),
-										" · " + t("licMaid")
-									]
-								}) : kind === "dsh-web-ui" ? (0, react_jsx_runtime.jsxs)("span", {
+								kind === "dsh-web-ui" ? (0, react_jsx_runtime.jsxs)("span", {
 									children: [
 										t("srcDshWebUi") + " · " + t("byAuthor") + " zhu1090093659 · ",
 										(0, react_jsx_runtime.jsx)("a", {
@@ -233,9 +211,7 @@ window.__ModuleLoader__.load({
 										}),
 										" · " + t("licBsd")
 									]
-								}) : (0, react_jsx_runtime.jsx)("span", { children: t("srcUnknown") }),
-								kind === "maid" ? (0, react_jsx_runtime.jsx)("span", { className: s.credit, children: t("creditMaid") }) : null,
-								kind === "maid" ? (0, react_jsx_runtime.jsx)("small", { children: t("noticeMaid") }) : null
+								}) : (0, react_jsx_runtime.jsx)("span", { children: t("srcUnknown") })
 							]
 						}),
 						(0, react_jsx_runtime.jsx)("button", {
@@ -352,17 +328,6 @@ window.__ModuleLoader__.load({
 								})
 							}),
 							(0, react_jsx_runtime.jsx)("p", { children: t("licBsd") }),
-							(0, react_jsx_runtime.jsx)("p", {
-								children: (0, react_jsx_runtime.jsx)("a", {
-									href: "https://github.com/Small-tailqwq/dsh-deep-whale",
-									target: "_blank",
-									rel: "noreferrer noopener",
-									children: t("repoMaid")
-								})
-							}),
-							(0, react_jsx_runtime.jsx)("p", { children: t("licMaid") }),
-							(0, react_jsx_runtime.jsx)("p", { className: s.credit, children: t("creditMaid") }),
-							(0, react_jsx_runtime.jsx)("small", { children: t("noticeMaid") }),
 							(0, react_jsx_runtime.jsx)("small", { children: t("creditsNote") })
 						]
 					})

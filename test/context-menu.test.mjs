@@ -1,5 +1,5 @@
 // V4 右键菜单（浏览器风格）接线回归：attachEditContextMenu 覆盖四类场景，
-// 且主窗与浮窗都挂接。
+// 主窗挂接。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -33,9 +33,8 @@ test('attachEditContextMenu 定义完整：编辑/图片/选区/导航四类场�
   assert.match(body, /popup\(\{ window: win, x: params\.x, y: params\.y \}\)/);
 });
 
-test('主窗与浮窗都挂接右键菜单', () => {
+test('主窗挂接右键菜单', () => {
   const occurrences = main.match(/attachEditContextMenu\(/g) || [];
-  assert.ok(occurrences.length >= 3, '定义 + 主窗 + 浮窗至少 3 处引用，实际 ' + occurrences.length);
+  assert.ok(occurrences.length >= 2, '定义 + 主窗至少 2 处引用，实际 ' + occurrences.length);
   assert.match(main, /attachEditContextMenu\(mainWindow\.webContents\)/, '主窗挂接');
-  assert.match(main, /attachEditContextMenu\(win\.webContents\)/, '浮窗挂接');
 });

@@ -1,9 +1,9 @@
-appId: com.deepseek.dsh.desktop
+appId: com.deepseek.dsh.desktop.lite
 # No version suffix in productName: a versioned install dir gets nested on
 # upgrades (.../v1.0/v2.0) when the registry keeps the old INSTALLDIR, which
 # pushes deep node_modules paths past MAX_PATH — the NSIS 7z extractor then
 # silently drops those files and dsh web crashes with MODULE_NOT_FOUND (issue #4).
-productName: Deepseek Harness EAC
+productName: Deepseek Harness EAC v4Lite
 copyright: MIT License
 # 仅保留中英文，移除 Electron 其余语言包（.pak，约 80MB），不影响功能体验。
 electronLanguages:
@@ -26,10 +26,7 @@ buildDependenciesFromSource: false
 files:
   - main.js
   - updater.js
-  - client-updater.js
   - plugin-updater.js
-  - balance.js
-  - session-watcher.js
   - profile-module-heal.js
   - patch-row-heal.js
   - builtin-collision.js
@@ -44,10 +41,9 @@ files:
   - watchdog.js
   - preload.js
   - assets/**/*
-  # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
+  # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）与
   # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。
   - scripts/koffi-preflight.cjs
-  - scripts/patch-session-manage.js
   - scripts/plugin-manager-patch.js
   - scripts/onboarding.js
   - scripts/make-release-hashes.js
@@ -68,21 +64,9 @@ extraResources:
 win:
   icon: build/icon.png
   target:
-    - target: portable
-      arch:
-        - x64
     - target: nsis
       arch:
         - x64
-
-# No ${version} in artifact names: the README links to
-# releases/latest/download/<fixed-name>.exe, which must stay valid across
-# releases (hard-coded v2.0.1 names 404'd after v2.0.2 shipped).
-portable:
-  artifactName: Deepseek-Harness-EAC-Portable-${arch}.${ext}
-  # 稳定缓存目录名：配合 scripts/patch-portable-template.js 复用已解压目录，
-  # 避免每次启动都解压 app-64.7z（Defender 扫描 2.4 万文件导致分钟级冷启动）。
-  unpackDirName: deepseek-harness-eac-portable
 
 nsis:
   artifactName: Deepseek-Harness-EAC-Setup-${arch}.${ext}
@@ -95,7 +79,7 @@ nsis:
   # （尊重安装向导勾选项）；运行时维护见 main.js maintainShortcuts。
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Deepseek Harness EAC
-  uninstallDisplayName: Deepseek Harness EAC
+  shortcutName: Deepseek Harness EAC v4Lite
+  uninstallDisplayName: Deepseek Harness EAC v4Lite
 
 publish: null

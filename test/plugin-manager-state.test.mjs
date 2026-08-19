@@ -10,53 +10,53 @@ const { collectPluginRows } = require(join(root, 'plugin-manager-state.js'));
 
 // 与 main.js COMPANION_PLUGINS 同构的最小清单（含默认禁用的大肥鱼）。
 const companion = [
-  { id: 'dsh-pet', name: 'dsh-pet' },
-  { id: 'dsh-pet-settings', name: 'dsh-pet-settings' },
-  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu' },
+  { id: 'dsh-undo', name: 'dsh-undo' },
+  { id: 'dsh-undo-settings', name: 'dsh-undo-settings' },
+  { id: 'dsh-skin-switch', name: 'dsh-skin-switch' },
 ];
 
-test('insert 内层 disabled: true 的默认禁用插件（dsh-dafeiyu 场景）正确显示为未启用', () => {
+test('insert 内层 disabled: true 的默认禁用插件（dsh-skin-switch 场景）正确显示为未启用', () => {
   // syncCompanionPlugins 写入的默认形态：insert 内层行带 disabled: true。
   const entries = [{
     insert: [
-      { id: 'dsh-pet', name: 'dsh-pet', config: { size: 260, position: 'bottom-right' } },
-      { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', disabled: true },
+      { id: 'dsh-undo', name: 'dsh-undo', config: { size: 260, position: 'bottom-right' } },
+      { id: 'dsh-skin-switch', name: 'dsh-skin-switch', disabled: true },
     ],
   }];
   const rows = collectPluginRows(entries, { companion });
-  const fish = rows.find((r) => r.id === 'dsh-dafeiyu');
+  const fish = rows.find((r) => r.id === 'dsh-skin-switch');
   assert.equal(fish.enabled, false, 'v4.2 曾只认顶层 disabled，错报为已启用');
   assert.equal(fish.toggleable, true, '未启用的大肥鱼应可在管理页启用');
-  const pet = rows.find((r) => r.id === 'dsh-pet');
+  const pet = rows.find((r) => r.id === 'dsh-undo');
   assert.equal(pet.enabled, true);
   assert.equal(pet.toggleable, true, 'insert 内层 config 不应锁死管理页开关（桌宠卡片仍可切换）');
 });
 
 test('顶层 disabled: true（用户关闭形态）正确显示为未启用', () => {
-  const entries = [{ id: 'dsh-pet', name: 'dsh-pet', disabled: true }];
+  const entries = [{ id: 'dsh-undo', name: 'dsh-undo', disabled: true }];
   const rows = collectPluginRows(entries, { companion });
-  assert.equal(rows.find((r) => r.id === 'dsh-pet').enabled, false);
+  assert.equal(rows.find((r) => r.id === 'dsh-undo').enabled, false);
 });
 
 test('用户启用后（无 disabled 行）恢复为已启用', () => {
-  const entries = [{ insert: [{ id: 'dsh-dafeiyu', name: 'dsh-dafeiyu' }] }];
+  const entries = [{ insert: [{ id: 'dsh-skin-switch', name: 'dsh-skin-switch' }] }];
   const rows = collectPluginRows(entries, { companion });
-  assert.equal(rows.find((r) => r.id === 'dsh-dafeiyu').enabled, true);
+  assert.equal(rows.find((r) => r.id === 'dsh-skin-switch').enabled, true);
 });
 
 test('顶层与 insert 内层都登记时任一 disabled 即禁用且同 id 去重', () => {
   const entries = [
-    { insert: [{ id: 'dsh-pet', name: 'dsh-pet', disabled: true }] },
-    { id: 'dsh-pet', name: 'dsh-pet' },
+    { insert: [{ id: 'dsh-undo', name: 'dsh-undo', disabled: true }] },
+    { id: 'dsh-undo', name: 'dsh-undo' },
   ];
   const rows = collectPluginRows(entries, { companion });
-  assert.equal(rows.filter((r) => r.id === 'dsh-pet').length, 1, '同 id 只出一行');
-  assert.equal(rows.find((r) => r.id === 'dsh-pet').enabled, false);
+  assert.equal(rows.filter((r) => r.id === 'dsh-undo').length, 1, '同 id 只出一行');
+  assert.equal(rows.find((r) => r.id === 'dsh-undo').enabled, false);
 });
 
 test('removed 插件显示 removed 且不可切换、不可移除', () => {
-  const rows = collectPluginRows([], { companion, removedIds: ['dsh-dafeiyu'] });
-  const fish = rows.find((r) => r.id === 'dsh-dafeiyu');
+  const rows = collectPluginRows([], { companion, removedIds: ['dsh-skin-switch'] });
+  const fish = rows.find((r) => r.id === 'dsh-skin-switch');
   assert.equal(fish.removed, true);
   assert.equal(fish.enabled, false);
   assert.equal(fish.toggleable, false);
@@ -89,5 +89,5 @@ test('排序：companion → other → core，组内按 id 字典序', () => {
     assert.ok(rank[groups[i - 1]] <= rank[groups[i]], `分组乱序: ${groups.join(',')}`);
   }
   const companionIds = rows.filter((r) => r.group === 'companion').map((r) => r.id);
-  assert.deepEqual(companionIds, ['dsh-dafeiyu', 'dsh-pet', 'dsh-pet-settings']);
+  assert.deepEqual(companionIds, ['dsh-skin-switch', 'dsh-undo', 'dsh-undo-settings']);
 });
