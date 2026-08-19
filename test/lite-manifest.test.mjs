@@ -16,14 +16,14 @@ const KEEP_SKINS = [
 ].sort();
 
 const KEEP_PLUGIN_DIRS = [
-  'dsh-auto-compact', 'dsh-better-sidebar', 'dsh-plugin-manager',
+  'dsh-auto-compact', 'dsh-better-sidebar', 'dsh-offpeak', 'dsh-plugin-manager',
   'dsh-plugin-marketplace', 'dsh-plugin-shield',
   'dsh-skin-switch', 'dsh-undo-savepoint', 'dsh-webui-market',
 ].sort();
 
 // main.js COMPANION_PLUGINS 里保留的注册 id（含新补登记的 plugin-marketplace）。
 const KEEP_PLUGIN_IDS = [
-  'auto-compact', 'better-sidebar', 'dsh-market-plugin', 'dsh-undo',
+  'auto-compact', 'better-sidebar', 'dsh-market-plugin', 'dsh-undo', 'offpeak',
   'plugin-manager', 'plugin-marketplace', 'plugin-shield',
   'skin-switch',
 ].sort();
@@ -36,7 +36,7 @@ const FORBIDDEN_TOKENS = [
   'tdai-memory', 'mobile-fix', 'message-rewind', 'dsh-pet', 'dock-settings',
   'font-custom', 'change-review', 'float-window', 'dsh-navbar', 'session-manager',
   'conversation-tweaks', 'prompt-custom', 'third-party-thinking', 'side-session',
-  'dafeiyu', 'offpeak', 'file-drop', 'image-paste', 'settings-nav-custom',
+  'dafeiyu', 'file-drop', 'image-paste', 'settings-nav-custom',
   'settings-groups', 'patch-session-manage', 'plugin-wizard', 'onboard:',
   'pluginOnboardingDone',
 ];

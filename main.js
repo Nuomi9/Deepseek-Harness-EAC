@@ -1672,6 +1672,12 @@ const COMPANION_PLUGINS = [
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  // 峰谷价格卫士（dsh-offpeak，christophersmith2737-commits，MIT）：DeepSeek
+  // 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）发送前
+  // 拦截提醒，可一键继续或定时到闲时价自动执行。自带 host 路由
+  // （/ds-offpeak/*）与浏览器端提醒，无壳层依赖；可在「设置 → 插件 → 管理」
+  // 关闭。GitHub 分发锁定拷贝，不登记上游更新源。
+  { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
   // 崩溃急救/撤销回退（dsh-undo-savepoint，lire1131，MIT）：配置文件 + 插件
   // 代码树快照、undo/redo、一键安全模式、密钥脱敏 vault。与插件保护中心
   // （配置面快照）和「文件」还原（会话内改动）互补，覆盖「配置改坏、dsh
