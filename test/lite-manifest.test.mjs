@@ -16,21 +16,21 @@ const KEEP_SKINS = [
 ].sort();
 
 const KEEP_PLUGIN_DIRS = [
-  'dsh-auto-compact', 'dsh-better-sidebar', 'dsh-offpeak', 'dsh-plugin-manager',
-  'dsh-plugin-marketplace', 'dsh-plugin-shield',
+  'dsh-auto-compact', 'dsh-balance', 'dsh-better-sidebar', 'dsh-offpeak',
+  'dsh-plugin-manager', 'dsh-plugin-marketplace', 'dsh-plugin-shield',
   'dsh-skin-switch', 'dsh-undo-savepoint', 'dsh-webui-market',
 ].sort();
 
 // main.js COMPANION_PLUGINS 里保留的注册 id（含新补登记的 plugin-marketplace）。
 const KEEP_PLUGIN_IDS = [
-  'auto-compact', 'better-sidebar', 'dsh-market-plugin', 'dsh-undo', 'offpeak',
-  'plugin-manager', 'plugin-marketplace', 'plugin-shield',
+  'auto-compact', 'balance', 'better-sidebar', 'dsh-market-plugin', 'dsh-undo',
+  'offpeak', 'plugin-manager', 'plugin-marketplace', 'plugin-shield',
   'skin-switch',
 ].sort();
 
 // 壳层与脚本中禁止再出现的引用（移除功能的残留）。
 const FORBIDDEN_TOKENS = [
-  'balance', 'session-watcher', 'client-updater', 'clientUpdater',
+  'session-watcher', 'client-updater', 'clientUpdater',
   'SessionWatcher', 'notifyOnTurnEnd', 'openclaw', 'zat-market', 'zat-dsh-engine',
   'maid-atelier', 'eac-desktop-tips', 'easy-setup', 'tool-vision', 'soul-md',
   'tdai-memory', 'mobile-fix', 'message-rewind', 'dsh-pet', 'dock-settings',
@@ -42,7 +42,7 @@ const FORBIDDEN_TOKENS = [
 ];
 
 const FORBIDDEN_FILES = [
-  'balance.js', 'session-watcher.js', 'client-updater.js',
+  'session-watcher.js', 'client-updater.js',
   'scripts/check-client-latest.js', 'scripts/sim-client-update.js',
   'scripts/test-watcher.js', 'scripts/update-check-probe.js',
   'scripts/analyze-session-log.js', 'scripts/inspect-session.js',
@@ -53,7 +53,7 @@ const FORBIDDEN_FILES = [
 
 // 移除功能的测试文件（随功能一并删除，防止遗留测试被带回来）。
 const FORBIDDEN_TESTS = [
-  'balance-prices-core.test.mjs', 'client-update-platform.test.mjs',
+  'client-update-platform.test.mjs',
   'client-updater-apply.test.mjs', 'client-updater-asset.test.mjs',
   'client-updater-hash.test.mjs', 'client-updater-nospace.test.mjs',
   'client-updater-resume.test.mjs', 'desktop-extras.test.mjs',
@@ -141,7 +141,6 @@ test('测试：已移除功能的测试文件不存在', () => {
 test('打包：electron-builder.yml 仅 Windows x64、不再打包已移除模块、命名 v4Lite', () => {
   const yml = read('electron-builder.yml');
   assert.ok(!yml.includes('client-updater.js'));
-  assert.ok(!yml.includes('balance.js'));
   assert.ok(!yml.includes('session-watcher.js'));
   assert.ok(yml.includes('productName: Deepseek Harness EAC v4Lite'));
   assert.ok(yml.includes('appId: com.deepseek.dsh.desktop.lite'));
@@ -162,7 +161,7 @@ test('打包：package.json 命名 v4Lite、无客户端自更新脚本', () => 
 
 test('保留：核心壳层模块齐全', () => {
   for (const rel of [
-    'updater.js', 'plugin-updater.js', 'plugin-guard.js', 'profile-module-heal.js',
+    'balance.js', 'updater.js', 'plugin-updater.js', 'plugin-guard.js', 'profile-module-heal.js',
     'builtin-collision.js', 'plugin-manager-state.js', 'patch-row-heal.js',
     'preset-sync.js', 'error-detail.js', 'bundle-integrity.js', 'stable-port.js',
     'koffi-preflight.js', 'renderer-recovery.js', 'watchdog.js',

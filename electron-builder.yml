@@ -25,6 +25,7 @@ buildDependenciesFromSource: false
 
 files:
   - main.js
+  - balance.js
   - updater.js
   - plugin-updater.js
   - profile-module-heal.js

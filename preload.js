@@ -37,6 +37,16 @@ const dshDesktop = {
     action: (action, payload) => ipcRenderer.invoke('chrome:menu', { action, ...payload }),
   },
   getInfo: () => ipcRenderer.invoke('chrome:init'),
+  // 余额查询（dsh-balance 插件）：主进程带缓存（15 分钟轮询），返回
+  // { ok, balances, prices, pricing }，变更经 dsh:balance 事件推送。
+  refreshBalance: () => ipcRenderer.invoke('dsh:balance-refresh'),
+  // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读取默认档/
+  // 当前覆盖、写入自定义价格（¥/百万 token）、恢复默认。
+  balancePrices: {
+    get: (model) => ipcRenderer.invoke('dsh:balance-prices-get', { model }),
+    set: (model, prices) => ipcRenderer.invoke('dsh:balance-prices-set', { model, prices }),
+    reset: (model) => ipcRenderer.invoke('dsh:balance-prices-reset', { model }),
+  },
   // 插件市场：请求主进程原地重启 dsh web 服务（安装/卸载插件后生效）。
   restartService: () => ipcRenderer.invoke('chrome:restart-service', { intent: 'restart-service' }),
   // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
@@ -79,6 +89,11 @@ window.addEventListener('error', (e) => {
 });
 window.addEventListener('unhandledrejection', (e) => {
   try { ipcRenderer.send('dsh:page-error', 'unhandledrejection: ' + String((e && e.reason && (e.reason.message || e.reason)) || e)); } catch {}
+});
+
+// 余额推送 → window 事件（dsh-balance 插件订阅）。
+ipcRenderer.on('dsh:balance', (_e, data) => {
+  try { window.dispatchEvent(new CustomEvent('dsh-balance-changed', { detail: data })); } catch {}
 });
 
 // ---------------------------------------------------------------------------

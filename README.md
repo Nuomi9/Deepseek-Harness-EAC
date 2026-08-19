@@ -1,6 +1,6 @@
 # Deepseek Harness EAC v4Lite
 
-把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows 桌面客户端 —— **v4Lite 精简版**：砍掉浮窗、余额、客户端自更新、桌宠、记忆、人设卡等外围功能，只保留高频核心工作流。
+把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows 桌面客户端 —— **v4Lite 精简版**：砍掉浮窗、客户端自更新、桌宠、记忆、人设卡等外围功能，只保留高频核心工作流；余额小部件与峰谷价格卫士等实用插件保留。
 
 - ✅ **免安装 Node**：内置独立的 Node 运行时与 npm CLI，目标机器无需安装 Node.js
 - ✅ **内置 dsh CLI**：完整打包 `@deepseek-ai/dsh` 及其全部核心插件，离线可用
@@ -10,12 +10,12 @@
 - ✅ **退出即清理**：退出应用有界等待 dsh 进程树真正退出（优雅 → 强杀），不留孤儿进程
 - ✅ **数据目录隔离**：默认使用 `DSH_HOME = ~\.dsh-v4lite`（与原版 `~\.dsh` 完全隔离，两端可并行安装运行），已有会话/API Key 可复制 `~\.dsh\settings.yaml` 迁移
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 9 款 Web UI 皮肤，互斥切换、默认不启用、重启生效；随包标注出处与许可
-- ✅ **内置社区插件套件**（9 个，详见「内置插件」章节）：插件市场 ×2 / 插件保护中心 / 启停管理 / 峰谷价格卫士 / 崩溃急救撤销 / 右侧栏工作台 / 自动压缩 / 皮肤切换，全部随包分发、开箱即用
+- ✅ **内置插件套件**（10 个，详见「内置插件」章节）：插件市场 ×2 / 插件保护中心 / 启停管理 / 余额小部件（含峰谷倒计时）/ 峰谷价格卫士 / 崩溃急救撤销 / 右侧栏工作台 / 自动压缩 / 皮肤切换，全部随包分发、开箱即用
 - ✅ **崩溃急救与撤销（dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
 - ✅ **错误日志一键复制**：启动失败 / DSH 服务停止的报错弹窗带「复制日志」按钮，一键复制完整诊断信息供反馈
 - ✅ **快捷方式自动维护**：按「目标 exe」识别既有快捷方式（用户改名/换图标不再重复新建），自定义图标绝不覆盖
 
-> **v4Lite 是 EAC 4.4.0 的功能子集**：依赖同一 `main.js` 架构与安全引擎，删去了浮窗/临时会话、余额小部件、文件更改追踪/终端、会话通知、客户端自更新、ClawBot 桥、一键迁移、桌宠、长期记忆、soul.md 人设卡、移动端修复等外围件（完整差异见「与 EAC 4.4.0 的差异」）。插件与配置格式完全兼容，升级/降级不破坏数据。
+> **v4Lite 是 EAC 4.4.0 的功能子集**：依赖同一 `main.js` 架构与安全引擎，删去了浮窗/临时会话、文件更改追踪/终端、会话通知、客户端自更新、ClawBot 桥、一键迁移、桌宠、长期记忆、soul.md 人设卡、移动端修复等外围件（完整差异见「与 EAC 4.4.0 的差异」）。插件与配置格式完全兼容，升级/降级不破坏数据。
 
 ## 快速开始（成品用户）
 
@@ -57,7 +57,7 @@
 
 ## 内置插件（v4Lite）
 
-以下 9 个插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；启动时的 heal 流程会自动清理模块双实例遮蔽包。
+以下 10 个插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；启动时的 heal 流程会自动清理模块双实例遮蔽包。
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
@@ -67,6 +67,7 @@
 | `dsh-plugin-shield` | 插件保护中心 UI：快照列表/一键回滚/健康检查/事故报告，经桌面壳 IPC（`guard:action`）驱动 plugin-guard.js 引擎 | 设置 → 插件 → 保护中心 |
 | `dsh-skin-switch` | 皮肤切换（见「界面皮肤」）：列出/切换/恢复 9 款内置皮肤 | 设置 → 皮肤 |
 | `dsh-offpeak` | 峰谷价格卫士（christophersmith2737-commits，MIT）：DeepSeek 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）发送前拦截提醒，可一键继续或定时到闲时价自动执行；浏览器端显示当前时段高峰/闲时价目 | 发送栏（自动出现）+ 设置 → 插件 → 管理 |
+| `dsh-balance` | 余额小部件（官方私有包，随包分发）：对话底部统计条下方的余额/会话费用估算 + 峰谷定价时段条（高峰中/空闲中 · 还剩 X 时 X 分 倒计时）+ 设置页「价格设置」（自定义各模型 ¥/百万 token 价档） | 对话输入区下方（自动出现）+ 设置 → 价格设置 |
 | `dsh-undo-savepoint` | 崩溃急救与撤销：配置文件 + 插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault | 对话顶部 undo/redo 按钮 + 快照面板 |
 | `dsh-better-sidebar` | VSCode 风格右侧边栏：文件树 / 编辑器 / 终端 / Git，按会话隔离（lib/ 预编译自包含，codemirror、xterm 已内嵌） | 右侧边栏 |
 | `dsh-auto-compact` | 自动压缩：监听 contextPressure 投影，接近上下文上限（默认 80%）时自动向当前会话发送 `/compact`（dsh 原生命令，压缩事务由内核执行） | 随包自动启用 |
@@ -84,7 +85,7 @@
 | 移除项 | 说明 |
 | --- | --- |
 | 多窗口/会话浮窗 + 侧边临时会话（Ctrl+Shift+S） | `float-window` / `side-session` 相关 IPC、`guardFloatWebContents`、chrome 菜单项全部摘除 |
-| DeepSeek 余额小部件（dsh-balance） | 余额查询、价格档、统计栏内联展示摘除 |
+| 余额小部件（dsh-balance） | 保留：余额查询、价格档、时段倒计时、统计栏内联展示与 4.4.0 一致 |
 | 文件更改追踪 + 一键还原 + AI 变更审核（dsh-file-changes / dsh-change-review） | 「文件」标签页与相关 host 插件移除 |
 | 会话内终端（dsh-terminal） | 「终端」标签页与 mini-REPL 宿主路由移除 |
 | 会话完成系统通知（session-watcher.js） | 通知监听、`notifyOnTurnEnd` 开关、菜单项移除 |
@@ -186,7 +187,7 @@ dsh-desktop-lite/
 ├── preload.js            # 沙箱预加载（自绘玻璃标题栏 + 窗口控制/菜单 IPC）
 ├── assets/               # 加载页、图标、托盘图标、配套 dsh 插件
 │   ├── skins/            # 9 款 Web UI 皮肤包
-│   └── plugins/          # 9 个内置插件（见「内置插件」），全部自动同步进 web profile
+│   └── plugins/          # 10 个内置插件（见「内置插件」），全部自动同步进 web profile
 ├── scripts/
 │   ├── fetch-node.js     # 内置 node.exe 复制脚本
 │   ├── fetch-npm.js      # 内置 npm CLI 复制脚本
@@ -207,7 +208,7 @@ MIT。基于 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)�
 
 # Deepseek Harness EAC v4Lite (English)
 
-A Windows desktop wrapper around [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) (DeepSeek Harness) — the **v4Lite edition**: float windows, balance widget, client self-update, desktop pets, memory, persona card and other peripheral features removed; only the high-frequency core workflows are kept.
+A Windows desktop wrapper around [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh) (DeepSeek Harness) — the **v4Lite edition**: float windows, client self-update, desktop pets, memory, persona card and other peripheral features removed; only the high-frequency core workflows are kept (the balance widget and off-peak price guard stay).
 
 - ✅ No Node install needed: bundles an independent Node runtime and npm CLI
 - ✅ Bundles the full `@deepseek-ai/dsh` CLI and its core plugins, offline-capable
@@ -218,12 +219,12 @@ A Windows desktop wrapper around [@deepseek-ai/dsh](https://www.npmjs.com/packag
 - ✅ Isolated data home (`DSH_HOME` = `~\.dsh-v4lite` by default): never touches the original EAC / dsh CLI `~\.dsh`, so both editions can be installed and run side by side
 - ✅ No update interface at all: no official dsh update checks, no client self-update — new versions are manual installer swaps from Releases
 - ✅ 9 Web UI skins (exclusive switch, off by default, restart to apply; attribution & licenses shipped)
-- ✅ 9 bundled community plugins (see table): webui market ×2, plugin shield, enable/disable manager, off-peak price guard, undo-savepoint crash rescue, VSCode-style sidebar, auto-compact, skin switch
+- ✅ 10 bundled plugins (see table): webui market ×2, plugin shield, enable/disable manager, balance widget with peak/off-peak countdown, off-peak price guard, undo-savepoint crash rescue, VSCode-style sidebar, auto-compact, skin switch
 - ✅ Crash rescue & undo (`dsh-undo-savepoint`): config/plugin snapshots, undo/redo, safe mode, key-redacted vault
 - ✅ One-click error log copy on startup failure
 - ✅ Shortcut auto-maintenance (per-target-exe, custom icon never overwritten)
 
-**Differences from EAC 4.4.0** (all removed): multi-window / float sessions (Ctrl+Shift+S), balance widget (`dsh-balance`), file-change tracking / AI review / in-session terminal, session-completion notifications (`session-watcher.js`), client self-update (`client-updater.js`), official dsh agent update flow (`updater.js` chain: menu/tray entries, boot timers, progress window), portable target (NSIS only), built-in plugin selection wizard (first-run window + settings rerun entry + `dsh-plugin-wizard`), session delete/archive manager, ClawBot/OpenClaw bridge, one-click migration, pets (`dsh-pet` / `dsh-dafeiyu`), long-term memory (`dsh-tdai-memory`), soul.md persona card, external vision model (`dsh-tool-vision`), mobile-fix, bundled skills (`eac-desktop-tips`), and the maid-atelier skin (10 → 9).
+**Differences from EAC 4.4.0** (all removed): multi-window / float sessions (Ctrl+Shift+S), file-change tracking / AI review / in-session terminal, session-completion notifications (`session-watcher.js`), client self-update (`client-updater.js`), official dsh agent update flow (`updater.js` chain: menu/tray entries, boot timers, progress window), portable target (NSIS only), built-in plugin selection wizard (first-run window + settings rerun entry + `dsh-plugin-wizard`), session delete/archive manager, ClawBot/OpenClaw bridge, one-click migration, pets (`dsh-pet` / `dsh-dafeiyu`), long-term memory (`dsh-tdai-memory`), soul.md persona card, external vision model (`dsh-tool-vision`), mobile-fix, bundled skills (`eac-desktop-tips`), and the maid-atelier skin (10 → 9).
 
 **Isolation from the original 4.4.0** (install and run both side by side): separate data home (`~\.dsh-v4lite`), separate app data (`%APPDATA%\Deepseek Harness EAC v4Lite`), separate shortcuts / AUMID (`com.deepseek.dsh.desktop.lite`). API keys and sessions are NOT shared — copy `~\.dsh\settings.yaml` to `~\.dsh-v4lite\settings.yaml` if you want to reuse them.
 

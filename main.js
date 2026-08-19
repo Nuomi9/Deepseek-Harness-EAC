@@ -25,6 +25,7 @@ const { pathToFileURL } = require('node:url');
 
 const updater = require('./updater');
 const pluginUpdater = require('./plugin-updater');
+const balance = require('./balance');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
 const { createGuard } = require('./plugin-guard');
 const bundleIntegrity = require('./bundle-integrity');
@@ -75,6 +76,9 @@ let desktopLog = null;
 let tray = null;
 let forceQuit = false;
 let restartingServer = false;
+// 余额查询缓存与 15 分钟轮询定时器（dsh-balance 插件数据源）。
+let balanceCache = null;
+let balanceTimer = null;
 // V4 退出清理：before-quit 只允许进入一次异步清理（防止重复触发）。
 let shutdownInProgress = false;
 // V4 退出清理：当前正在执行的插件市场排队任务子进程（退出时强杀）。
@@ -1587,6 +1591,59 @@ function registerChromeIpc() {
     log('page-error', String(payload));
   });
 
+  // 余额查询（dsh-balance 插件）：带缓存，未起窗口/非本窗口来源拒绝。
+  ipcMain.handle('dsh:balance-refresh', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return balanceCache;
+    return refreshBalance();
+  });
+
+  // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读写
+  // settings.json 的 balancePrices.<model>.{peak,offpeak}（¥/百万 token，
+  // 三字段 cacheMiss/cacheHit/output，必须为 >= 0 的数字）。保存后立即
+  // 重推余额数据，dock 的费用估算即时生效。
+  ipcMain.handle('dsh:balance-prices-get', async (event, { model } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const s = updater.loadSettings(updCtx());
+    const defaults = balance.DEFAULT_PRICES[String(model || '')] || balance.FALLBACK_PRICES;
+    const current = (s.balancePrices && s.balancePrices[String(model || '')]) || null;
+    return { ok: true, model: String(model || ''), defaults, current };
+  });
+
+  ipcMain.handle('dsh:balance-prices-set', async (event, { model, prices } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const m = String(model || '');
+    if (!balance.DEFAULT_PRICES[m]) return { ok: false, error: '未知模型: ' + m };
+    try {
+      const cleaned = balance.sanitizePrices(prices);
+      const ctx = updCtx();
+      const s = updater.loadSettings(ctx);
+      if (!s.balancePrices || typeof s.balancePrices !== 'object') s.balancePrices = {};
+      s.balancePrices[m] = cleaned;
+      updater.saveSettings(ctx, s);
+      await refreshBalance();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  ipcMain.handle('dsh:balance-prices-reset', async (event, { model } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const m = String(model || '');
+    try {
+      const ctx = updCtx();
+      const s = updater.loadSettings(ctx);
+      if (s.balancePrices && s.balancePrices[m]) {
+        delete s.balancePrices[m];
+        updater.saveSettings(ctx, s);
+      }
+      await refreshBalance();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
   // 预览面板：用系统浏览器打开 http(s) URL。
   ipcMain.handle('dsh:open-external', async (event, { url } = {}) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'forbidden' };
@@ -1650,7 +1707,49 @@ function createTray() {
 // 配套 dsh 插件同步（注入 web profile：皮肤 + 市场 + 保护中心 + 体验增强）
 // ---------------------------------------------------------------------------
 
+// DeepSeek 余额（推送到 Web UI 的 dsh-balance 插件）：查询 API 余额并附
+// 峰谷定价状态（时段/下一时段切换时刻/两档价目），供 dock 时段条渲染。
+async function refreshBalance() {
+  const home = dshHome || path.join(os.homedir(), '.dsh');
+  let result;
+  try {
+    result = await balance.queryBalance(home);
+  } catch (err) {
+    result = { ok: false, error: String((err && err.message) || err), balances: [] };
+  }
+  // 按当前默认模型选择价格档（settings.json 可覆盖 balancePrices.<model>，
+  // 兼容旧扁平覆盖与新的 { peak, offpeak } 双档覆盖）。
+  // 峰谷定价（2026-08-17 起）：按当前时段 pick 高峰/空闲档，两档价格
+  // 一起推给页面，时段切换时 client 可本地换档无需等下一次轮询。
+  const model = balance.readActiveModel(home) || 'deepseek-v4-pro';
+  const table = result.prices || balance.DEFAULT_PRICES;
+  const s = updater.loadSettings(updCtx());
+  const pricing = balance.computePricingState(s.pricing && s.pricing.peakWindows);
+  const base = table[model] || balance.FALLBACK_PRICES;
+  const ov = (s.balancePrices && s.balancePrices[model]) || {};
+  const tier = (src) => balance.tierPrices(base, ov, src);
+  result.prices = tier(pricing.period);
+  result.pricing = { ...pricing, prices: { peak: tier('peak'), offpeak: tier('offpeak') } };
+  balanceCache = result;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('dsh:balance', result);
+  }
+  return result;
+}
+
+function startBalanceLoop() {
+  refreshBalance().catch(() => {});
+  balanceTimer = setInterval(() => refreshBalance().catch(() => {}), 15 * 60 * 1000);
+  if (balanceTimer.unref) balanceTimer.unref();
+}
+
 const COMPANION_PLUGINS = [
+  // 余额小部件（@deepseek-ai/dsh-balance，官方私有包，随包分发）：对话底部
+  // 统计条下方的余额/会话费用估算 + 峰谷定价时段条（高峰中/空闲中倒计时）
+  // + 设置页「价格设置」。数据源：主进程 balance.js 查询
+  // https://api.deepseek.com/user/balance 并推 dsh:balance 事件（见
+  // refreshBalance / startBalanceLoop）。与 dsh-offpeak（事前拦截）互补。
+  { id: 'balance', name: '@deepseek-ai/dsh-balance' },
   // 皮肤切换（设置页「皮肤」tab，host 半边重写 ui-skin-* 激活行）。
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   // 社区插件市场（awesome-dsh-plugin.com 目录）：内置分发，替换早期 npm 检索版市场。
@@ -3016,6 +3115,7 @@ async function boot() {
       updater.confirmPreviousAgentHealthy(updCtx());
       maintainShortcuts();
       warnTempRun();
+      startBalanceLoop();
 
       if (!process.env.DSH_DESKTOP_SKIP_PLUGIN_UPDATE) {
         // 内置插件上游更新检查：启动 20 秒后 + 每 6 小时（24h 落盘节流
@@ -3069,6 +3169,7 @@ if (!gotLock) {
       } catch (err) {
         log('boot', '退出清理异常: ' + err.message);
       } finally {
+        if (balanceTimer) clearInterval(balanceTimer);
         if (tray) { try { tray.destroy(); } catch {} tray = null; }
         log('boot', `退出清理完成（耗时 ${Date.now() - t0}ms）`);
         app.exit(0);
