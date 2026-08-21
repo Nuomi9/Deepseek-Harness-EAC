@@ -24,6 +24,8 @@ const entryFiles = [
   'session-encoding-heal.js',
   'renderer-recovery.js',
   'watchdog.js',
+  // lib/shortcut-maintenance.ts 的编译产物（electron-builder files 清单在列）。
+  'lib/shortcut-maintenance.js',
   'stable-port.js',
   'koffi-preflight.js',
   'profile-module-heal.js',

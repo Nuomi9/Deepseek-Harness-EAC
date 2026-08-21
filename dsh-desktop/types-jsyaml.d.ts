@@ -1,6 +1,7 @@
 /**
  * types-jsyaml.d.ts — js-yaml（内置 dsh 的传递依赖，无独立 @types）的
- * 最小 ambient 垫片，仅覆盖 lib/plugin-manager-core.ts 用到的 API。
+ * 最小 ambient 垫片，仅覆盖 lib/plugin-manager-core.ts 与 scripts/e2e-full.ts
+ * 用到的 API。
  */
 declare module 'js-yaml' {
   export interface YAMLType {
@@ -15,4 +16,7 @@ declare module 'js-yaml' {
   export function load(
     content: string, opts?: { schema?: Schema },
   ): unknown;
+  export function dump(
+    value: unknown, opts?: Record<string, unknown>,
+  ): string;
 }

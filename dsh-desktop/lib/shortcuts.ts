@@ -1,10 +1,11 @@
 /**
- * lib/shortcuts.ts — 快捷方式维护（Task 5b 自 main.js 提取）。
+ * lib/shortcuts.ts — 快捷方式维护（Task 5b 自 main.js 提取，含 main #91 去重）。
  *
  * 修复「没有桌面快捷方式 / 快捷方式指向的文件消失」，并让图标跟随设计
- * 更新（.lnk 单独指定 icon.ico）。V4 修复「换图标后重启又多出一个快捷
- * 方式」：按 target 归属识别既有 .lnk（任意文件名），只在确属本应用且
- * 用户未自定义图标时刷新；settings.shortcutPolicy='never' 完全不碰桌面。
+ * 更新（.lnk 单独指定 icon.ico）。桌面快捷方式采用单一创建者原则：
+ * 安装版只由 NSIS 创建，便携版才由运行时创建；启动时扫描个人 + 公共桌面，
+ * 清理旧版本「NSIS + 运行时」双创建者交叉产生的重复项（判定逻辑见
+ * lib/shortcut-maintenance.ts）。settings.shortcutPolicy='never' 完全不碰桌面。
  */
 
 import * as fs from 'node:fs';
@@ -14,6 +15,16 @@ import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { IS_WIN, updCtx } from './proc.js';
+import {
+  STANDARD_SHORTCUT_NAME,
+  RUNTIME_SHORTCUT_DESCRIPTION,
+  shortcutTargetsApp,
+  desktopShortcutDirs,
+  classifyManagedShortcut,
+  planDesktopShortcutMaintenance,
+  type LnkLike,
+  type ShortcutEntry,
+} from './shortcut-maintenance.js';
 
 /** 图标设计版本：更换图标时 +1，触发所有快捷方式图标刷新。 */
 export const SHORTCUT_ICON_VERSION = 'whale-2';
@@ -56,19 +67,12 @@ function listLnkFiles(dir: string): string[] {
 }
 
 /** 安全读 .lnk（损坏返回 null）。 */
-function readLnkSafe(p: string): { target?: string; icon?: string } | null {
+function readLnkSafe(p: string): LnkLike | null {
   try {
-    return shell.readShortcutLink(p) as { target?: string; icon?: string };
+    return shell.readShortcutLink(p) as LnkLike;
   } catch {
     return null;
   }
-}
-
-/** .lnk 的 target 是否指向本应用 exe（大小写不敏感）。 */
-function lnkTargetsApp(lnkPath: string, target: string): boolean {
-  const link = readLnkSafe(lnkPath);
-  if (!link || !link.target) return false;
-  return path.resolve(String(link.target)).toLowerCase() === path.resolve(target).toLowerCase();
 }
 
 /** .lnk 是否使用我们自管的图标（无自定义图标也视为可接管）。 */
@@ -81,10 +85,24 @@ function lnkUsesManagedIcon(lnkPath: string, ico: string): boolean {
   return path.resolve(String(link.icon)).toLowerCase() === path.resolve(ico).toLowerCase();
 }
 
+/** 扫描各桌面目录，收集 .lnk 条目（scope + 元数据）供去重判定。 */
+function collectDesktopShortcutEntries(
+  dirs: Array<{ scope: 'user' | 'public'; dir: string }>,
+): ShortcutEntry[] {
+  const rows: ShortcutEntry[] = [];
+  for (const { scope, dir } of dirs) {
+    for (const filePath of listLnkFiles(dir)) {
+      rows.push({ scope, dir, filePath, link: readLnkSafe(filePath) });
+    }
+  }
+  return rows;
+}
+
 /**
  * 开始菜单/桌面快捷方式维护（仅打包版 Windows；幂等）：清理旧名称残留、
  * 按设置策略（auto/never）创建缺失链接、把指向旧 exe 的链接改指当前安装
- * 位置。E2E 环境用 DSH_DESKTOP_TEST_NO_SHORTCUTS=1 跳过。
+ * 位置，并对桌面做双创建者去重。E2E 环境用 DSH_DESKTOP_TEST_NO_SHORTCUTS=1
+ * 跳过。
  */
 export function maintainShortcuts(): void {
   if (!app.isPackaged || !IS_WIN) return;
@@ -97,22 +115,23 @@ export function maintainShortcuts(): void {
     const policy = settings.shortcutPolicy === 'never' ? 'never' : 'auto';
     const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const APP_TITLE = 'Deepseek Harness EAC';
-    const desktopDir = app.getPath('desktop');
+    const userDesktopDir = app.getPath('desktop');
+    const desktopDirs = desktopShortcutDirs(userDesktopDir, process.env.PUBLIC);
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
-    const desktop = path.join(desktopDir, APP_TITLE + '.lnk');
+    const desktop = path.join(userDesktopDir, STANDARD_SHORTCUT_NAME);
     const ico = shortcutIconPath();
     const opts: ShortcutOpts = {
       target,
-      description: 'DeepSeek Harness 桌面客户端',
+      description: RUNTIME_SHORTCUT_DESCRIPTION,
       ...(ico ? { icon: ico, iconIndex: 0 } : {}),
       appUserModelId: 'com.deepseek.dsh.desktop',
     };
+    const portable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
     let changed = false;
     // 清理旧名称（DSH Desktop）快捷方式：改名后它们指向的 exe 已不存在。
-    for (const legacy of [
-      path.join(linksDir, 'DSH Desktop.lnk'),
-      path.join(desktopDir, 'DSH Desktop.lnk'),
-    ]) {
+    const legacyShortcuts = [path.join(linksDir, 'DSH Desktop.lnk')];
+    for (const { dir } of desktopDirs) legacyShortcuts.push(path.join(dir, 'DSH Desktop.lnk'));
+    for (const legacy of legacyShortcuts) {
       try {
         if (fs.existsSync(legacy)) {
           fs.rmSync(legacy);
@@ -122,32 +141,48 @@ export function maintainShortcuts(): void {
         /* 单文件删除失败继续 */
       }
     }
-    // exe 被移动过或图标设计更新：只刷新「确认属于本应用」的快捷方式。
-    // 归属判定：target 指向当前 exe，或指向上次记录的 exe 位置（搬家后
-    // 的旧快捷方式）；指向其它程序的 .lnk 绝不动。
+    let desktopEntries = collectDesktopShortcutEntries(desktopDirs);
+    // exe 被移动过或图标设计更新：开始菜单照常维护；桌面仅刷新便携版
+    // 运行时原样生成的快捷方式。安装版桌面快捷方式统一交给 NSIS，用户
+    // 改名/换图标/加参数后的快捷方式也不再覆盖。
     const targetMoved =
       typeof settings.shortcutTarget === 'string' && settings.shortcutTarget !== target;
     const iconOutdated = settings.shortcutIcon !== SHORTCUT_ICON_VERSION;
     if (targetMoved || iconOutdated) {
-      const prevTarget = typeof settings.shortcutTarget === 'string' ? settings.shortcutTarget : '';
-      const isOurs = (p: string): boolean =>
-        fs.existsSync(p) && (lnkTargetsApp(p, target) || (targetMoved && lnkTargetsApp(p, prevTarget)));
-      const candidates = [startMenu].concat(policy === 'never' ? [] : listLnkFiles(desktopDir));
-      for (const p of candidates) {
-        if (!isOurs(p)) continue;
-        // 仅图标过时且用户自定义了图标：尊重用户选择，跳过；target 移动
-        // 时即使图标被自定义也要修指向（否则快捷方式失效）。
-        if (!targetMoved && !lnkUsesManagedIcon(p, ico)) continue;
+      const prevTarget = typeof settings.shortcutTarget === 'string' ? settings.shortcutTarget : null;
+      const startMenuOwn = fs.existsSync(startMenu)
+        && shortcutTargetsApp(readLnkSafe(startMenu), target, targetMoved ? prevTarget : null);
+      if (startMenuOwn && (targetMoved || lnkUsesManagedIcon(startMenu, ico))) {
         try {
-          shell.writeShortcutLink(p, 'replace', opts);
+          shell.writeShortcutLink(startMenu, 'replace', opts);
           changed = true;
         } catch {
           /* 单链接写失败继续 */
         }
       }
+      if (portable && policy !== 'never') {
+        let desktopRefreshed = false;
+        for (const entry of desktopEntries) {
+          const kind = classifyManagedShortcut(entry, {
+            target,
+            previousTarget: targetMoved ? prevTarget : null,
+            managedIcon: ico,
+          });
+          if (kind !== 'runtime') continue;
+          try {
+            shell.writeShortcutLink(entry.filePath, 'replace', opts);
+            changed = true;
+            desktopRefreshed = true;
+          } catch {
+            /* 单链接写失败继续 */
+          }
+        }
+        if (desktopRefreshed) desktopEntries = collectDesktopShortcutEntries(desktopDirs);
+      }
     }
     // 开始菜单快捷方式：系统通知（Toast）的前置条件，按 target 匹配维护。
-    const startMenuOk = fs.existsSync(startMenu) && lnkTargetsApp(startMenu, target);
+    const startMenuOk = fs.existsSync(startMenu)
+      && shortcutTargetsApp(readLnkSafe(startMenu), target);
     if (!startMenuOk) {
       try {
         shell.writeShortcutLink(startMenu, 'create', opts);
@@ -156,19 +191,34 @@ export function maintainShortcuts(): void {
         /* 创建失败不阻塞启动 */
       }
     }
-    // 桌面快捷方式：policy=never 不创建；已有任意名称指向本应用的 .lnk
-    // （用户自定义/改名/换图标后的产物）即视为存在，绝不重复新建。
-    if (policy !== 'never' && !fs.existsSync(desktop)) {
-      const hasOursOnDesktop = listLnkFiles(desktopDir).some((p) => lnkTargetsApp(p, target));
-      if (!hasOursOnDesktop) {
-        try {
-          shell.writeShortcutLink(desktop, 'create', opts);
-          changed = true;
-        } catch {
-          /* 创建失败不阻塞启动 */
-        }
-      } else {
-        log('boot', '检测到用户自定义的桌面快捷方式（指向本应用），不再重复创建');
+    // 桌面快捷方式采用单一创建者：安装版只由 NSIS 创建，便携版才由
+    // 运行时创建。扫描个人桌面 + 公共桌面，旧版留下的重复项只删除可
+    // 明确识别为软件原样生成的 .lnk；用户改名/换图标/加参数的一律保留。
+    const desktopPlan = planDesktopShortcutMaintenance({
+      entries: desktopEntries,
+      target,
+      previousTarget: targetMoved
+        ? (typeof settings.shortcutTarget === 'string' ? settings.shortcutTarget : null)
+        : null,
+      managedIcon: ico,
+      portable,
+      policy,
+    });
+    for (const duplicate of desktopPlan.removals) {
+      try {
+        fs.rmSync(duplicate);
+        changed = true;
+        log('boot', '已清理软件生成的重复桌面快捷方式: ' + duplicate);
+      } catch (err) {
+        log('boot', '清理重复桌面快捷方式失败（已保留）: ' + duplicate + ': ' + String((err as Error).message));
+      }
+    }
+    if (desktopPlan.create) {
+      try {
+        shell.writeShortcutLink(desktop, 'create', opts);
+        changed = true;
+      } catch {
+        /* 创建失败不阻塞启动 */
       }
     }
     if (changed) {

@@ -154,6 +154,21 @@ export function ensureDesktopProfileInit(): void {
     if (!fs.existsSync(path.join(dir, 'cordis.patch.yml'))) {
       fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), '[]\n');
     }
+    // 从源码运行时，插件会从 DSH_HOME/profile 的共享 node_modules 解析
+    // 宿主依赖；全新隔离 DSH_HOME 没有安装闭包，先补齐桌面依赖中的
+    // schemastery junction，避免 better-sidebar / side-session 触发整树失败。
+    const home = state.dshHome || path.join(os.homedir(), '.dsh');
+    const shared = path.join(home, 'profiles', 'node_modules');
+    const source = path.join(__dirname, '..', 'node_modules', 'schemastery');
+    const link = path.join(shared, 'schemastery');
+    if (fs.existsSync(source) && !fs.existsSync(link)) {
+      fs.mkdirSync(shared, { recursive: true });
+      try {
+        fs.symlinkSync(source, link, 'junction');
+      } catch (err) {
+        log('boot', '创建 schemastery 共享链接失败: ' + String((err as Error).message));
+      }
+    }
   } catch (err) {
     log('boot', '初始化桌面 profile 失败: ' + String((err as Error).message));
   }

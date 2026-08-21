@@ -34,11 +34,15 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin', dir: 'dsh-webui-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
-  { id: 'tool-vision', name: 'dsh-tool-vision', dir: 'dsh-tool-vision' },
+  // 社区功能插件（视觉 / 人设 / 移动端布局修复）：npm registry
+  // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
+  // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
+  // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
+  // v4.5 起 picturereader（v3.0.4）替换 dsh-tool-vision 作为内置图像理解插件。
+  { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，schema required 无默认值，
   // 全新安装校验失败拖垮整个插件树（详见 patch-row-heal 的存量修复）。
   { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
-  { id: 'tdai-memory', name: 'dsh-tdai-memory', dir: 'dsh-tdai-memory' },
   { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
   { id: 'message-rewind', name: 'dsh-message-rewind', dir: 'dsh-message-rewind' },
@@ -65,10 +69,28 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
   { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop' },
+  // 拖入文件到对话（V4.1，用户建议）：文本/代码文件拖进输入框自动注入
+  // 内容（上限 256KB）。默认禁用 —— 与内置 picturereader 的「粘贴即用/
+  // 图片桥自动分析」入口语义重叠，避免拖入图片时重复/竞争注入。
+  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop', disabled: true },
+  // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
+  // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
+  // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
   { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom', dir: 'dsh-settings-nav-custom' },
-  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
-  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste' },
+  // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
+  // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
+  // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
+  // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
+  // 临时目录 → 注入完整路径提示。默认禁用 —— 与内置 picturereader 的
+  // 「粘贴即用/图片桥自动分析」入口语义重叠，避免粘贴图片时重复注入。
+  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
+];
+
+/** 曾内置、现已从内置清单移除的插件（vnext 同步自 main v4.5）。 */
+export const RETIRED_BUILTIN_PLUGINS: { id: string; name: string }[] = [
+  // tdai-memory：唯一携带 node_modules 的内置插件，v4.5 起退役 —— 体积
+  // ~310MB 占安装包近半，且 vendor 任一小缺失即 import 失败拖垮插件树。
+  { id: 'tdai-memory', name: 'dsh-tdai-memory' },
 ];
 
 /** 内置插件上游更新源（V4.3，plugin-updater.js 消费；npm 404 优雅降级）。 */

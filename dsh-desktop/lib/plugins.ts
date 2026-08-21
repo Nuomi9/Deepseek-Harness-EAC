@@ -16,14 +16,14 @@ import {
   configLinesFor, healSoulMdPatchRow, healRowConfig,
   removeBundledRowDuplicates, collectBundleEntryIds,
 } from '../patch-row-heal.js';
-import { hasEntryId, togglePluginInPatch } from '../scripts/plugin-manager-patch.js';
+import { hasEntryId, togglePluginInPatch, removePluginFromPatch } from '../scripts/plugin-manager-patch.js';
 import { CORE_PLUGIN_IDS } from '../scripts/onboarding.js';
 import { healProfileModuleShadowing } from '../profile-module-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { IS_WIN } from './proc.js';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './paths.js';
-import { COMPANION_PLUGINS, builtinPluginSourceDir } from './plugin-registry-data.js';
+import { COMPANION_PLUGINS, RETIRED_BUILTIN_PLUGINS, builtinPluginSourceDir } from './plugin-registry-data.js';
 import { readJsonFile, copyPluginPackage } from './plugin-copy.js';
 import { removedPluginIds } from './plugin-manager-core.js';
 import { applySessionManageFix } from './session-heal.js';
@@ -111,6 +111,45 @@ export function syncBundledSkills(): void {
   }
 }
 
+/** 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。 */
+export function retireRemovedBuiltinPlugins(profileDirP: string): void {
+  for (const p of RETIRED_BUILTIN_PLUGINS) {
+    const patchFile = path.join(profileDirP, 'cordis.patch.yml');
+    try {
+      const text = fs.readFileSync(patchFile, 'utf8');
+      const patched = removePluginFromPatch(text, p.id);
+      if (patched !== text) {
+        const tmp = patchFile + '.tmp';
+        fs.writeFileSync(tmp, patched, 'utf8');
+        fs.renameSync(tmp, patchFile);
+        log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
+      }
+    } catch (err) {
+      log('boot', `清理退役内置插件 ${p.id} 行失败: ${String((err as Error).message)}`);
+    }
+    const pkgDir = path.join(profileDirP, 'node_modules', ...p.name.split('/'));
+    try {
+      if (fs.existsSync(pkgDir)) {
+        fs.rmSync(pkgDir, { recursive: true, force: true });
+        log('boot', `已清理退役内置插件 ${p.id} 的 profile 包副本`);
+      }
+    } catch (err) {
+      log('boot', `清理退役内置插件 ${p.id} 包失败: ${String((err as Error).message)}`);
+    }
+    try {
+      const pkgFile = path.join(profileDirP, 'package.json');
+      const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8')) as {
+        dependencies?: Record<string, string>;
+      };
+      if (pkg.dependencies && pkg.dependencies[p.name]) {
+        delete pkg.dependencies[p.name];
+        fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
+        log('boot', `已清理退役内置插件 ${p.id} 的 package.json 依赖`);
+      }
+    } catch { /* package.json 缺失/损坏则跳过 */ }
+  }
+}
+
 /** 配套插件/皮肤同步主流程（Windows；启动/服务重启/agent 更新后重放）。 */
 export function syncCompanionPlugins(): void {
   if (!IS_WIN) return;
@@ -123,6 +162,9 @@ export function syncCompanionPlugins(): void {
     const home = state.dshHome || path.join(os.homedir(), '.dsh');
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
     ensureDesktopProfileInit();
+    // 清理已退役内置插件（tdai-memory 等）在 profile 的残留，避免
+    // 「行在包被清」拖垮插件树或退役插件继续加载。
+    retireRemovedBuiltinPlugins(desktopProfileDir());
     // V4 运行时补丁（幂等）：对话删除/归档 —— dsh-session-manager 的前置依赖。
     applySessionManageFix();
     const profileDirP = desktopProfileDir();
