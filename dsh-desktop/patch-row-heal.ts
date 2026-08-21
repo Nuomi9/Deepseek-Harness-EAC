@@ -117,8 +117,14 @@ export function healSoulMdPatchRow(patch: string, config: Record<string, unknown
  * V4 修复：给已存在但缺 config 块的行补 config。dsh-pet 的 apply 读
  * config.fullRoot（无守卫），无 config 的行会让 loader 传 undefined 直接
  * 拖垮整棵插件树（v3.1.0 全新安装即「启动失败」的根因；老用户因市场装
- * 过的行自带 config 才幸免）。与 healSoulMdPatchRow 同一手法：id+name 行
- * 后跟负向先行断言，已带 config 的行不动（幂等，用户改过的值优先）。
+ * 过的行自带 config 才幸免）。
+ *
+ * V4.4 修复（重复 config 事故，自 main #119 移植）：原实现只看 name 行后
+ * **紧跟**的一行 —— 条目呈 `name → disabled → config` 形态（首次安装的
+ * 向导/写入组合会产生）时，name 后紧跟 disabled 被误判为「缺 config」而
+ * 补第二份 config，YAML 报 duplicated mapping key 拖垮启动。现改为
+ * **扫描整个条目块**：id 行之后所有缩进更深的行里任意位置已有 config
+ * 键即不补（幂等，用户改过的值优先）。
  */
 export function healRowConfig(patch: string, id: string, config: Record<string, unknown>): HealResult {
   const healed: string[] = [];
@@ -126,13 +132,38 @@ export function healRowConfig(patch: string, id: string, config: Record<string, 
   const normalized = normalizeRowConfigIndent(patch, id);
   if (normalized !== patch) healed.push(id);
   const p = normalized;
-  const rowRe = new RegExp(
-    `(^[\\t ]*- id: ${String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_.-])[^\\n]*\\n[\\t ]*name: ['"]?[^'"\\n]+['"]?\\n)(?![\\t ]*config:)`,
-    'gm',
-  );
-  const out = p.replace(rowRe, (m) => m + configLinesFor(config, ((m.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length));
-  if (out !== p) healed.push(id);
-  return { patch: out, healed };
+  const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const idLineRe = new RegExp(`^([\\t ]*)- id: ${esc}(?![A-Za-z0-9_.-])`);
+  const lines = p.split(/\r?\n/);
+  let changed = false;
+  for (let i = 0; i < lines.length; i++) {
+    const m = idLineRe.exec(lines[i] ?? '');
+    if (!m) continue;
+    const idIndent = (m[1] || '').replace(/\t/g, '  ').length;
+    // 条目块范围：id 行之后缩进更深的所有行（空行/注释/兄弟条目视为块结束）。
+    let blockEnd = i + 1;
+    let nameLine = -1;
+    let hasConfig = false;
+    while (blockEnd < lines.length) {
+      const cur = lines[blockEnd] ?? '';
+      const t = cur.trim();
+      if (t === '' || /^#/.test(t)) break;
+      const curIndent = ((cur.match(/^[\t ]*/) || [''])[0] as string).replace(/\t/g, '  ').length;
+      if (curIndent <= idIndent) break;
+      if (/^[\t ]*config:/.test(cur)) { hasConfig = true; break; }
+      if (nameLine === -1 && /^[\t ]*name:/.test(cur)) nameLine = blockEnd;
+      blockEnd += 1;
+    }
+    // 块内已有 config（任意位置）或找不到 name 行：不补。
+    if (hasConfig || nameLine === -1) continue;
+    const configLines = configLinesFor(config, idIndent).split('\n');
+    while (configLines.length && configLines[configLines.length - 1] === '') configLines.pop();
+    lines.splice(nameLine + 1, 0, ...configLines);
+    changed = true;
+    i = blockEnd;
+  }
+  if (changed) healed.push(id);
+  return { patch: lines.join('\n'), healed };
 }
 
 /**

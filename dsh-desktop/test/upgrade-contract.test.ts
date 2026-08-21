@@ -4,15 +4,17 @@
 //
 //  1. 版本门槛：本分支版本必须 > main 最后版本 4.6.0 —— compareVersions
 //     正是更新器判定「有新版本」的函数，门槛不过更新永远不会触发；
-//  2. 资产命名：NSIS artifactName 必须是 Setup-v${version}-${arch}.${ext}
-//     形态（origin/main 4.6.0 同款，v4.4.1 起启用）。老更新器（≥4.4.1）
-//     的直连正则 /setup.*x64\.exe$/i 与 Gitee 分片候选（第 4 候选
+//  2. 资产命名：NSIS 与 portable 的 artifactName 均为
+//     <Kind>-v${version}-${arch}.${ext} 形态（origin/main 4.6.0 同款，
+//     v4.4.1 起启用）。老更新器（≥4.4.1）的直连正则 /setup.*x64\.exe$/i
+//     与 Gitee 分片候选（第 4 候选
 //     Deepseek-Harness-EAC-Setup-v<version>-x64.exe）都必须能命中；
 //  3. 残留清理：customInstall 幂等删除 main 旧布局独有、vnext 不再随包
 //     的文件（rescue-agent.js / wsl-backend.js / extract-css.mjs），且
 //     installer.nsh 的任何删除动作都不得触碰 .dsh（用户插件与配置所在）；
-//  4. 发布上传：release.yml 通配上传 Setup-*.exe（带版本名），portable
-//     保持固定名（%TEMP% 稳定解压缓存目录复用依赖它）。
+//  4. 发布上传：release.yml 通配上传 Setup-*.exe 与 Portable-*.exe
+//     （双产物均带版本名；便携版 %TEMP% 稳定解压缓存目录由 unpackDirName
+//     固定字符串决定，与产物名无关）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -63,10 +65,10 @@ test('NSIS artifactName 为 Setup-v${version}-${arch}.${ext}（origin/main 4.6.0
   assert.equal(m[1], 'Deepseek-Harness-EAC-Setup-v${version}-${arch}.${ext}');
 });
 
-test('Portable artifactName 保持不带版本（%TEMP% 稳定解压缓存目录复用）', () => {
+test('Portable artifactName 为 Portable-v${version}-${arch}.${ext}（与 Setup 同为带版本形态）', () => {
   const m = /^\s{2}artifactName:\s*(\S+)$/m.exec(ymlSection(builderYml, 'portable'));
   assert.ok(m, 'portable 段缺少 artifactName');
-  assert.equal(m[1], 'Deepseek-Harness-EAC-Portable-${arch}.${ext}');
+  assert.equal(m[1], 'Deepseek-Harness-EAC-Portable-v${version}-${arch}.${ext}');
 });
 
 /** 按当前配置实际产出的安装包文件名（arch=x64 / ext=exe）。 */
@@ -103,7 +105,7 @@ test('本分支 selectAsset：直连资产按新命名被选中（blockmap 不�
   const A = (name: string, size = 1000) => ({ name, size });
   const rel = {
     version: pkg.version,
-    assets: [A(setupName), A(`${setupName}.blockmap`), A(`Deepseek-Harness-EAC-Portable-x64.exe`)],
+    assets: [A(setupName), A(`${setupName}.blockmap`), A(`Deepseek-Harness-EAC-Portable-v${pkg.version}-x64.exe`)],
   };
   const got = selectAsset(rel);
   assert.equal(got.name, setupName);
@@ -156,7 +158,7 @@ test('installer.nsh 的所有删除动作均不触碰 .dsh（插件与配置完�
 
 // --- 4. 发布上传 -----------------------------------------------------------
 
-test('release.yml 通配上传 Setup-*.exe 且 portable 用固定名', () => {
+test('release.yml 通配上传 Setup-*.exe 与 Portable-*.exe（双产物均带版本名）', () => {
   assert.match(releaseYml, /dsh-desktop\/dist\/Deepseek-Harness-EAC-Setup-\*\.exe/);
-  assert.match(releaseYml, /dsh-desktop\/dist\/Deepseek-Harness-EAC-Portable-x64\.exe/);
+  assert.match(releaseYml, /dsh-desktop\/dist\/Deepseek-Harness-EAC-Portable-\*\.exe/);
 });

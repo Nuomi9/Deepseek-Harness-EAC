@@ -1,8 +1,8 @@
 /**
- * lib/client-update/apply.ts — 应用更新（detached 脚本 + 主进程退出）（Task 6.1
- * 自 client-updater.js 提取）。
+ * lib/client-update/apply.ts — 应用更新（detached 辅助进程 + 主进程退出）
+ * （Task 6.1 自 client-updater.js 提取；main #93 起安装版改 PowerShell 助手）。
  *
- * applyUpdate()：写一个纯 ASCII 的 cmd 脚本并以 detached 方式启动，随后
+ * applyUpdate()：便携版写纯 ASCII 的 cmd 脚本并以 detached 方式启动，随后
  * 主进程退出。启动方式是整行引用 + /d /s /c：spawn('cmd.exe',
  * ['/c', script, a1, a2]) 让 Node 给每个含空格参数加引号，cmd /c 的
  * 剥引号规则会把首尾引号剥掉，路径在空格处断开 → "'C:\...\Deepseek'
@@ -12,9 +12,12 @@
  * 用户名不受 cmd 文件 ANSI 编码影响：
  *   · 便携版：等旧 exe 解锁 → 备份 → 用新 exe 原地替换 → 重新启动；
  *     若旧 exe 所在目录只读，则退化为直接启动新 exe（保留旧文件）。
- *   · 安装版：固定短等待 → 无条件兜底强杀残留进程（不做 tasklist 轮询
- *     检测，管道在隐藏控制台下偶发挂死）→ 以向导方式启动新 Setup 安装包
- *     （安装器会记录原安装目录并在完成后自动启动新版本）。
+ *   · 安装版（main #93 重做）：隐藏 PowerShell 辅助进程按当前主进程
+ *     PID 有界等待；超时只结束该 PID（不按镜像名、不杀进程树）→ 再调用
+ *     负责备份/回滚/安装的 CMD（apply-update.cmd 作为 ActionScript）。
+ *     旧实现由 CMD 自行 ping 等待 + taskkill /F /T /IM：正式安装环境中
+ *     更新 CMD 是 EAC 派生的进程，/T 可能把更新助手一并结束；外部
+ *     ping/find 也可能暴露控制台窗口（黑窗反馈的根源）。
  */
 
 import * as fs from 'node:fs';
@@ -106,12 +109,9 @@ export function buildApplyScript(p: ApplyScriptParams): string[] {
       'exit /b 0',
     );
   } else {
-    // 安装版：不做进程检测。主进程 spawn 本脚本约 0.4s 后 app.exit(0)，
-    // 且 spawn 前 killTreeAndWait 已等完 dsh web 进程树，单实例锁保证没有
-    // 其他实例 —— 检测是冗余保险，而 tasklist|find 管道在 detached 隐藏
-    // 控制台下偶发挂死（黑窗反馈的根源）。固定短等待给主进程留优雅退出
-    // 时间，然后无条件兜底强杀（正常情况下进程已不在，taskkill 记一条
-    // not found 到日志即通过），线性推进到 Setup，全程无管道无循环。
+    // 安装版 CMD 只负责备份、Setup 与回滚。主进程等待由隐藏 PowerShell
+    // 助手（buildInstalledApplyScript）完成，因此这里不得再加入
+    // ping/tasklist/find/taskkill。
     //
     // V4.3 增量更新 PR（独有价值保留）：
     //   1) 备份 4 目录（userData / dshHome / profile / installDir）到
@@ -131,14 +131,13 @@ export function buildApplyScript(p: ApplyScriptParams): string[] {
     //      降级 SKIP_BACKUP（回到 v4.3 无备份语义），绝不依赖 PATH。
     lines.push(
       'set "SETUP=%~1"',
-      'set "EXENAME=%~2"',
-      'set "OLD=%~3"',
-      'set "UD=%~4"',
-      'set "DSH=%~5"',
-      'set "INST=%~6"',
-      'set "PROF=%~7"',
-      'set "OLDVER=%~8"',
-      'set "NEWVER=%~9"',
+      'set "OLD=%~2"',
+      'set "UD=%~3"',
+      'set "DSH=%~4"',
+      'set "INST=%~5"',
+      'set "PROF=%~6"',
+      'set "OLDVER=%~7"',
+      'set "NEWVER=%~8"',
       // nodeExe 不能经命令行传：batch 直接引用只到 %9（`%~10` 被解析成
       // `%~1` 后跟字面量 `0`，实测 NODEEXE 接成 "<第1参>0" → 备份被静默
       // 跳过）。曾怀疑 shift 接第 10 参导致脚本静默死亡 —— 2x2 矩阵探针
@@ -148,7 +147,7 @@ export function buildApplyScript(p: ApplyScriptParams): string[] {
       // `%` 转义为 `%%` 防止变量展开破坏路径。
       `set "NODEEXE=${String(nodeExe || '').replace(/%/g, '%%')}"`,
       'set "LOG=%~dp0apply-update.log"',
-      'echo [%date% %time%] apply-update start > "%LOG%"',
+      'echo [%date% %time%] installed update action start >> "%LOG%"',
       'echo [%date% %time%] oldVer=%OLDVER% newVer=%NEWVER% >> "%LOG%"',
       'echo [%date% %time%] userData=%UD% >> "%LOG%"',
       'echo [%date% %time%] dsh=%DSH% >> "%LOG%"',
@@ -163,10 +162,6 @@ export function buildApplyScript(p: ApplyScriptParams): string[] {
       'if "%NODEEXE%"=="" set SKIP_BACKUP=1',
       'if not exist "%NODEEXE%" set SKIP_BACKUP=1',
       'if "%SKIP_BACKUP%"=="1" echo [%date% %time%] WARN: one of UD/DSH/INST/PROF/NODEEXE empty or missing, skipping backup (fallback semantics) >> "%LOG%"',
-      'ping -n 4 127.0.0.1 >nul',
-      'echo [%date% %time%] force-killing leftover app processes >> "%LOG%"',
-      'taskkill /F /T /IM "%EXENAME%" >> "%LOG%" 2>&1',
-      'ping -n 2 127.0.0.1 >nul',
       // --- 阶段 0：查注册表 InstallLocation（供 manifest 对比，不影响实际动作）---
       'if "%SKIP_BACKUP%"=="0" set "REG_INST="',
       'if "%SKIP_BACKUP%"=="0" for /f "tokens=2*" %%a in (\'reg query "HKCU\\Software\\Deepseek Harness EAC" /v InstallLocation 2^>nul ^| findstr /i InstallLocation\') do set "REG_INST=%%b"',
@@ -309,7 +304,127 @@ export function buildSpawnCommandLine(script: string, args: string[]): string {
 }
 
 /**
- * 派生分离的更新脚本进程并接管退出（调用后应用应尽快 exit）。
+ * 生成安装版 apply-update.ps1（纯 ASCII，由 buildInstalledPowerShellArgs 的
+ * 命名参数调用）：按 AppPid 有界等待主进程退出 → 超时仅结束该 PID →
+ * 调用 apply-update.cmd（ActionScript）执行备份/Setup/回滚 → 按其退出码
+ * 收尾。任何异常：写日志、尽力拉起旧版、退出码 1（安装包保留供诊断）。
+ */
+export function buildInstalledApplyScript(): string[] {
+  return [
+    'param(',
+    '  [Parameter(Mandatory = $true)][string]$ActionScriptPath,',
+    '  [Parameter(Mandatory = $true)][string]$SetupPath,',
+    '  [Parameter(Mandatory = $true)][string]$OldExePath,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$UserDataDir,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$DshHome,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$InstallDir,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ProfileDir,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$CurrentVersion,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$NewVersion,',
+    '  [Parameter(Mandatory = $true)][int]$AppPid,',
+    '  [Parameter(Mandatory = $true)][string]$LogPath,',
+    '  [int]$WaitTimeoutSeconds = 20',
+    ')',
+    "$ErrorActionPreference = 'Stop'",
+    '$ScriptPath = $MyInvocation.MyCommand.Path',
+    'function Write-ApplyLog([string]$Message) {',
+    "  $Stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'",
+    '  Add-Content -LiteralPath $LogPath -Value ("[" + $Stamp + "] " + $Message) -Encoding UTF8',
+    '}',
+    'function Get-AppProcess {',
+    '  Get-Process -Id $AppPid -ErrorAction SilentlyContinue',
+    '}',
+    'try {',
+    '  if ($AppPid -le 0) { throw "Invalid app PID" }',
+    '  if ($WaitTimeoutSeconds -lt 1 -or $WaitTimeoutSeconds -gt 120) { throw "Invalid wait timeout" }',
+    '  $LogDir = Split-Path -Parent $LogPath',
+    '  if ($LogDir) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }',
+    '  Set-Content -LiteralPath $LogPath -Value "" -Encoding UTF8',
+    '  Write-ApplyLog ("installed apply-update start; appPid=" + $AppPid)',
+    '  if (-not (Test-Path -LiteralPath $SetupPath -PathType Leaf)) { throw "Setup not found" }',
+    '  if (-not (Test-Path -LiteralPath $ActionScriptPath -PathType Leaf)) { throw "Action script not found" }',
+    '  Write-ApplyLog "waiting for app exit"',
+    '  $Deadline = [DateTime]::UtcNow.AddSeconds($WaitTimeoutSeconds)',
+    '  while ((Get-AppProcess) -and [DateTime]::UtcNow -lt $Deadline) {',
+    '    Start-Sleep -Milliseconds 200',
+    '  }',
+    '  if (Get-AppProcess) {',
+    '    Write-ApplyLog "app exit wait timed out; stopping exact PID"',
+    '    try {',
+    '      Stop-Process -Id $AppPid -Force -ErrorAction Stop',
+    '    } catch {',
+    '      if (Get-AppProcess) { throw }',
+    '    }',
+    '    for ($i = 0; $i -lt 25 -and (Get-AppProcess); $i++) { Start-Sleep -Milliseconds 200 }',
+    '  }',
+    '  if (Get-AppProcess) { throw "App process did not exit" }',
+    '  Write-ApplyLog "running hidden update action"',
+    '  & $ActionScriptPath $SetupPath $OldExePath $UserDataDir $DshHome $InstallDir $ProfileDir $CurrentVersion $NewVersion',
+    '  $ActionExitCode = [int]$LASTEXITCODE',
+    '  Write-ApplyLog ("update action exit code " + $ActionExitCode)',
+    '  if ($ActionExitCode -ne 0) { exit $ActionExitCode }',
+    '  Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue',
+    '  exit 0',
+    '} catch {',
+    '  try { Write-ApplyLog ("update failed: " + $_.Exception.Message) } catch {}',
+    '  if (Test-Path -LiteralPath $OldExePath -PathType Leaf) {',
+    '    try { Start-Process -FilePath $OldExePath | Out-Null } catch {}',
+    '  }',
+    '  exit 1',
+    '}',
+  ];
+}
+
+/** buildInstalledPowerShellArgs 的全部入参（除 script 外与 apply 上下文一一对应）。 */
+export interface InstalledPowerShellArgsParams {
+  actionScript: string;
+  newExe: string;
+  oldExe: string;
+  userDataDir: string;
+  dshHome: string;
+  installDir: string;
+  profileDir: string;
+  currentVersion: string;
+  newVersion: string;
+  appPid: number;
+  logPath: string;
+  waitTimeoutSeconds?: number;
+}
+
+/** 组装 powershell.exe 启动参数：-File apply-update.ps1 + 全部命名参数。 */
+export function buildInstalledPowerShellArgs(
+  script: string,
+  p: InstalledPowerShellArgsParams,
+): string[] {
+  const waitTimeoutSeconds = p.waitTimeoutSeconds ?? 20;
+  if (!Number.isInteger(p.appPid) || p.appPid <= 0) throw new Error('安装版更新 PID 无效');
+  return [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-WindowStyle', 'Hidden',
+    '-File', script,
+    '-ActionScriptPath', p.actionScript,
+    '-SetupPath', p.newExe,
+    '-OldExePath', p.oldExe,
+    '-UserDataDir', p.userDataDir || '',
+    '-DshHome', p.dshHome || '',
+    '-InstallDir', p.installDir || '',
+    '-ProfileDir', p.profileDir || '',
+    '-CurrentVersion', p.currentVersion || '',
+    '-NewVersion', p.newVersion || '',
+    '-AppPid', String(p.appPid),
+    '-LogPath', p.logPath,
+    '-WaitTimeoutSeconds', String(waitTimeoutSeconds),
+  ];
+}
+
+/**
+ * 派生分离的更新辅助进程并接管退出（调用后应用应尽快 exit）。
+ * 便携版：cmd.exe 直接跑 apply-update.cmd（原地替换语义）。
+ * 安装版：powershell.exe 跑 apply-update.ps1（按 PID 等待/兜底结束），
+ * 由它在主进程退出后调用 apply-update.cmd（备份/Setup/回滚）。
  * 注意：spawn 经 `import { spawn }` 引用 —— 编译产物为模块对象的属性访问，
  * 测试可在 require 本模块前替换 child_process.spawn 拦截（勿改成解构快照）。
  */
@@ -321,8 +436,8 @@ export function applyUpdate(
   const newExe = pending.path;
   const portable = isPortable();
   const oldExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
-  const exeBase = path.basename(oldExe);
-  const script = path.join(ctx.userDataDir, 'updates', 'apply-update.cmd');
+  const updateDir = path.join(ctx.userDataDir, 'updates');
+  const logPath = path.join(updateDir, 'apply-update.log');
   const userDataDir = (opts && opts.userDataDir) || ctx.userDataDir || '';
   const dshHome = (opts && opts.dshHome) || process.env.DSH_HOME || '';
   const installDir = (opts && opts.installDir) || path.dirname(oldExe);
@@ -332,34 +447,78 @@ export function applyUpdate(
   // 应用自带的 node 运行时（打包在 resources\node\node.exe）：manifest.json
   // 的内联 JS 用它执行 —— 用户机器没有系统 Node，绝不能依赖 PATH。
   const nodeExe = (opts && opts.nodeExe) || '';
-  const lines = buildApplyScript({
-    newExe,
-    oldExe,
-    portable,
-    userDataDir,
-    dshHome,
-    installDir,
-    profileDir,
-    currentVersion,
-    newVersion,
-    nodeExe,
-  });
-  // 结尾必须带 CRLF：缺行尾的最后一行在 cmd 批解析器里行为不稳定
-  // （实测 self-delete 收尾行偶发不被执行）。
-  fs.writeFileSync(script, lines.join('\r\n') + '\r\n');
+  let script: string;
+  let child: ReturnType<typeof spawn>;
+  if (portable) {
+    script = path.join(updateDir, 'apply-update.cmd');
+    const lines = buildApplyScript({
+      newExe,
+      oldExe,
+      portable,
+      userDataDir,
+      dshHome,
+      installDir,
+      profileDir,
+      currentVersion,
+      newVersion,
+      nodeExe,
+    });
+    // 结尾必须带 CRLF：缺行尾的最后一行在 cmd 批解析器里行为不稳定
+    // （实测 self-delete 收尾行偶发不被执行）。
+    fs.writeFileSync(script, lines.join('\r\n') + '\r\n');
+    const args = [newExe, oldExe];
+    child = spawn('cmd.exe', ['/d', '/s', '/c', buildSpawnCommandLine(script, args)], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+    });
+  } else {
+    const actionScript = path.join(updateDir, 'apply-update.cmd');
+    script = path.join(updateDir, 'apply-update.ps1');
+    const actionLines = buildApplyScript({
+      newExe,
+      oldExe,
+      portable,
+      userDataDir,
+      dshHome,
+      installDir,
+      profileDir,
+      currentVersion,
+      newVersion,
+      nodeExe,
+    });
+    fs.writeFileSync(actionScript, actionLines.join('\r\n') + '\r\n');
+    fs.writeFileSync(script, buildInstalledApplyScript().join('\r\n') + '\r\n', 'ascii');
+    const powershell = path.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+    );
+    if (!fs.existsSync(powershell)) throw new Error('找不到 Windows PowerShell: ' + powershell);
+    const args = buildInstalledPowerShellArgs(script, {
+      actionScript,
+      newExe,
+      oldExe,
+      userDataDir,
+      dshHome,
+      installDir,
+      profileDir,
+      currentVersion,
+      newVersion,
+      appPid: process.pid,
+      logPath,
+    });
+    child = spawn(powershell, args, {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  }
   ctx.log(
     'client-update',
-    `启动更新脚本: ${script}（新: ${newExe}，旧: ${oldExe}，备份根: ${userDataDir}\\backups\\<ts>，node: ${nodeExe || '(无，跳过备份)'}）`,
+    `启动更新助手: ${script}（新: ${newExe}，旧: ${oldExe}，备份根: ${userDataDir}\\backups\\<ts>，node: ${nodeExe || '(无，跳过备份)'}）`,
   );
-  const args = portable
-    ? [newExe, oldExe]
-    : [newExe, exeBase, oldExe, userDataDir, dshHome, installDir, profileDir, currentVersion, newVersion];
-  const child = spawn('cmd.exe', ['/d', '/s', '/c', buildSpawnCommandLine(script, args)], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-    windowsVerbatimArguments: true,
-  });
+  child.once('error', (err: Error) => ctx.log('client-update', '更新助手启动失败: ' + err.message));
   child.unref();
   return script;
 }

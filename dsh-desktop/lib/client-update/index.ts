@@ -26,10 +26,18 @@ export {
   concatFiles,
   downloadFile,
   downloadRelease,
+  downloadUrls,
   downloadWithSourceSwitch,
+  githubProxyUrl,
 } from './download.js';
-export { applyUpdate, buildApplyScript, buildSpawnCommandLine } from './apply.js';
-export type { ApplyScriptParams, ApplyUpdateOpts } from './apply.js';
+export {
+  applyUpdate,
+  buildApplyScript,
+  buildInstalledApplyScript,
+  buildInstalledPowerShellArgs,
+  buildSpawnCommandLine,
+} from './apply.js';
+export type { ApplyScriptParams, ApplyUpdateOpts, InstalledPowerShellArgsParams } from './apply.js';
 export type {
   ApiEndpoint,
   AssetSelection,

@@ -136,8 +136,11 @@ export function compareVersions(a: string, b: string): number {
     hasPre: boolean;
   }
   const parse = (v: string): Parsed => {
-    const [core = '', pre = ''] = String(v).split('-');
-    const nums = core.split('.').map((s) => parseInt(s, 10) || 0);
+    // 去 v 前缀（Release tag 形如 v4.4.1）+ 补齐缺省段，保证 4.4 与
+    // 4.4.0 的比较结果为相等而不是 NaN（main #112 修复同步）。
+    const [rawCore = '', pre = ''] = String(v).trim().replace(/^v/i, '').split('-');
+    const coreParts = rawCore.split('.');
+    const nums = Array.from({ length: 3 }, (_, i) => parseInt(coreParts[i] ?? '', 10) || 0);
     const preNum = parseInt((pre.match(/\d+/) || [''])[0] as string, 10);
     return { nums, pre, preNum: Number.isNaN(preNum) ? -1 : preNum, hasPre: !!pre };
   };
@@ -158,14 +161,38 @@ export function compareVersions(a: string, b: string): number {
 
 // --- npm 运行器 ------------------------------------------------------------
 
-function killProc(proc: ChildProcess | null): void {
-  if (!proc || !proc.pid) return;
-  try {
-    if (IS_WIN) spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    else proc.kill('SIGTERM');
-  } catch {
-    /* 已退出 */
-  }
+function killProc(proc: ChildProcess | null): Promise<void> {
+  if (!proc || !proc.pid) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const done = (): void => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    const fallback = setTimeout(done, IS_WIN ? 2000 : 500);
+    try {
+      proc.once('close', () => {
+        clearTimeout(fallback);
+        done();
+      });
+      if (IS_WIN) {
+        const killer = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        });
+        // taskkill 可能在子进程 close 事件前就退出；有界兜底保证事件丢失
+        // 时清理不挂死。
+        killer.once('close', () => setTimeout(done, 100));
+        killer.once('error', done);
+      } else {
+        proc.kill('SIGTERM');
+      }
+    } catch {
+      done();
+    }
+  });
 }
 
 /** 中止正在进行的 npm 子进程（更新/回退期间应用退出时调用）。 */
@@ -229,9 +256,19 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       activeProc = null;
       reject(e instanceof Error ? e : new Error(String(e)));
     };
+    // 先锁结果再 taskkill：Windows 上子进程可能在 taskkill 还未完成时就
+    // 发出 exit，不能让超时/停滞错误被普通 npm 退出码错误覆盖。
+    const finishAfterKill = async (e: Error): Promise<void> => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (stallTimer) clearTimeout(stallTimer);
+      activeProc = null;
+      await killProc(proc);
+      reject(e);
+    };
     const timer = setTimeout(() => {
-      killProc(proc);
-      finishErr(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
+      void finishAfterKill(new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
     }, timeoutMs);
     // 停滞检测：stallMs > 0 时，超过阈值没有产生任何输出即判死（触发
     // 调用方切换镜像源），避免「卡住但没到整体超时」的长时间空转。
@@ -240,8 +277,7 @@ export function runNpm(ctx: UpdCtx, args: string[], opts: RunNpmOpts = {}): Prom
       if (!stallMs) return;
       if (stallTimer) clearTimeout(stallTimer);
       stallTimer = setTimeout(() => {
-        killProc(proc);
-        finishErr(new Error('下载停滞（' + Math.round(stallMs / 1000) + ' 秒无进展），将切换镜像源重试'));
+        void finishAfterKill(new Error('下载停滞（' + Math.round(stallMs / 1000) + ' 秒无进展），将切换镜像源重试'));
       }, stallMs);
     };
     const onChunk = (c: string | Buffer): void => {

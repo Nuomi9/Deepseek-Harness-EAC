@@ -21,6 +21,49 @@ import type { ClientUpdCtx, DownloadResult, NormalizedRelease, ReleaseDownloadRe
 /** 进度回调：(received, total)，total 可能为 0（服务器未给 content-length）。 */
 type OnProgress = (received: number, total: number) => void;
 
+/** GitHub Release 下载加速代理（main #112：直连 github.com 下载在弱网下
+ *  常被 RST，代理优先、原地址兜底）。 */
+const GITHUB_DOWNLOAD_PROXY = 'https://gh.geekertao.top/';
+
+/**
+ * 只为 GitHub Release 资产生成代理地址；其他来源保持原地址。
+ * opts.version / opts.sha256 作为查询参数附加：gh.geekertao.top 这类加速代理
+ * 会缓存旧的安装包文件（同名同大小、内容却是旧版），客户端拿到旧文件导致
+ * SHA-256 校验失败、更新中止。附加版本号与公布哈希后，代理缓存键随内容
+ * 变化，自动绕开旧缓存（版本号必带，哈希可加强到内容级）。
+ */
+export function githubProxyUrl(
+  url: string,
+  opts: { version?: string; sha256?: string } = {},
+): string | null {
+  const value = String(url || '').trim();
+  if (!/^https:\/\/github\.com\//i.test(value)) return null;
+  const params: string[] = [];
+  if (opts.version) params.push(`v=${encodeURIComponent(String(opts.version))}`);
+  if (opts.sha256) params.push(`sha256=${encodeURIComponent(String(opts.sha256))}`);
+  const suffix = params.length ? (value.includes('?') ? '&' : '?') + params.join('&') : '';
+  return GITHUB_DOWNLOAD_PROXY + value + suffix;
+}
+
+/** 组装下载候选：代理优先，随后原始地址，再接其他 Release 源。opts 透传给
+ *  代理地址生成（缓存破坏参数）。 */
+export function downloadUrls(
+  primaryUrl: string,
+  fallbackUrls: string[] = [],
+  opts: { version?: string; sha256?: string } = {},
+): string[] {
+  const primary = String(primaryUrl || '').trim();
+  const candidates: string[] = [];
+  const proxied = githubProxyUrl(primary, opts);
+  if (proxied) candidates.push(proxied);
+  if (primary) candidates.push(primary);
+  for (const url of Array.isArray(fallbackUrls) ? fallbackUrls : []) {
+    const value = String(url || '').trim();
+    if (value) candidates.push(value);
+  }
+  return [...new Set(candidates)];
+}
+
 /** 单次下载尝试。resumeFrom > 0 时发 Range 续传请求并以追加模式写入；
  *  失败时保留 .part 供下一次断点续传（不删）。 */
 function downloadFileOnce(
@@ -298,12 +341,20 @@ export async function downloadRelease(
       /* 备用源资产形状不一致：跳过 */
     }
   }
+  // 下载前先求一次期望哈希：既作为代理 URL 的缓存破坏参数（sha256=…，
+  // 配合 version 让代理缓存键随内容变化、绕开旧缓存），又在下载完成后
+  // 复用做内容校验（单一来源，不在每个分片/校验时重复请求 SHA256SUMS）。
+  const expected = await expectedSha256(ctx, release, sel);
   for (let i = 0; i < sel.parts.length; i++) {
     const p = sel.parts[i];
     if (!p) continue;
     ctx.log('client-update', `下载 ${p.name}（${Math.round(p.size / 1048576)} MB）`);
     const dest = split ? finalPath + '.part' + (i + 1) : finalPath;
-    const urls = [p.url, ...fbSelections.map((f) => f.parts[i]?.url || '').filter(Boolean)];
+    const urls = downloadUrls(
+      p.url,
+      fbSelections.map((f) => f.parts[i]?.url || ''),
+      { version: release.version, sha256: expected || '' },
+    );
     const res = await downloadWithSourceSwitch(urls, dest, {
       ctx,
       onSourceChange: (idx) => {
@@ -333,8 +384,7 @@ export async function downloadRelease(
     throw new Error('下载文件异常（仅 ' + Math.round(stat.size / 1048576) + ' MB），已丢弃');
   }
   // V4：SHA-256 内容校验 —— 有公布哈希即强校验；不一致删除文件并中止
-  // 更新（绝不运行被篡改/损坏的安装包）。
-  const expected = await expectedSha256(ctx, release, sel);
+  // 更新（绝不运行被篡改/损坏的安装包）。复用下载前求得的 expected。
   if (expected) {
     ctx.log('client-update', `校验 SHA-256（期望 ${expected.slice(0, 16)}…）`);
     const actual = await computeSha256(finalPath);
