@@ -11,7 +11,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync, utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { copyPluginPackage, pluginStampOfUncached, invalidatePluginStampCache } from '../lib/plugin-copy.js';
@@ -53,11 +55,18 @@ test('same-size in-place source edit changes stamp (h hash) and forces re-copy',
     const profile = join(root, 'profile');
     mkdirSync(profile, { recursive: true });
     copyPluginPackage(profile, src, 'eac-test-pkg');
+    const srcFile = join(src, 'lib', 'a.js');
     // 就地改写为同字节数内容：size/文件数/版本全不变，只有 mtime 变。
-    writeFileSync(join(src, 'lib', 'a.js'), 'BBB');
-    // 戳记 h 必须感知到变化（mtime 维度）。
+    // Windows 文件系统连续两次写可能落在同一 mtime 刻度内（时间戳更新粒度
+    // ~10ms），utimes 显式钉住两个相距悬殊的 mtime，避免刻度竞态（CI 上
+    // 曾因此 flaky）。
+    writeFileSync(srcFile, 'BBB');
+    const tOld = 1_000_000_000;
+    utimesSync(srcFile, tOld, tOld);
     const stampOld = pluginStampOfUncached(src);
-    writeFileSync(join(src, 'lib', 'a.js'), 'CCC');
+    writeFileSync(srcFile, 'CCC');
+    const tNew = tOld + 50_000;
+    utimesSync(srcFile, tNew, tNew);
     const stampNew = pluginStampOfUncached(src);
     assert.notEqual(stampOld, stampNew, 'same-size edit must change stamp (h hash)');
     // 缓存清理后重拷：dest 得到新内容（覆盖旧 {v,f,b} 戳记漏判的缺口）。
