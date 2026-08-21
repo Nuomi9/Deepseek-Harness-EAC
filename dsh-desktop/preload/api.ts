@@ -66,6 +66,19 @@ export interface DshDesktopApi {
     restart(): Promise<unknown>;
     exportLogs(): Promise<unknown>;
   };
+  /** 快照管理器（⋯ 菜单「快照管理器」面板；主进程 lib/snapshot/manager.ts）。 */
+  snapshot: {
+    overview(): Promise<unknown>;
+    create(message?: string): Promise<unknown>;
+    detail(id: string): Promise<unknown>;
+    restore(id: string, safety?: boolean): Promise<unknown>;
+    createBranch(name: string, fromId?: string): Promise<unknown>;
+    deleteBranch(name: string): Promise<unknown>;
+    setCurrentBranch(name: string): Promise<unknown>;
+    saveConfig(config: Record<string, unknown>): Promise<unknown>;
+    deleteSnapshot(id: string): Promise<unknown>;
+    gc(): Promise<unknown>;
+  };
 }
 
 /** chrome:init 返回的应用信息（菜单头 + 徽标消费）。 */
@@ -193,6 +206,27 @@ export function exposeBridge(): DshDesktopApi {
       reload: () => ipcRenderer.invoke('chrome:recovery-reload') as Promise<unknown>,
       restart: () => ipcRenderer.invoke('chrome:recovery-restart') as Promise<unknown>,
       exportLogs: () => ipcRenderer.invoke('chrome:export-logs') as Promise<unknown>,
+    },
+    // 快照管理器（⋯ 菜单「快照管理器」）：.dsh 目录 git 式增量备份的
+    // 全部用例面（备份树 / 分支 / 恢复 / 排除列表 / 定时计划）。
+    snapshot: {
+      overview: () => ipcRenderer.invoke('snapshot:overview') as Promise<unknown>,
+      create: (message?: string) =>
+        ipcRenderer.invoke('snapshot:create', { message }) as Promise<unknown>,
+      detail: (id: string) => ipcRenderer.invoke('snapshot:detail', { id }) as Promise<unknown>,
+      restore: (id: string, safety?: boolean) =>
+        ipcRenderer.invoke('snapshot:restore', { id, safety }) as Promise<unknown>,
+      createBranch: (name: string, fromId?: string) =>
+        ipcRenderer.invoke('snapshot:branch-create', { name, fromId }) as Promise<unknown>,
+      deleteBranch: (name: string) =>
+        ipcRenderer.invoke('snapshot:branch-delete', { name }) as Promise<unknown>,
+      setCurrentBranch: (name: string) =>
+        ipcRenderer.invoke('snapshot:branch-set-current', { name }) as Promise<unknown>,
+      saveConfig: (config: Record<string, unknown>) =>
+        ipcRenderer.invoke('snapshot:config-save', { config }) as Promise<unknown>,
+      deleteSnapshot: (id: string) =>
+        ipcRenderer.invoke('snapshot:delete', { id }) as Promise<unknown>,
+      gc: () => ipcRenderer.invoke('snapshot:gc') as Promise<unknown>,
     },
   };
 

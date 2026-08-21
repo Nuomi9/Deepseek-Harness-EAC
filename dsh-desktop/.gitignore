@@ -14,9 +14,10 @@ data/
 /preload-lib/**/*.js
 /scripts/*.js
 !scripts/koffi-preflight.cjs
-# Rust 围栏模块：cargo target 不入库；index.node 为预编译产物（367KB，
-# predist 经 scripts/build-native.js copy 校验后随安装包分发）
+# Rust 原生模块：cargo target 不入库；index.node 为预编译产物（367KB / 快照
+# 引擎 ~200KB，predist 经 scripts/build-native.js copy 校验后随安装包分发）
 /native/supervisor/target/
+/native/snapshot/target/
 # 临时调试 / 备份产物不入库
 debug-session-dump.cjs
 e2e-base.txt

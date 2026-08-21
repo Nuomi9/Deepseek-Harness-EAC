@@ -91,6 +91,15 @@ files:
   - lib/extension-host/bridge-server.js
   - lib/extension-host/sdk/index.js
   - lib/recovery-center/register.js
+  # 快照管理器（Rust 引擎 + 调度 + IPC 域；prepack 经 build-native.js copy
+  # snapshot 强制校验 index.node 存在）
+  - lib/snapshot/native.js
+  - lib/snapshot/paths.js
+  - lib/snapshot/scheduler.js
+  - lib/snapshot/manager.js
+  - lib/ipc/snapshot.js
+  - preload/snapshot-ui.js
+  - native/snapshot/index.node
   - shared/protocol.js
   # VNext Phase 2：Host 进程入口（内置 node.exe 拉起）与 Rust 围栏预编译产物
   # （predist 经 scripts/build-native.js copy 强制校验存在）。

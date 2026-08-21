@@ -35,6 +35,8 @@ import {
 } from './window.js';
 import { createTray } from './tray.js';
 import { ensureGuard } from './guard.js';
+import { startScheduler } from './snapshot/scheduler.js';
+import { createScheduledSnapshot, nativeAvailable } from './snapshot/manager.js';
 import { applyKoffiPreflightAsync } from './preflight.js';
 import {
   computeOnboardingNeed, runPluginOnboardingIfNeeded,
@@ -325,6 +327,13 @@ export async function boot(): Promise<void> {
   startPreviewStaticServer();
   registerIpc();
   createTray();
+  // 快照管理器：定时备份调度（dshHome 已就绪；引擎二进制缺失时静默降级，
+  // 手动打开面板会得到明确提示）。首次排程前若已超期会立即补一次备份。
+  if (nativeAvailable()) {
+    startScheduler(() => createScheduledSnapshot());
+  } else {
+    log('boot', '快照引擎不可用（native/snapshot/index.node 缺失），定时备份未启动');
+  }
   // VNext Phase 0 入口③：DSH_DESKTOP_RECOVERY=1 直开恢复中心（跳过常规
   // boot 链 —— 不迁移、不同步插件、不拉 Web 服务；处置完成后可在中心内
   // 重试启动或安全模式重启）。

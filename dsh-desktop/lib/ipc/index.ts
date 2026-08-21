@@ -12,6 +12,7 @@ import { registerRecoveryIpc } from './recovery.js';
 import { registerPluginIpc } from './plugin.js';
 import { registerOnboardIpc } from './onboard.js';
 import { registerSessionIpc } from './session.js';
+import { registerSnapshotIpc } from './snapshot.js';
 
 /** 注册全部 IPC handler（boot 链在 createWindow 之前调用一次）。 */
 export function registerIpc(): void {
@@ -20,4 +21,5 @@ export function registerIpc(): void {
   registerPluginIpc();
   registerOnboardIpc();
   registerSessionIpc();
+  registerSnapshotIpc();
 }

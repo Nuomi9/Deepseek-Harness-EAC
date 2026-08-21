@@ -1,5 +1,5 @@
 /**
- * scripts/build-native.ts — Rust 围栏模块的可复现构建入口。
+ * scripts/build-native.ts — Rust 原生模块的可复现构建入口。
  *
  * 本机事实（Windows 10 1607 / build 14393）：VS18 BuildTools 的 MSVC 14.51
  * link.exe 进口了旧系统缺失的 API，启动即 0xC0000139（入口点不存在）。
@@ -9,24 +9,40 @@
  *   2. 复制为 target/lld-link.exe（argv0 即 flavor，免 -flavor 参数）；
  *   3. 以 RUSTFLAGS=-C linker=... 调 cargo（build/test/clippy 统一入口）。
  *
- * 用法：
- *   node scripts/build-native.js build [--release]   → cargo build
- *   node scripts/build-native.js test                → cargo test --release
- *   node scripts/build-native.js clippy              → cargo clippy --release
- *   node scripts/build-native.js copy                → 仅复制 dll → index.node
+ * 用法（module 缺省 supervisor，保持既有调用零改动）：
+ *   node scripts/build-native.js build [module] [--release] → cargo build
+ *   node scripts/build-native.js test [module]              → cargo test --release
+ *   node scripts/build-native.js clippy [module]            → cargo clippy --release
+ *   node scripts/build-native.js copy [module]              → 仅复制 dll → index.node
+ *
+ * module ∈ supervisor（进程围栏）| snapshot（.dsh 快照备份引擎）。
  *
  * 构建后把 cdylib 产物复制为可 require 的 index.node（cargo 产物名固定为
- * dsh_supervisor_native.{dll,so,dylib}，Node require 约定 .node 扩展名），
- * 并做存在性断言（predist 校验复用 `copy`）。
- */
+ * dsh_<module>_native.{dll,so,dylib}，Node require 约定 .node 扩展名），
+ * 并做存在性断言（predist 校验复用 `copy`） */
 'use strict';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const crateRoot = path.join(__dirname, '..', 'native', 'supervisor');
+const MODULES = ['supervisor', 'snapshot'] as const;
+type Module = (typeof MODULES)[number];
+
+function parseModuleArg(): Module {
+  const arg = process.argv[3];
+  if (!arg) return 'supervisor';
+  if ((MODULES as readonly string[]).includes(arg)) return arg as Module;
+  console.error(`[build-native] 未知模块: ${arg}（${MODULES.join(' | ')}）`);
+  process.exit(1);
+}
+
+// 注意：不可命名为 `module`——CJS 包装参数遮蔽后 const 重声明是语法错误，
+// Node 语法探测会误判为 ESM 加载。
+const moduleName = parseModuleArg();
+const crateRoot = path.join(__dirname, '..', 'native', moduleName);
 const targetDir = path.join(crateRoot, 'target');
 const manifest = path.join(crateRoot, 'Cargo.toml');
+const artifactBase = `dsh_${moduleName}_native`;
 
 /** 取工具链 sysroot（失败抛出 —— 没有 rustc 时无法构建）。 */
 function sysroot(): string {
@@ -61,9 +77,9 @@ function runCargo(sub: string, rest: string[]): number {
 function copyArtifact(): void {
   const releaseDir = path.join(targetDir, 'release');
   const candidates =
-    process.platform === 'win32' ? ['dsh_supervisor_native.dll']
-    : process.platform === 'darwin' ? ['libdsh_supervisor_native.dylib']
-    : ['libdsh_supervisor_native.so'];
+    process.platform === 'win32' ? [`${artifactBase}.dll`]
+    : process.platform === 'darwin' ? [`lib${artifactBase}.dylib`]
+    : [`lib${artifactBase}.so`];
   const found = candidates.find((f) => fs.existsSync(path.join(releaseDir, f)));
   if (!found) {
     console.error(`[build-native] 未找到 cargo 产物：${candidates.join(' / ')}（先 cargo build --release）`);

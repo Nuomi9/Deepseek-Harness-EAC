@@ -8,6 +8,7 @@
  */
 
 import type { ChromeInfo, DshDesktopApi, FloatMode } from './api.js';
+import { openSnapshotPanel } from './snapshot-ui.js';
 
 /** 主窗玻璃栏 DOM id / 高度。 */
 export const BAR_ID = '__dsh_desktop_chrome__';
@@ -147,6 +148,7 @@ function renderMenu(api: DshDesktopApi): void {
     </div>
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="restart-service"><span>重启 Web 服务</span><span class="dch-kbd">不关闭应用</span></button>
+    <button class="dch-item" data-act="open-snapshot-manager"><span>快照管理器</span><span class="dch-kbd">.dsh 备份</span></button>
     <button class="dch-item" data-act="reload"><span>重新加载</span><span class="dch-kbd">Ctrl+R</span></button>
     <button class="dch-item" data-act="open-terminal"><span>内置终端</span><span class="dch-kbd">Node+npm</span></button>
     <button class="dch-item" data-act="devtools"><span>开发者工具</span><span class="dch-kbd">F12</span></button>
@@ -171,6 +173,12 @@ function renderMenu(api: DshDesktopApi): void {
         const next = (await api.menu.action(act, { value: item.dataset.value })) as ChromeInfo | null;
         if (next) state = { ...state, ...next };
         renderMenu(api);
+        return;
+      }
+      // 快照管理器：面板在 preload 侧渲染，不走主进程菜单动作。
+      if (act === 'open-snapshot-manager') {
+        closeMenu();
+        openSnapshotPanel(api);
         return;
       }
       closeMenu();

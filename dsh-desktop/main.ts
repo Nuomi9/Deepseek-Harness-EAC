@@ -42,6 +42,7 @@ import { processPendingMarketOps } from './lib/market-ops.js';
 import { runUpdateFlow, runClientUpdateFlow } from './lib/update-flow.js';
 import { boot, fatal, handleBootFailure } from './lib/boot.js';
 import { shutdownExtensionHosts } from './lib/extension-host/manager.js';
+import { snapshotScheduler } from './lib/snapshot/scheduler.js';
 import * as structuredLogger from './logger.js';
 import * as updaterReal from './updater.js';
 
@@ -108,6 +109,7 @@ if (!gotLock) {
         await shutdownExtensionHosts();
         updaterReal.abort();
         if (state.sessionWatcher) state.sessionWatcher.stop();
+        snapshotScheduler.stop();
       } catch (err) {
         log('boot', '退出清理异常: ' + String((err as Error)?.message));
       } finally {
