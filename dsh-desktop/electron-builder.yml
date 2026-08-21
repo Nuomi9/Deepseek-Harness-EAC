@@ -169,7 +169,12 @@ portable:
   unpackDirName: deepseek-harness-eac-portable
 
 nsis:
-  artifactName: Deepseek-Harness-EAC-Setup-${arch}.${ext}
+  # 带版本号与 main 主线发布渠道对齐：旧版（≤4.6.0）更新器的资产匹配面
+  # 是 /setup.*x64\.exe$/i 正则 + Gitee 分片候选名（含
+  # Deepseek-Harness-EAC-v<version>-Setup-x64.exe 形态），两种命名都能命中，
+  # 统一为带版本形态避免同 dist 目录下新旧产物混存。portable 名保持不带
+  # 版本（配合 patch-portable-template 的 %TEMP% 稳定解压缓存目录复用）。
+  artifactName: Deepseek-Harness-EAC-Setup-v${version}-${arch}.${ext}
   include: build/installer.nsh
   oneClick: false
   perMachine: false

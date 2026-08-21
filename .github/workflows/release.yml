@@ -110,7 +110,7 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: |
-            dsh-desktop/dist/Deepseek-Harness-EAC-Setup-x64.exe
+            dsh-desktop/dist/Deepseek-Harness-EAC-Setup-*.exe
             dsh-desktop/dist/Deepseek-Harness-EAC-Portable-x64.exe
             dsh-desktop/dist/*.blockmap
             dsh-desktop/dist/SHA256SUMS.txt

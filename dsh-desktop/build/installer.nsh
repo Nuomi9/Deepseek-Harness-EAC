@@ -138,6 +138,22 @@
   Delete "$SMPROGRAMS\DSH Desktop.lnk"
 !macroend
 
+; ---------------------------------------------------------------------------
+; v5.0.0 布局迁移（main ≤4.6.0 旧 JS 布局 → vnext TS 隔离布局）：
+; rescue-agent（救援流程并入 client-update / recovery-center）、
+; wsl-backend（死代码已删）、extract-css.mjs（一次性调试脚本）不再随包
+; 发布。默认安装路径已被上方 takeover wipe 整树清空；这里只对自定义安装
+; 目录（wipe 守卫不放行、electron-builder 内置旧卸载器又可能中途放弃，
+; 见 issue #7）兜底。Delete 对不存在的文件静默成功，幂等；仅删
+; resources\app 内的旧布局文件，绝不触碰 %USERPROFILE%\.dsh —— 升级
+; 保留用户全部插件与配置。
+; ---------------------------------------------------------------------------
+!macro customInstall
+  Delete "$INSTDIR\resources\app\rescue-agent.js"
+  Delete "$INSTDIR\resources\app\wsl-backend.js"
+  Delete "$INSTDIR\resources\app\extract-css.mjs"
+!macroend
+
 ; Dialog-free replacement for the built-in CHECK_APP_RUNNING: wait (up to
 ; ~10s) until no current/legacy app exe is alive, then continue regardless.
 ; Force-kill was already attempted in customInit; if something survives

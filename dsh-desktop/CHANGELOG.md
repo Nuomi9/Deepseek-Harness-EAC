@@ -14,7 +14,42 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 影响治理 + 内置接管同名市场包）→
 4.3.0（本版：内置插件更新 + 插件市场「更新」标签 + 市场插件更新）→
 4.4.0（本版：修复设置页「Skills 与 MCP → 打开目录」失效 + 安装版更新
-4 目录备份/回滚 + 结构化日志 + 插件自写 patch 行保护）。
+4 目录备份/回滚 + 结构化日志 + 插件自写 patch 行保护）→
+5.0.0（本版：vnext TS 隔离重构 + Rust 原生快照管理器 + main 主线
+≤4.6.0 → 5.0.0 升级适配）。
+
+## [5.0.0] — 2026-08-21
+
+### 适配：main 主线（≤4.6.0 旧 JS 布局）升级到本版，.dsh 插件与配置零丢失
+- 版本号 4.4.0 → **5.0.0**：必须高于 main 主线最后版本 4.6.0，
+  老客户端的 compareVersions 才会判定「有新版本」并触发更新。
+- NSIS 产物命名对齐 origin/main 4.6.0：`Deepseek-Harness-EAC-Setup-v<version>-x64.exe`
+  （v4.4.1 起的命名形态）。老更新器的直连正则 `/setup.*x64\.exe$/i`
+  与 Gitee 分片候选（v4.4.1 起第 4 候选）都能命中；portable 名保持
+  不带版本（`%TEMP%` 稳定解压缓存目录复用依赖它）。
+- selectAsset 补回 Gitee 分片第 4 候选 `Deepseek-Harness-EAC-<kind>-v<version>-x64.exe`
+  （origin/main v4.4.1 commit 0178672 引入，重构迁移时丢失）：否则本版
+  自身命名在 Gitee >100MB 分片形态下永远匹配不上，5.x → 更新会卡死在
+  「未找到匹配的安装包资产」。
+- installer.nsh 新增 customInstall 残留清理：幂等删除 main 旧布局独有、
+  vnext 不再随包的 `rescue-agent.js` / `wsl-backend.js` / `extract-css.mjs`
+  （仅 `resources\app` 内，对不存在文件静默成功）。
+- release.yml 上传路径通配化 `Setup-*.exe`（带版本名）。
+- 数据零丢失保障：`.dsh`（全部插件/配置/skills）在 `%USERPROFILE%`、
+  settings.json 在 userData，安装器删除动作均不触碰；settings 采用
+  读-改-写全量合并，main 版写入的未知字段升级后完整保留。
+- 契约测试 `test/upgrade-contract.test.ts`（10 项）：版本门槛、双命名
+  契约（老/新更新器 × 直连/分片）、残留清理、.dsh 不可触碰、发布上传
+  面全部锁死，防回归。
+
+### 新增：Rust 原生快照管理器（.dsh 增量备份/恢复）
+- Rust napi 引擎（`native/snapshot/`）：SHA-256 内容寻址去重、
+  mtime+size 索引缓存、分支树、带安全快照的恢复；默认排除
+  skills/sessions/.agent-presets/memories/node_modules（可自定义）。
+- TS 编排（`lib/snapshot/`）+ IPC 域 `snapshot:*` + 全屏备份树面板
+  （⋯ 菜单「重启 Web 服务」与「重新加载」之间）：分支创建、快照恢复、
+  立即备份、定时备份（间隔/每日模式）；备份存于 `.dsh-snapshots`
+  （.dsh 同级）。
 
 ## [4.4.0] — 2026-08-19
 
