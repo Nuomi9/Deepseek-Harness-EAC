@@ -15,18 +15,54 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 4.3.0（本版：内置插件更新 + 插件市场「更新」标签 + 市场插件更新）→
 4.4.0（本版：修复设置页「Skills 与 MCP → 打开目录」失效 + 安装版更新
 4 目录备份/回滚 + 结构化日志 + 插件自写 patch 行保护）→
+4.4.1 / 4.5.0 / 4.6.0（main 主线：更新链路修复 + tdai-memory 退役
++ picturereader 接管识图 + 崩溃救援模式 + AI 主动修复）→
 5.0.0（本版：vnext TS 隔离重构 + Rust 原生快照管理器 + main 主线
-≤4.6.0 → 5.0.0 升级适配）。
+≤4.6.0 → 5.0.0 升级适配 + main 更新/修复同步移植）。
 
 ## [5.0.0] — 2026-08-21
+
+### 同步：main 主线 4.4.1–4.6.0 更新与 bug 修复（TS 架构移植）
+- **更新链路修复（#112/#119）**：GitHub Release 代理优先链
+  （`gh.geekertao.top` → 原地址 → Gitee 兜底）；代理地址附加缓存破坏参数
+  `?v=<版本>&sha256=<哈希>`（期望哈希下载前求一次，同时喂代理 URL 与
+  下载后强校验）；`compareVersions` 补齐缺省版本段 + 兼容 `v` 前缀
+  （4.4 与 4.4.0 相等，修复重复提示安装）。
+- **安装版更新黑窗/自杀修复（#93）**：改用隐藏 PowerShell 助手脚本
+  （`-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden`）——精确等待
+  主进程 PID（上限 20s，超时只杀该 PID、不再 taskkill /T 全树）后再执行
+  ActionScript 备份/安装/回滚链；`apply-update.cmd` 不再含
+  ping/tasklist/find/taskkill，杜绝黑窗闪烁与「杀掉自己」的中断事故。
+- **首次安装崩溃根治（#119）**：`healRowConfig` 自愈改为扫描整个条目块
+  （块内任意位置已有 `config:` 即不再补），修复 `name → disabled → config`
+  形态被误判补出第二份 config → YAML duplicated mapping key → 启动失败。
+- **桌面快捷方式去重（#91）**：新增 `lib/shortcut-maintenance.ts`（单一
+  创建者原则：安装版归 NSIS、便携版归运行时），跨创建者重复项自动清理，
+  用户改过名/图标/参数的快捷方式永不删除。
+- **退役插件清理加固（#130 相关）**：`plugin-manager-patch` 识别 dsh 官方
+  「空块项+独立 id」多行 patch 格式；BOM / CRLF 容错（Windows PowerShell
+  写出的 patch 首字节 BOM 不再导致条目识别失败）。
+- **e2e 修复**：有真实 API key 时强制隔离测试 home 的
+  `agent-default-model` 指向 deepseek 官方端点；识图链路检查迁移到
+  picturereader；node 泄漏检查排除 `E2E_RUNNER_PID`。
+- **便携版产物名带版本**：`Deepseek-Harness-EAC-Portable-v<version>-x64.exe`
+  （与 Setup 同形态；release.yml 上传通配 `Portable-*.exe`）。
+- **测试同步**：新增 `client-updater-proxy`（代理/缓存破坏 9 项）、
+  `updater-version`（版本比较 2 项）；更新 `client-updater-node-arg`
+  （PowerShell 助手断言）、`update-mirror-chain`（Windows EPERM 重试）；
+  `plugin-manager-toggle` +4（dash 格式/BOM/CRLF）、`patch-row-heal` +4
+  （条目块扫描回归）；移除已退役 tool-vision 的 stream-guard 测试。
+- **文档同步**：README/README.en 下载链接改版本化命名（v5.0.0）、
+  Linux v4.4.0 包链接、picturereader 替换 tool-vision/tdai-memory 描述、
+  贡献者网格 + 交流群二维码（QQ/微信）。
 
 ### 适配：main 主线（≤4.6.0 旧 JS 布局）升级到本版，.dsh 插件与配置零丢失
 - 版本号 4.4.0 → **5.0.0**：必须高于 main 主线最后版本 4.6.0，
   老客户端的 compareVersions 才会判定「有新版本」并触发更新。
 - NSIS 产物命名对齐 origin/main 4.6.0：`Deepseek-Harness-EAC-Setup-v<version>-x64.exe`
   （v4.4.1 起的命名形态）。老更新器的直连正则 `/setup.*x64\.exe$/i`
-  与 Gitee 分片候选（v4.4.1 起第 4 候选）都能命中；portable 名保持
-  不带版本（`%TEMP%` 稳定解压缓存目录复用依赖它）。
+  与 Gitee 分片候选（v4.4.1 起第 4 候选）都能命中；便携版同形态带版本
+  （`Portable-v<version>`，解压缓存目录名由固定字符串决定、与产物名无关）。
 - selectAsset 补回 Gitee 分片第 4 候选 `Deepseek-Harness-EAC-<kind>-v<version>-x64.exe`
   （origin/main v4.4.1 commit 0178672 引入，重构迁移时丢失）：否则本版
   自身命名在 Gitee >100MB 分片形态下永远匹配不上，5.x → 更新会卡死在

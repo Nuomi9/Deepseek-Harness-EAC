@@ -52,8 +52,8 @@ On top of the original, EAC embraces the community's creations — skins, plugin
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~167 MB |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~167 MB |
+| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v5.0.0-x64.exe) | No install needed, double-click to run, USB-friendly | ~167 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v5.0.0-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~167 MB |
 
 More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases).
 
@@ -120,8 +120,7 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 - **In-session terminal**: a Terminal tab starts a persistent PowerShell in the session's project dir (SSE streaming, command history, auto-reconnect, clean CJK encoding)
 - **Project file tree + HTML/port preview**: VSCode-style tree, in-app preview of HTML files and localhost ports (loopback only)
 - **Community plugin marketplace (new in v2, dsh-webui-market)**: Settings → Plugins → Marketplace — browse plugins listed on awesome-dsh-plugin.com and install/uninstall them into the profile with one click; install/uninstall jobs are queued and run during the service restart window so the current session is never interrupted
-- **External vision models (new in v2, dsh-tool-vision)**: the `inspect_image` tool sends local image files or image URLs to any OpenAI-compatible vision endpoint (qwen-vl / GLM-4V / Ollama, ...) and brings the vision answer back into the conversation
-- **Long-term memory (new in v2, dsh-tdai-memory)**: a port of TencentDB Agent Memory — L0 conversation capture → L1 structured memory → L2 scenarios / L3 persona profiles, with automatic recall injection plus memory/conversation search tools; reuses existing `~/.memory-tencentdb/memory-tdai` data
+- **All-in-one image & document reader (picturereader)**: a vision-twin adapter (native thumbnails + paste-to-analyze, works with pi-ai providers like opencode too — no more UNSUPPORTED_CONTENT failures); privacy / smart / strict modes; a local toolchain (pixel scanning / 3-engine OCR / crop / color pick / compare / batch); pdf/word/excel/ppt → image conversion; optional external VLM bridge (any OpenAI-compatible endpoint)
 - **soul.md persona hot-reload (new in v2, dsh-soul-md)**: injects a markdown persona file into the system prompt (`soul:persona`), hot-reloads on file change — the agent roleplays while it works
 - **Mobile layout fixes (new in v2, dsh-web-mobile-fix)**: fixes settings panel, popups, sidebar and session header on narrow (≤400px) screens — pure client-side CSS, desktop layout untouched
 - **Easy setup (dsh-easy-setup)**: one-click vision-model provider/model picker, `soul.md` persona visual editor, one-click migration of skills + MCP + memory from Codex / Claude Code directories
@@ -196,6 +195,27 @@ dsh-desktop/                  # Electron desktop app
 openclaw-dsh-bridge/          # WeChat bridge plugin (optional, research-grade)
 research/                     # Third-party WeChat / bridge protocol research
 ```
+
+## Contributors
+
+Thanks to every contributor:
+
+<p align="center">
+  <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
+  </a>
+</p>
+
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=zouyuxuan122%2FDeepseek-Harness-EAC&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&theme=dark&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+ </picture>
+</a>
 
 ## License
 
