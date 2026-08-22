@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recovery-open-logs"
+description = "Enables the recovery_open_logs command without any pre-configured scope."
+commands.allow = ["recovery_open_logs"]
+
+[[permission]]
+identifier = "deny-recovery-open-logs"
+description = "Denies the recovery_open_logs command without any pre-configured scope."
+commands.deny = ["recovery_open_logs"]

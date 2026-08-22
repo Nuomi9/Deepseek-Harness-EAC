@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-recovery-state"
+description = "Enables the recovery_state command without any pre-configured scope."
+commands.allow = ["recovery_state"]
+
+[[permission]]
+identifier = "deny-recovery-state"
+description = "Denies the recovery_state command without any pre-configured scope."
+commands.deny = ["recovery_state"]

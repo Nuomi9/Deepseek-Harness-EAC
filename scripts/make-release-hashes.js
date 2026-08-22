@@ -8,12 +8,19 @@
 // 上传（保持原文件名）。
 //
 // 用法：node scripts/make-release-hashes.js [distDir]
+// distDir 缺省时自动选择：Tauri NSIS 产物目录优先，退回 Electron dist/。
 
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-const distDir = path.resolve(process.argv[2] || path.join(__dirname, '..', 'dist'));
+function defaultDistDir() {
+  const tauriNsis = path.resolve(__dirname, '..', 'tauri-app', 'target', 'release', 'bundle', 'nsis');
+  if (fs.existsSync(tauriNsis)) return tauriNsis;
+  return path.resolve(__dirname, '..', 'dist');
+}
+
+const distDir = path.resolve(process.argv[2] || defaultDistDir());
 
 function sha256(file) {
   return new Promise((resolve, reject) => {

@@ -13,7 +13,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const IGNORED_PREFIXES = ['dist/', 'node_modules/', 'vendor/', '.git/'];
+const IGNORED_PREFIXES = ['dist/', 'node_modules/', 'vendor/', '.git/', 'tauri-app/target/'];
+
+// 产物目录自动选择：Tauri 打包产物优先（tauri build 的 NSIS 输出），退回
+// Electron 时代的 dist/（冻结双轨期两套产物都可能出现）。
+function defaultArtifactDirs(repoRoot) {
+  return [
+    path.join(repoRoot, 'tauri-app', 'target', 'release', 'bundle', 'nsis'),
+    path.join(repoRoot, 'dist'),
+  ];
+}
 
 function listSources(repoRoot) {
   let out;
@@ -42,15 +51,29 @@ function listSources(repoRoot) {
   return out.split(/\r?\n/).filter(Boolean).filter((f) => !IGNORED_PREFIXES.some((p) => f.startsWith(p)));
 }
 
-function verifyDistFresh(repoRoot, distDir = path.join(repoRoot, 'dist')) {
+function collectArtifacts(repoRoot, distDir) {
   const artifacts = [];
   try {
     for (const e of fs.readdirSync(distDir, { withFileTypes: true })) {
       if (e.isFile() && /\.exe$/i.test(e.name)) artifacts.push(path.join(distDir, e.name));
     }
-  } catch { /* dist missing */ }
+  } catch { /* dir missing */ }
+  return artifacts;
+}
+
+function verifyDistFresh(repoRoot, distDir) {
+  const candidates = distDir ? [distDir] : defaultArtifactDirs(repoRoot);
+  let artifacts = [];
+  let usedDir = null;
+  for (const dir of candidates) {
+    artifacts = collectArtifacts(repoRoot, dir);
+    if (artifacts.length) {
+      usedDir = dir;
+      break;
+    }
+  }
   if (!artifacts.length) {
-    return { ok: false, offenders: [], error: 'no packaged artifacts (*.exe) found in dist/' };
+    return { ok: false, offenders: [], error: 'no packaged artifacts (*.exe) found in ' + candidates.join(' | ') };
   }
   const artifactTime = Math.min(...artifacts.map((p) => fs.statSync(p).mtimeMs));
   const offenders = [];

@@ -1,0 +1,19 @@
+{
+  "name": "dsh-desktop-tauri",
+  "private": true,
+  "version": "4.4.0",
+  "scripts": {
+    "build:inject": "node build-inject.mjs",
+    "tauri": "tauri",
+    "dev": "npm run build:inject && npm run sidecar:build && tauri dev",
+    "build": "npm run build:inject && npm run sidecar:build && node scripts/stage.ts && tauri build",
+    "sidecar:build": "tsc -p ../sidecar/tsconfig.json",
+    "sidecar:check": "tsc -p ../sidecar/tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.6",
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

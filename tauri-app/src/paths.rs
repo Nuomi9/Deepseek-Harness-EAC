@@ -1,0 +1,151 @@
+//! 路径解析：开发模式直接用仓库根（与 Electron 版共享 vendor/node_modules），
+//! 打包模式用 Tauri resource 目录下 staging 脚本铺好的 app/node/npm。
+
+use std::path::PathBuf;
+
+pub struct Paths {
+    /// 应用 JS 根（shell-host.js / assets / node_modules 所在目录）。
+    pub app_root: PathBuf,
+    /// 内置 node.exe。
+    pub node_exe: PathBuf,
+    /// 内置 npm CLI 入口。
+    pub npm_cli: PathBuf,
+    /// 用户数据目录（%APPDATA%/<identifier>，Tauri app_data_dir）。
+    pub user_data: PathBuf,
+    /// 日志目录。
+    pub logs_dir: PathBuf,
+    /// DSH_HOME（env 显式覆盖优先，否则 ~/.dsh-v4lite）。
+    pub dsh_home: PathBuf,
+    pub packaged: bool,
+    pub version: String,
+}
+
+impl Paths {
+    pub fn new(
+        packaged: bool,
+        resource_dir: Option<PathBuf>,
+        app_data_dir: PathBuf,
+        version: String,
+    ) -> Paths {
+        // Tauri v2 在 Windows 上把 resources/**/* 落在 <exe目录>\resources\ 下，
+        // 而 resource_dir() 返回 exe 目录本身 —— 必须补上 resources 层，
+        // 否则打包版找不到 shell-host/assets/node_modules（真机验证发现）。
+        // 另外 resource_dir() 返回 \\?\ 开头的 verbatim 路径，Node 解析主入口会炸（EISDIR: lstat 'D:'），
+        // 这里统一剥掉前缀（dunce 手法）。
+        let res = strip_verbatim(resource_dir.clone().unwrap_or_default().join("resources"));
+        let app_root = if packaged {
+            res.join("app")
+        } else {
+            // dev：tauri-app 的上一级即仓库根
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default()
+        };
+        let node_exe = if packaged {
+            res.join("node").join("node.exe")
+        } else {
+            app_root.join("vendor").join("node").join("node.exe")
+        };
+        let npm_cli = if packaged {
+            res.join("npm").join("bin").join("npm-cli.js")
+        } else {
+            app_root.join("vendor").join("npm").join("bin").join("npm-cli.js")
+        };
+        // v4Lite 独立数据主目录：绝不触碰原版 EAC / dsh CLI 的 ~\.dsh。
+        // 显式设置环境变量 DSH_HOME 可覆盖此默认（尊重用户的强制指定）。
+        let dsh_home = match std::env::var("DSH_HOME") {
+            Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
+            _ => dirs_home().map(|h| h.join(".dsh-v4lite")).unwrap_or_else(|| app_data_dir.join(".dsh-home")),
+        };
+        // 测试/自动化可整体重定位 userData（对齐 Electron 版 DSH_DESKTOP_USERDATA）。
+        let user_data = match std::env::var("DSH_DESKTOP_USERDATA") {
+            Ok(v) if !v.trim().is_empty() => PathBuf::from(v),
+            _ => app_data_dir,
+        };
+        Paths {
+            app_root,
+            node_exe,
+            npm_cli,
+            logs_dir: user_data.join("logs"),
+            user_data,
+            dsh_home,
+            packaged,
+            version,
+        }
+    }
+
+    pub fn assets_dir(&self) -> PathBuf {
+        self.app_root.join("assets")
+    }
+
+    /// 当前生效的 dsh bin：用户目录更新覆盖层优先，内置副本兜底。
+    pub fn dsh_bin(&self) -> PathBuf {
+        let overlay = self
+            .user_data
+            .join("agent")
+            .join("node_modules")
+            .join("@deepseek-ai")
+            .join("dsh")
+            .join("lib")
+            .join("bin.js");
+        if overlay.exists() {
+            return overlay;
+        }
+        self.app_root
+            .join("node_modules")
+            .join("@deepseek-ai")
+            .join("dsh")
+            .join("lib")
+            .join("bin.js")
+    }
+
+    pub fn desktop_profile(&self) -> String {
+        // 共享模式（settings.shareWebProfile === true）走官方 web profile；
+        // 默认桌面专属 profile 与原生 CLI 彻底共存。settings 由调用方注入，
+        // 这里读一次文件即可（低频路径）。
+        let s = crate::settings::load_at(&self.settings_file());
+        match s.get("shareWebProfile").and_then(|v| v.as_bool()) {
+            Some(true) => "web".to_string(),
+            _ => DESKTOP_PROFILE.to_string(),
+        }
+    }
+
+    pub fn desktop_profile_dir(&self) -> PathBuf {
+        self.dsh_home.join("profiles").join(self.desktop_profile())
+    }
+
+    pub fn settings_file(&self) -> PathBuf {
+        self.user_data.join("settings.json")
+    }
+
+    pub fn run_state_file(&self) -> PathBuf {
+        self.user_data.join("run-state.json")
+    }
+
+    pub fn koffi_overlay_file(&self) -> PathBuf {
+        self.user_data.join("picker-browse.overlay.yml")
+    }
+}
+
+pub const DESKTOP_PROFILE: &str = "web-desktop";
+/// 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app）。
+pub const DESKTOP_PROFILE_BUNDLES: [&str; 2] = ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"];
+
+pub fn dirs_home() -> Option<PathBuf> {
+    std::env::var("USERPROFILE").ok().map(PathBuf::from)
+}
+
+/// 剥掉 Windows verbatim 前缀（\\?\ 与 \\?\UNC\）。
+/// Tauri 的路径解析器会返回 verbatim 路径；Node 把以 \\?\ 开头的主入口
+/// 参数解析失败（EISDIR lstat 'D:'），spawn 子进程前必须还原普通路径。
+fn strip_verbatim(p: PathBuf) -> PathBuf {
+    let s = p.as_os_str().to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        p
+    }
+}

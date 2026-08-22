@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chrome-window"
+description = "Enables the chrome_window command without any pre-configured scope."
+commands.allow = ["chrome_window"]
+
+[[permission]]
+identifier = "deny-chrome-window"
+description = "Denies the chrome_window command without any pre-configured scope."
+commands.deny = ["chrome_window"]

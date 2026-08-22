@@ -3157,6 +3157,21 @@ if (!gotLock) {
     markCleanExit();
     (async () => {
       try {
+        // V-E 迁移钩子（纯增量，Tauri 版专用）：趁窗口还活着把本 origin 的
+        // localStorage 全量导出到 userData，供 Tauri 版首启跨壳迁移。
+        // 任何失败都静默吞掉，绝不影响原退出流程；Tauri 版未装时文件闲置。
+        try {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+            const data = await mainWindow.webContents.executeJavaScript('JSON.stringify(localStorage)', true);
+            if (typeof data === 'string' && data.length < 5 * 1024 * 1024) {
+              const outFile = path.join(userDataDir, 'dsh-localstorage-export.json');
+              const tmpFile = outFile + '.tmp';
+              fs.writeFileSync(tmpFile, data);
+              fs.renameSync(tmpFile, outFile);
+              log('boot', '已导出 localStorage 供 Tauri 版迁移');
+            }
+          }
+        } catch {}
         // 正在跑的插件市场排队任务：直接强杀（它只是 pnpm 的转发器，
         // 标记文件的 attempts 机制会在下次启动重试）。
         if (marketOpChild && marketOpChild.pid && marketOpChild.exitCode === null) {

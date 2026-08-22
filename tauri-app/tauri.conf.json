@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Deepseek Harness EAC v4Lite",
+  "version": "4.4.0",
+  "identifier": "com.deepseek.dsh.desktop.lite",
+  "build": {
+    "beforeDevCommand": "npm run build:inject",
+    "devUrl": null,
+    "frontendDist": "./frontend",
+    "beforeBuildCommand": "npm run build:inject"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null,
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": ["resources/**/*"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installerHooks": "./nsis/installer-hooks.nsh",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

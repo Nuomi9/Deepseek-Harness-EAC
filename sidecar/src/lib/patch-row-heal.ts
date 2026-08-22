@@ -1,0 +1,198 @@
+// 忠实移植自 patch-row-heal.js
+// cordis.patch.yml row maintenance helpers.
+//
+// The sync pass writes companion-plugin rows into the profile patch and must
+// never duplicate rows the profile already mounts through its own package.json
+// bundle list (the loader aborts the whole tree with "duplicate loader entry
+// id" → `dsh web` exits 1). The helpers below serialize config blocks with the
+// exact indentation each row kind expects and strip duplicate overlay rows.
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+/**
+ * Serialize a config object as patch-row YAML lines. `baseIndent` is the
+ * indentation of the row's `- id:` line: insert-block rows sit at 4 spaces
+ * (config at 6, keys at 8 — the legacy default), while top-level rows
+ * written by the plugin manager / onboarding wizard sit at 0 (config at 2,
+ * keys at 4). A config block at the wrong step is a YAML parse error that
+ * takes down the whole plugin tree (`dsh web` exits 1), so the step must
+ * always mirror the row it belongs to.
+ */
+export function configLinesFor(
+  config: Record<string, unknown> | null | undefined,
+  baseIndent = 4,
+): string {
+  const step = ' '.repeat(baseIndent + 2);
+  const step2 = ' '.repeat(baseIndent + 4);
+  let out = `${step}config:\n`;
+  for (const [k, v] of Object.entries(config || {})) {
+    out += `${step2}${k}: ${JSON.stringify(v)}\n`;
+  }
+  return out;
+}
+
+/**
+ * Rewrite a row's config block to the indentation matching its own `- id:`
+ * line (config must sit at id-indent + 2, keys at + 4 — the same level as
+ * `name:`). Heals rows that a pre-wizard build broke by appending a 6-space
+ * config block to a TOP-LEVEL row (`- id: x` at column 0): that mix is a
+ * YAML mapping-entry indentation error, and since the row already carries a
+ * config key the "missing config" healers leave it untouched forever.
+ * Idempotent; returns the patch unchanged when nothing needs fixing.
+ */
+export function normalizeRowConfigIndent(patch: string, id: string): string {
+  if (typeof patch !== 'string' || patch === '' || !id) return patch;
+  const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rowRe = new RegExp(`^([\\t ]*)- id: ${esc}(?![A-Za-z0-9_.-])`);
+  const lines = patch.split(/\r?\n/);
+  let changed = false;
+  for (let i = 0; i < lines.length; i++) {
+    const m = rowRe.exec(lines[i]!);
+    if (!m) continue;
+    const idIndent = m[1]!.replace(/\t/g, '  ').length;
+    const wantConfig = ' '.repeat(idIndent + 2) + 'config:';
+    for (let j = i + 1; j < lines.length; j++) {
+      const cur = lines[j]!;
+      const t = cur.trim();
+      if (t === '' || /^#/.test(t)) continue;
+      if (/^[\t ]*- id:/.test(cur) || t === 'insert:') break;
+      const curIndent = (cur.match(/^[\t ]*/) || [''])[0]!.replace(/\t/g, '  ').length;
+      if (curIndent <= idIndent) break;
+      if (!/^[\t ]*config:/.test(cur) || t !== 'config:') continue;
+      if (cur !== wantConfig) {
+        const diff = curIndent - (idIndent + 2);
+        lines[j] = wantConfig;
+        for (let k = j + 1; k < lines.length; k++) {
+          const kl = lines[k]!;
+          if (kl.trim() === '' || /^#/.test(kl)) continue;
+          const ki = (kl.match(/^[\t ]*/) || [''])[0]!.replace(/\t/g, '  ').length;
+          if (ki <= idIndent + 2) break;
+          lines[k] = ' '.repeat(ki - diff) + kl.trimStart();
+        }
+        changed = true;
+      }
+      break;
+    }
+  }
+  return changed ? lines.join('\n') : patch;
+}
+
+/**
+ * Collect the loader entry ids a bundle package declares through its own
+ * cordis.patch.yml (or the `dsh.bundle.patch` file its package.json points
+ * at). These are the ids the bundle itself mounts when loaded — an overlay
+ * row carrying any of them is a duplicate regardless of that row's package
+ * name. Returns a Set<string>; a missing/unparseable package contributes
+ * nothing.
+ */
+export function bundlePatchEntryIds(bundleDir: string | null | undefined): Set<string> {
+  const ids = new Set<string>();
+  if (!bundleDir) return ids;
+  try {
+    const pkgPath = path.join(bundleDir, 'package.json');
+    if (!fs.existsSync(pkgPath)) return ids;
+    // 局部显式 any（全文件第 1 处，共 1 处）：package.json 是外部动态数据，
+    // 为逐字节保留原 JS `pkg && pkg.dsh && pkg.dsh.bundle` 的短路取值语义
+    // （含 dsh 为 falsy 原始值等边角情况），这里显式 any 而非 unknown 窄化。
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as any;
+    const b = pkg && pkg.dsh && pkg.dsh.bundle;
+    let patchRel = 'cordis.patch.yml';
+    if (typeof b === 'string') patchRel = b;
+    else if (b && typeof b.patch === 'string') patchRel = b.patch;
+    const patch = fs.readFileSync(path.join(bundleDir, patchRel), 'utf8');
+    const idRe = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
+    let m: RegExpExecArray | null;
+    while ((m = idRe.exec(patch)) !== null) ids.add(m[1]!);
+  } catch { /* 包/补丁缺失或损坏 → 不贡献任何 id */ }
+  return ids;
+}
+
+/**
+ * Union of the declared entry ids across every profile bundle package. The
+ * sync pass uses this to (a) drop overlay rows that duplicate a bundle's own
+ * mount and (b) refuse to write those rows back — covering git/fork installs
+ * whose package name differs from the built-in companion's.
+ * @param bundleNames - profile `dsh.profile.bundles` list.
+ * @param profileNodeModules - `<profile>/node_modules`.
+ */
+export function collectBundleEntryIds(
+  bundleNames: string[] | null | undefined,
+  profileNodeModules: string,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const name of bundleNames || []) {
+    const dir = name
+      ? path.join(profileNodeModules, ...String(name).split('/'))
+      : '';
+    for (const id of bundlePatchEntryIds(dir)) ids.add(id);
+  }
+  return ids;
+}
+
+/**
+ * Remove insert-blocks for rows the profile already mounts through its
+ * package.json bundle list (`dsh.profile.bundles`, written by `dsh plugin
+ * add` — i.e. anything the user installed from the plugin market).
+ *
+ * A bundle listed there is loaded WITH its own packaged cordis.patch.yml,
+ * which mounts the row itself. When syncCompanionPlugins has also written an
+ * overlay row for the same plugin, the loader aborts the whole tree with
+ * `duplicate loader entry id: <id>` (dsh web exits 1 → "启动失败" crash
+ * loop). Dropping the overlay copy is safe: the bundle still mounts it.
+ *
+ * Two duplicate signals are honoured:
+ *  - name-based (legacy): a `rowIds` row whose package name appears in the
+ *    bundle list — matches npm/market installs where names line up;
+ *  - id-based: the row's entry id is declared by ANY bundle patch
+ *    (`bundleEntryIds`) — matches git/fork/link installs whose package name
+ *    differs from the overlay row's (issue #16).
+ *
+ * Returns { patch, removed }.
+ */
+export function removeBundledRowDuplicates(
+  patch: string,
+  // 值可为 null：guard.repair 传入 `ids[id] = ids[id] || null` 的「已见但无
+  // bundle entry id」形态；includes(null) 在原 JS 中恒为 false，语义一致。
+  rowIds: Record<string, string | null>,
+  bundleNames?: string[] | null,
+  bundleEntryIds?: Set<string> | null,
+): { patch: string; removed: (string | null)[] } {
+  const removed: (string | null)[] = [];
+  if (typeof patch !== 'string' || patch === ''
+    || (!bundleNames || !bundleNames.length) && (!bundleEntryIds || !bundleEntryIds.size)) {
+    return { patch, removed };
+  }
+  const declaredIds = bundleEntryIds && bundleEntryIds.size ? bundleEntryIds : new Set<string>();
+  const nameTargets = new Set(Object.entries(rowIds || {})
+    // 原 JS 允许值为 null：includes(null) 恒 false，运行时语义一致。
+    .filter(([, pkg]) => ((bundleNames || []) as Array<string | null>).includes(pkg))
+    .map(([id]) => id));
+  const isDup = (id: string | null): boolean => (id !== null && declaredIds.has(id)) || (id !== null && nameTargets.has(id));
+  const lines = patch.split(/\r?\n/);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (/^-\s*insert:/.test(line)) {
+      // Parse id + name from the block body (id must be the immediate next
+      // line to stay unambiguous).
+      let id: string | null = null;
+      const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
+      if (mid) id = mid[1]!;
+      if (isDup(id)) {
+        removed.push(id);
+        // Skip the block body: indented non-comment lines up to the next
+        // top-level key / block / comment / blank line.
+        let j = i + 1;
+        while (j < lines.length && !/^-\s*insert:/.test(lines[j]!) && /^#/.test(lines[j]!) === false && /^\s+\S/.test(lines[j]!)) j++;
+        i = j - 1;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  // Collapse the blank line an inner removed block may leave behind.
+  let text = out.join('\n').replace(/\n{3,}/g, '\n\n');
+  if (!text.endsWith('\n')) text += '\n';
+  return { patch: text, removed };
+}

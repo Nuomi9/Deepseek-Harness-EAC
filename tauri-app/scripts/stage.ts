@@ -1,0 +1,215 @@
+// stage.ts —— V-D 打包 staging（新代码一律 TS）。
+//
+// 产出 tauri-app/resources/{app,node,npm}，与运行期路径解析严格对应：
+//   · 打包后 appRoot = <resource>/app（paths.rs）
+//   · NODE_EXE       = appRoot/../node/node.exe（shell-host 打包布局）
+//   · NPM_CLI        = appRoot/../npm/bin/npm-cli.js
+//
+// app/ 内容：
+//   · package.json + 生产依赖闭包 node_modules（npm ls --omit=dev --all --parseable）
+//   · sidecar 运行时 JS 闭包（shell-host/desktop-core 及其全部本地依赖）
+//   · scripts/{koffi-preflight.cjs,plugin-manager-patch.js}
+//   · assets/**（插件/皮肤/preset —— 「万物皆插件」载体，原样拷贝零改动）
+//   · bundle-manifest.json（与 src/integrity.rs build_bundle_manifest 同口径：
+//     顶层包 + @scope 深度 2，键为完整包名，值为 {files: 计数}；符号链接计文件）
+//
+// 用法：node scripts/stage.ts （在 tauri-app/ 下；Node ≥24 原生跑 TS）
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const TAURI_APP = path.resolve(HERE, '..');
+const REPO_ROOT = path.resolve(TAURI_APP, '..');
+const RESOURCES = path.join(TAURI_APP, 'resources');
+const APP = path.join(RESOURCES, 'app');
+const NM_SRC = path.join(REPO_ROOT, 'node_modules');
+
+// sidecar 运行时 = TypeScript 编译产物（sidecar/dist 整树，含 shell-host 与
+// 全部 lib 模块）。构建顺序：npm run sidecar:build 先行，再跑本脚本。
+const SIDECAR_DIST = path.join(REPO_ROOT, 'sidecar', 'dist');
+// koffi 冒烟探针仍以独立 .cjs 脚本形态被 spawn（非 require）。
+const SCRIPTS_JS = ['koffi-preflight.cjs'];
+
+function rmrf(p) {
+  fs.rmSync(p, { recursive: true, force: true });
+}
+
+function copyFile(rel) {
+  const src = path.join(REPO_ROOT, rel);
+  const dst = path.join(APP, rel);
+  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  fs.copyFileSync(src, dst);
+}
+
+function copyTree(src, dst) {
+  fs.cpSync(src, dst, { recursive: true, dereference: true, force: true });
+}
+
+/// 与 integrity.rs count_files 同口径：目录递归计数，符号链接计为文件。
+function countFiles(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let n = 0;
+  for (const e of entries) {
+    if (e.isDirectory()) n += countFiles(path.join(dir, e.name));
+    else n += 1;
+  }
+  return n;
+}
+
+/// 与 integrity.rs build_bundle_manifest 同口径：顶层包 + @scope/* 深度 2。
+/// 键排序输出（Rust 端 BTreeMap 反序列化不敏感，但保证产物确定性便于比对）。
+function buildBundleManifest(nmRoot) {
+  const packages = {};
+  const top = fs.readdirSync(nmRoot, { withFileTypes: true });
+  const scopedChildren = [];
+  for (const e of top) {
+    if (!e.isDirectory() || e.isSymbolicLink()) continue;
+    const name = e.name;
+    if (name.startsWith('@')) {
+      scopedChildren.push([name, path.join(nmRoot, name)]);
+    } else {
+      packages[name] = { files: countFiles(path.join(nmRoot, name)) };
+    }
+  }
+  for (const [scope, scopeDir] of scopedChildren) {
+    for (const s of fs.readdirSync(scopeDir, { withFileTypes: true })) {
+      if (!s.isDirectory() || s.isSymbolicLink()) continue;
+      packages[`${scope}/${s.name}`] = { files: countFiles(path.join(scopeDir, s.name)) };
+    }
+  }
+  const sorted = {};
+  for (const k of Object.keys(packages).sort()) sorted[k] = packages[k];
+  return { version: 1, packages: sorted };
+}
+
+/// 自检：与 integrity.rs verify_bundle 同口径（缺失/骨架/文件数下降=失败）。
+function verifyStagedBundle(nmRoot, manifest) {
+  const problems = [];
+  for (const [name, meta] of Object.entries(manifest.packages)) {
+    const expected = meta.files;
+    const pkgDir = path.join(nmRoot, ...name.split('/'));
+    if (!fs.existsSync(pkgDir)) {
+      problems.push(`${name}: missing`);
+      continue;
+    }
+    if (!fs.existsSync(path.join(pkgDir, 'package.json'))) {
+      problems.push(`${name}: empty skeleton`);
+      continue;
+    }
+    const actual = countFiles(pkgDir);
+    if (actual < expected) problems.push(`${name}: files lost (${actual}<${expected})`);
+  }
+  return problems;
+}
+
+function productionClosure() {
+  const npmArgs = ['ls', '--omit=dev', '--all', '--parseable'];
+  // Windows 下 npm 是 .cmd（Node 因 CVE-2024-27980 禁止无 shell 直接 spawn），走 shell。
+  let out;
+  try {
+    out = execFileSync('npm', npmArgs, {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+      shell: process.platform === 'win32',
+    });
+  } catch (e) {
+    // npm ls 在缺依赖/越权树时退出码非 0，但 stdout 仍给出可达闭包；
+    // 只有完全拿不到输出才视为致命。
+    out = String(e.stdout || '');
+    if (!out.trim()) throw new Error(`npm ls 失败: ${e.stderr || e.message}`);
+  }
+  const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return lines.map((l) => path.resolve(l)).filter((p) => p.startsWith(NM_SRC + path.sep));
+}
+
+function dirSize(dir) {
+  let total = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) total += dirSize(p);
+    else {
+      try { total += fs.statSync(p).size; } catch { /* race */ }
+    }
+  }
+  return total;
+}
+
+function main() {
+  const t0 = Date.now();
+  console.log(`[stage] repoRoot=${REPO_ROOT}`);
+
+  // 0) 清空旧产物
+  rmrf(APP);
+  rmrf(path.join(RESOURCES, 'node'));
+  rmrf(path.join(RESOURCES, 'npm'));
+
+  // 1) 根 package.json + sidecar TS 编译产物 + koffi 探针脚本 + assets
+  copyFile('package.json');
+  if (!fs.existsSync(path.join(SIDECAR_DIST, 'shell-host.js'))) {
+    console.error('[stage] 缺少 sidecar/dist/shell-host.js —— 请先运行: npm --prefix tauri-app run sidecar:build');
+    process.exit(1);
+  }
+  copyTree(SIDECAR_DIST, path.join(APP, 'sidecar', 'dist'));
+  for (const f of SCRIPTS_JS) copyFile(path.join('scripts', f));
+  copyTree(path.join(REPO_ROOT, 'assets'), path.join(APP, 'assets'));
+  console.log('[stage] app: package.json + sidecar/dist 编译产物 + scripts + assets 完成');
+
+  // 2) 生产依赖闭包
+  const closure = productionClosure();
+  for (const pkgPath of closure) {
+    const rel = path.relative(REPO_ROOT, pkgPath);
+    const dst = path.join(APP, rel);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    copyTree(pkgPath, dst);
+  }
+  console.log(`[stage] app: node_modules 闭包 ${closure.length} 个包`);
+
+  // 3) bundle-manifest（对 staging 后的树生成）+ 同口径自检
+  const nmDst = path.join(APP, 'node_modules');
+  const manifest = buildBundleManifest(nmDst);
+  fs.writeFileSync(path.join(APP, 'bundle-manifest.json'), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+  const problems = verifyStagedBundle(nmDst, manifest);
+  if (problems.length) {
+    console.error('[stage] 完整性自检失败:');
+    for (const p of problems.slice(0, 20)) console.error('  ' + p);
+    process.exit(1);
+  }
+  console.log(`[stage] app: bundle-manifest.json（${Object.keys(manifest.packages).length} 个包）自检通过`);
+
+  // 4) 内置 node / npm 运行时
+  const vendNode = path.join(REPO_ROOT, 'vendor', 'node');
+  const vendNpm = path.join(REPO_ROOT, 'vendor', 'npm');
+  if (!fs.existsSync(path.join(vendNode, 'node.exe'))) {
+    console.error('[stage] 缺少 vendor/node/node.exe —— 请先运行: npm run fetch-node');
+    process.exit(1);
+  }
+  if (!fs.existsSync(path.join(vendNpm, 'bin', 'npm-cli.js'))) {
+    console.error('[stage] 缺少 vendor/npm/bin/npm-cli.js —— 请先运行: npm run fetch-npm');
+    process.exit(1);
+  }
+  copyTree(vendNode, path.join(RESOURCES, 'node'));
+  copyTree(vendNpm, path.join(RESOURCES, 'npm'));
+  console.log('[stage] node/npm 运行时完成');
+
+  const mb = (n) => `${(n / 1024 / 1024).toFixed(1)} MB`;
+  console.log(`[stage] app=${mb(dirSize(APP))} node=${mb(dirSize(path.join(RESOURCES, 'node')))} npm=${mb(dirSize(path.join(RESOURCES, 'npm')))}`);
+  console.log(`[stage] 完成，耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+}
+
+main();

@@ -109,10 +109,40 @@ function injectDshClosureExtras() {
   console.log('[patch-deps] 已注入 dsh 闭包：schemastery@^' + version);
 }
 
+// pnpm 黑窗补丁：内置 dsh CLI 的 plugin forwarder 用 spawnSync("pnpm", …, {shell: win32})
+// 但没带 windowsHide —— Windows 上经 cmd.exe 中介执行 pnpm.cmd 时，无控制台的
+// 桌面壳进程树（CREATE_NO_WINDOW 启动）每次调用都会新弹一个可见 cmd 黑窗；
+// `dsh plugin add` 内部多次调用 pnpm → 同时弹两个，pnpm 网络慢时窗口久挂，
+// 用户点 X 关窗即杀死 pnpm → "pnpm failed" 安装失败。加 windowsHide 即根除。
+const PNPM_HIDE_MARKER = 'windowsHide: true';
+const PNPM_SHELL_OLD = 'stdio: "inherit",\n\t\tshell: process.platform === "win32"\n\t});';
+const PNPM_SHELL_NEW = 'stdio: "inherit",\n\t\tshell: process.platform === "win32",\n\t\twindowsHide: true\n\t});';
+
+function patchDshPluginPnpmHide() {
+  const file = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'plugin-9h8shc4d.js');
+  if (!fs.existsSync(file)) {
+    console.log('[patch-deps] 内置 dsh plugin forwarder 不存在，跳过');
+    return;
+  }
+  let src = fs.readFileSync(file, 'utf8');
+  if (src.includes(PNPM_HIDE_MARKER)) {
+    console.log('[patch-deps] pnpm windowsHide 补丁已应用，跳过');
+    return;
+  }
+  if (!src.includes(PNPM_SHELL_OLD)) {
+    console.log('[patch-deps] dsh plugin forwarder 未匹配到 spawnSync 目标代码（上游版本可能已更新），跳过');
+    return;
+  }
+  src = src.replace(PNPM_SHELL_OLD, PNPM_SHELL_NEW);
+  fs.writeFileSync(file, src);
+  console.log('[patch-deps] 已补丁 dsh CLI：pnpm 调用 windowsHide，插件市场不再弹 cmd 黑窗');
+}
+
 function main() {
   patchPickerWorker();
   patchSettingsNavScroll();
   injectDshClosureExtras();
+  patchDshPluginPnpmHide();
 }
 
 main();

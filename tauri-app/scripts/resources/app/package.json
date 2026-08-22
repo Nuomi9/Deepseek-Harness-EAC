@@ -1,0 +1,16 @@
+{
+  "name": "dsh-desktop-tauri",
+  "private": true,
+  "version": "4.4.0",
+  "scripts": {
+    "build:inject": "node build-inject.mjs",
+    "tauri": "tauri",
+    "dev": "npm run build:inject && tauri dev",
+    "build": "npm run build:inject && node scripts/stage.ts && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.6",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

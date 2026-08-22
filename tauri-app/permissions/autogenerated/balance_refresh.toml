@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-balance-refresh"
+description = "Enables the balance_refresh command without any pre-configured scope."
+commands.allow = ["balance_refresh"]
+
+[[permission]]
+identifier = "deny-balance-refresh"
+description = "Denies the balance_refresh command without any pre-configured scope."
+commands.deny = ["balance_refresh"]

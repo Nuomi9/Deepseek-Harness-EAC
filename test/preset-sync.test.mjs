@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -178,16 +178,19 @@ test('ensureDefaultAgentPreset: BOM 与 CRLF 被保留', () => {
 
 // --- 打包完整性防回归 ---------------------------------------------------------
 
-test('内置 preset 目录完整：三个 preset 均带 preset.yml 与组合文件', () => {
+test('内置 preset 目录完整：v4Lite 三个 preset 均带 preset.yml 与组合文件', () => {
   const assetsRoot = join(root, 'assets', 'agent-presets');
-  for (const name of ['anchored-standard', 'router-standard', 'minimal-gitbash']) {
+  // v4Lite 精简后的内置清单（实验性 preset 已移除：minimal-gitbash/minimal-win/
+  // whoami/zero-anchored/warmupbetter*/v4-flash-godmode）。多一个少一个都红，
+  // 防止裁剪被合并悄悄带回或新 preset 漏登记。
+  for (const name of ['anchored-standard', 'router-spec', 'router-standard']) {
     const dir = join(assetsRoot, name);
     assert.ok(existsSync(join(dir, 'preset.yml')), name + ' 缺 preset.yml');
     const yml = readFileSync(join(dir, 'agent.cordis.yml'), 'utf8');
     assert.ok(yml.trim().length > 0, name + ' 的 agent.cordis.yml 为空');
   }
   // 组合文件引用的本地 .mjs 必须随包存在（loader 不容忍缺文件）
-  for (const name of ['anchored-standard', 'router-standard', 'minimal-gitbash']) {
+  for (const name of ['anchored-standard', 'router-spec', 'router-standard']) {
     const dir = join(assetsRoot, name);
     const yml = readFileSync(join(dir, 'agent.cordis.yml'), 'utf8');
     for (const m of yml.matchAll(/name:\s*'(\.\/[^']+)'/g)) {
@@ -196,9 +199,14 @@ test('内置 preset 目录完整：三个 preset 均带 preset.yml 与组合文�
   }
 });
 
-test('上游新增 preset 完整：目录自包含或引用的 ../_preset 共享件随包存在', () => {
+test('每个 preset 目录自包含：引用的 ./ 或 ../_preset 共享件随包存在', () => {
   const assetsRoot = join(root, 'assets', 'agent-presets');
-  const upstream = ['minimal-win', 'whoami-standard', 'zero-anchored-standard', 'warmupbetter', 'warmupbetter-replay', 'v4-flash-godmode-opencode-go'];
+  // 结构不变式（与具体清单无关）：任何 preset 目录引用的本地 .mjs / _preset
+  // 共享件都必须随包存在，否则 loader 运行期才炸。清单本身由上一条测试钉住。
+  const upstream = readdirSync(assetsRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== '_preset')
+    .map((e) => e.name);
+  assert.ok(upstream.length > 0, 'assets/agent-presets 下没有任何 preset');
   for (const name of upstream) {
     const dir = join(assetsRoot, name);
     assert.ok(existsSync(join(dir, 'preset.yml')), name + ' 缺 preset.yml（未从上游同步）');

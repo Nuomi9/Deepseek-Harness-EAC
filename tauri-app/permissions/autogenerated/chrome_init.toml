@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chrome-init"
+description = "Enables the chrome_init command without any pre-configured scope."
+commands.allow = ["chrome_init"]
+
+[[permission]]
+identifier = "deny-chrome-init"
+description = "Denies the chrome_init command without any pre-configured scope."
+commands.deny = ["chrome_init"]

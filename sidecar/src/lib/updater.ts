@@ -1,0 +1,467 @@
+// Self-update engine for the bundled @deepseek-ai/dsh agent.
+// 忠实移植自仓库根 updater.js（流程与镜像源链设计见原文件头注释）。
+//
+// The overlay lives in the user-writable data dir, so updates work for the
+// NSIS install AND the portable build (whose unpacked resources are
+// re-created from the exe on every launch).
+
+import { spawn, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
+
+export const PKG = '@deepseek-ai/dsh';
+const IS_WIN = process.platform === 'win32';
+
+// 镜像源链：默认源（用户 .npmrc / NPM_CONFIG_REGISTRY）卡住或失败时依次
+// 自动切换。切换与结果都会经 onProgress 上报给更新弹窗提示。
+export const NPM_MIRRORS = ['https://registry.npmmirror.com', 'https://registry.npmjs.org'];
+// 单个 npm 命令「无任何输出」的停滞上限：超过即判死并切换镜像源
+//（npm 解析依赖时可能长时间静默，阈值取 150 秒）。
+const NPM_STALL_MS = 150 * 1000;
+
+let activeProc: ChildProcess | null = null;
+
+// --- ctx ------------------------------------------------------------------
+
+export interface UpdaterCtx {
+  userDataDir: string;
+  nodeExe: () => string;
+  npmCli: () => string;
+  log: (tag: string, msg: string) => void;
+}
+
+type AnyRecord = Record<string, any>; // settings.json 动态形态，保持原 JS 宽容读写
+
+// --- settings -------------------------------------------------------------
+
+export function settingsPath(ctx: UpdaterCtx): string {
+  return path.join(ctx.userDataDir, 'settings.json');
+}
+
+export function loadSettings(ctx: UpdaterCtx): AnyRecord {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath(ctx), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+export function saveSettings(ctx: UpdaterCtx, s: AnyRecord): void {
+  try {
+    fs.writeFileSync(settingsPath(ctx), JSON.stringify(s, null, 2) + '\n');
+  } catch (err) {
+    ctx.log('update', '保存 settings 失败: ' + (err instanceof Error ? err.message : String(err)));
+  }
+}
+
+// --- overlay paths --------------------------------------------------------
+
+export function overlayDir(ctx: UpdaterCtx): string {
+  return path.join(ctx.userDataDir, 'agent');
+}
+export function stagingDir(ctx: UpdaterCtx): string {
+  return path.join(ctx.userDataDir, 'agent-staging');
+}
+
+export function overlayBinPath(ctx: UpdaterCtx): string {
+  return path.join(overlayDir(ctx), 'node_modules', PKG, 'lib', 'bin.js');
+}
+
+export function overlayVersion(ctx: UpdaterCtx): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- 运行时动态解析
+    return require(path.join(overlayDir(ctx), 'node_modules', PKG, 'package.json')).version;
+  } catch {
+    return null;
+  }
+}
+
+export function bundledVersion(): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires -- 运行时动态解析
+    return require(PKG + '/package.json').version;
+  } catch {
+    return null;
+  }
+}
+
+export function activeVersion(ctx: UpdaterCtx): string | null {
+  return overlayVersion(ctx) || bundledVersion();
+}
+
+// --- semver-ish compare (handles 0.1.0-rc.N style prereleases) -------------
+
+export function compareVersions(a: string, b: string): number {
+  const parse = (v: string): { nums: number[]; pre: string; preNum: number; hasPre: boolean } => {
+    const [core = '', pre = ''] = String(v).split('-');
+    const nums = core.split('.').map((s) => parseInt(s, 10) || 0);
+    const preNum = parseInt((pre.match(/\d+/) || [''])[0] as string, 10);
+    return { nums, pre, preNum: Number.isNaN(preNum) ? -1 : preNum, hasPre: !!pre };
+  };
+  const A = parse(a);
+  const B = parse(b);
+  for (let i = 0; i < 3; i++) {
+    if ((A.nums[i] as number) !== (B.nums[i] as number)) return (A.nums[i] as number) - (B.nums[i] as number);
+  }
+  if (A.hasPre !== B.hasPre) return A.hasPre ? -1 : 1; // prerelease < release
+  if (A.hasPre && A.pre !== B.pre) {
+    if (A.preNum >= 0 && B.preNum >= 0 && A.preNum !== B.preNum) return A.preNum - B.preNum;
+    return A.pre < B.pre ? -1 : A.pre > B.pre ? 1 : 0;
+  }
+  return 0;
+}
+
+// --- npm runner -----------------------------------------------------------
+
+function killProc(proc: ChildProcess | null): void {
+  if (!proc || !proc.pid) return;
+  try {
+    if (IS_WIN) spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    else proc.kill('SIGTERM');
+  } catch {
+    /* ignore */
+  }
+}
+
+export function abort(): void {
+  killProc(activeProc);
+  activeProc = null;
+}
+
+export interface RunNpmOpts {
+  timeoutMs?: number;
+  logStream?: { write: (c: unknown) => void } | null;
+  onOutput?: ((c: unknown) => void) | null;
+  stallMs?: number;
+}
+
+export function runNpm(ctx: UpdaterCtx, args: string[], { timeoutMs = 30 * 60 * 1000, logStream = null, onOutput = null, stallMs = 0 }: RunNpmOpts = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const nodeBin = ctx.nodeExe();
+    const cli = ctx.npmCli();
+    if (!fs.existsSync(nodeBin) || !fs.existsSync(cli)) {
+      return reject(new Error('内置 Node/npm 运行时缺失，无法检查或执行更新。'));
+    }
+    ctx.log('update', 'npm ' + args.join(' '));
+    try {
+      fs.mkdirSync(ctx.userDataDir, { recursive: true });
+    } catch {
+      /* 已存在 */
+    }
+    const proc = spawn(nodeBin, [cli, ...args], {
+      cwd: ctx.userDataDir,
+      env: {
+        ...process.env,
+        NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+        NPM_CONFIG_FUND: 'false',
+        NPM_CONFIG_AUDIT: 'false',
+      },
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    activeProc = proc;
+    let settled = false;
+    let stdoutBuf = '';
+    const finish = (fn: (v: unknown) => void, value: unknown): void => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(stallTimer);
+        activeProc = null;
+        fn(value);
+      }
+    };
+    const timer = setTimeout(() => {
+      killProc(proc);
+      finish(reject as (v: unknown) => void, new Error('npm 执行超时（' + Math.round(timeoutMs / 1000) + ' 秒）'));
+    }, timeoutMs);
+    // 停滞检测：stallMs > 0 时，超过阈值没有产生任何输出即判死（触发
+    // 调用方切换镜像源），避免「卡住但没到整体超时」的长时间空转。
+    let stallTimer: NodeJS.Timeout | undefined = undefined;
+    const armStall = (): void => {
+      if (!stallMs) return;
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        killProc(proc);
+        finish(reject as (v: unknown) => void, new Error('下载停滞（' + Math.round(stallMs / 1000) + ' 秒无进展），将切换镜像源重试'));
+      }, stallMs);
+    };
+    const onChunk = (c: unknown): void => {
+      armStall();
+      if (logStream) logStream.write(c);
+      if (onOutput) {
+        try { onOutput(c); } catch { /* ignore */ }
+      }
+    };
+    armStall();
+    let stderrBuf = '';
+    proc.stdout!.on('data', (c: unknown) => {
+      stdoutBuf += String(c);
+      onChunk(c);
+    });
+    proc.stderr!.on('data', (c: unknown) => {
+      stderrBuf += String(c);
+      onChunk(c);
+    });
+    proc.on('error', (err) => finish(reject as (v: unknown) => void, err));
+    proc.on('exit', (code) => {
+      if (code === 0) finish(resolve as (v: unknown) => void, stdoutBuf);
+      else {
+        const tail = (stderrBuf + stdoutBuf)
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .slice(-6)
+          .join(' | ');
+        finish(reject as (v: unknown) => void, new Error('npm 退出码 ' + code + (tail ? '：' + tail.slice(-500) : '')));
+      }
+    });
+  });
+}
+
+/// 当前生效的 registry（.npmrc / NPM_CONFIG_REGISTRY），供镜像源链去重与提示。
+export async function currentRegistry(ctx: UpdaterCtx): Promise<string | null> {
+  try {
+    const out = await runNpm(ctx, ['config', 'get', 'registry'], { timeoutMs: 30000 });
+    const v = String(out || '').trim().replace(/\/+$/, '');
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+/// 拼接镜像源尝试链：默认源（尊重用户配置）优先，失败/停滞时依次切镜像。
+export function registryChain(current: string | null): string[] {
+  const seen = new Set<string>();
+  const chain: string[] = [];
+  const push = (r: string | null): void => {
+    if (!r) return;
+    const norm = r.replace(/\/+$/, '');
+    const key = norm.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      chain.push(norm);
+    }
+  };
+  push(current);
+  for (const m of NPM_MIRRORS) push(m);
+  return chain;
+}
+
+// --- public API -----------------------------------------------------------
+
+export async function checkLatest(ctx: UpdaterCtx): Promise<string> {
+  // 主源查不到/超时后自动试镜像源（更新弹窗外静默执行，失败不打扰用户）。
+  const chain = registryChain(await currentRegistry(ctx));
+  const errors: string[] = [];
+  for (const registry of chain) {
+    const args = ['view', PKG, 'version'];
+    if (registry) args.push('--registry=' + registry);
+    try {
+      const out = await runNpm(ctx, args, { timeoutMs: 90000 });
+      const lines = out.trim().split(/\r?\n/).filter(Boolean);
+      const v = (lines[lines.length - 1] as string).trim();
+      if (!/^\d+\.\d+\.\d+/.test(v)) throw new Error('无法解析官方版本号: ' + JSON.stringify(v));
+      if (registry) ctx.log('update', '版本检查成功（镜像源 ' + registry + '）');
+      return v;
+    } catch (err) {
+      errors.push((registry || '默认源') + ': ' + (err instanceof Error ? err.message : String(err)));
+    }
+  }
+  throw new Error('无法获取官方版本号（' + errors.join('；') + '）');
+}
+
+export function previousAgentDir(ctx: UpdaterCtx): string {
+  return path.join(ctx.userDataDir, 'agent-previous');
+}
+
+/// 上一版本备份是否可用（供启动失败对话框选择「回退到上一版本」）。
+export function previousAgentInfo(ctx: UpdaterCtx): AnyRecord | null {
+  const settings = loadSettings(ctx);
+  if (!settings.previousAgent || !(settings.previousAgent as AnyRecord).version) return null;
+  if (!fs.existsSync(previousAgentDir(ctx))) return null;
+  return settings.previousAgent as AnyRecord;
+}
+
+export interface ApplyProgress {
+  stage: 'fetch' | 'install' | 'done' | 'mirror';
+  count?: number;
+  elapsed?: string;
+  registry?: string | null;
+}
+
+export interface ApplyUpdateOpts {
+  onProgress?: ((p: ApplyProgress) => void) | null;
+  stallMs?: number;
+}
+
+/// 安装阶段进度上报载荷：
+///   { stage: 'fetch', count, elapsed, registry } —— 下载依赖中
+///   { stage: 'install', registry }               —— 进入解包安装阶段
+///   { stage: 'done' }                            —— npm 安装成功
+///   { stage: 'mirror', registry }                —— 源停滞/失败已切镜像
+export async function applyUpdate(ctx: UpdaterCtx, version: string, { onProgress = null, stallMs = NPM_STALL_MS }: ApplyUpdateOpts = {}): Promise<{ version: string; logPath: string }> {
+  const staging = stagingDir(ctx);
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: true });
+  const logPath = path.join(ctx.userDataDir, 'logs', 'update.log');
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+
+  const chain = registryChain(await currentRegistry(ctx));
+  const errors: string[] = [];
+  let installErr: Error | null = null;
+  const started = Date.now();
+  const fmt = (ms: number): string => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
+  };
+  for (let i = 0; i < chain.length; i++) {
+    const registry = chain[i] as string;
+    if (i > 0 && onProgress) {
+      try { onProgress({ stage: 'mirror', registry }); } catch { /* ignore */ }
+      ctx.log('update', '下载源 ' + registry + ' 不可用，自动切换镜像源 ' + (chain[i] || '默认源'));
+    }
+    // npm 安装进度解析：--loglevel=info 会输出 "npm http fetch GET 200 …" 行
+    //（每个包/元数据一次）与 reify 阶段行；按此上报实时进度与阶段。
+    let fetchCount = 0;
+    let sawReify = false;
+    let sawAdded = false;
+    let lastPush = 0;
+    const push = (force: boolean): void => {
+      const now = Date.now();
+      if (!force && now - lastPush < 500) return;
+      lastPush = now;
+      if (!onProgress) return;
+      try {
+        onProgress(sawAdded ? { stage: 'done' } : { stage: sawReify ? 'install' : 'fetch', count: fetchCount, elapsed: fmt(now - started), registry });
+      } catch { /* ignore */ }
+    };
+    const onOutput = (chunk: unknown): void => {
+      const text = String(chunk);
+      if (text.includes('http fetch GET 200') || /fetch\s+GET\s+200/i.test(text)) fetchCount++;
+      if (/reify:/i.test(text)) sawReify = true;
+      if (/added\s+\d+\s+packages\s+in/i.test(text)) sawAdded = true;
+      push(false);
+    };
+    try {
+      const args = [
+        'install', '--prefix', staging, PKG + '@' + version,
+        '--save-exact', '--omit=dev', '--no-audit', '--no-fund', '--no-update-notifier',
+        '--loglevel=info',
+      ];
+      if (registry) args.push('--registry=' + registry);
+      await runNpm(ctx, args, { timeoutMs: 30 * 60 * 1000, logStream, onOutput, stallMs });
+      if (onProgress) {
+        try { onProgress({ stage: 'done' }); } catch { /* ignore */ }
+      }
+      installErr = null;
+      break;
+    } catch (err) {
+      installErr = err instanceof Error ? err : new Error(String(err));
+      errors.push((registry || '默认源') + ': ' + (err instanceof Error ? err.message : String(err)));
+      ctx.log('update', '下载失败（' + (registry || '默认源') + '）: ' + (err instanceof Error ? err.message : String(err)));
+      if (i === chain.length - 1 && onProgress) {
+        try { onProgress({ stage: 'mirror', registry: null }); } catch { /* ignore */ }
+      }
+    }
+  }
+  logStream.end();
+  if (installErr) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw new Error(installErr.message + '（已尝试镜像源：' + errors.join('；') + '；日志: ' + logPath + '）');
+  }
+
+  const bin = path.join(staging, 'node_modules', PKG, 'lib', 'bin.js');
+  if (!fs.existsSync(bin)) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw new Error('安装完成但未找到 dsh 入口文件（日志: ' + logPath + '）');
+  }
+
+  // Atomic swap: old overlay -> backup, staging -> overlay.
+  // M4 修复：两处重命名都纳入 try，失败时回滚并清理 staging 残留。
+  // V4.1 更新保障②：备份不再立即删除 —— 换名保留为 agent-previous，
+  // 直到下次启动确认新版健康（confirmPreviousAgentHealthy）才清理，
+  // 启动失败时用户可一键回退到上一版本。
+  const overlay = overlayDir(ctx);
+  const backup = path.join(ctx.userDataDir, 'agent-old-' + Date.now());
+  try {
+    if (fs.existsSync(overlay)) fs.renameSync(overlay, backup);
+    fs.renameSync(staging, overlay);
+  } catch (err) {
+    try {
+      if (!fs.existsSync(overlay) && fs.existsSync(backup)) fs.renameSync(backup, overlay);
+    } catch (rollbackErr) {
+      ctx.log('update', '回滚 overlay 失败: ' + String(rollbackErr instanceof Error ? rollbackErr.message : rollbackErr));
+    }
+    fs.rmSync(staging, { recursive: true, force: true });
+    throw new Error('切换新版本失败: ' + ((err instanceof Error && err.message) || err) + '（staging 已清理）');
+  }
+  // 上一份残留备份（上次更新后既未确认健康也未回退）已过时，直接清除，
+  // 新备份以固定名保留。
+  const prevDir = previousAgentDir(ctx);
+  if (fs.existsSync(prevDir)) fs.rmSync(prevDir, { recursive: true, force: true });
+  if (fs.existsSync(backup)) {
+    try {
+      fs.renameSync(backup, prevDir);
+    } catch (err) {
+      ctx.log('update', '保留上一版本备份失败: ' + (err instanceof Error ? err.message : String(err)));
+      fs.rmSync(backup, { recursive: true, force: true });
+    }
+  }
+
+  const settings = loadSettings(ctx);
+  settings.previousAgent = { version, dir: 'agent-previous', at: new Date().toISOString() };
+  settings.skipVersion = null;
+  saveSettings(ctx, settings);
+  ctx.log('update', '更新完成: ' + PKG + '@' + version + '（上一版本备份保留至确认健康）');
+  return { version, logPath };
+}
+
+/// 下次启动确认新版健康后调用：清理 agent-previous 备份。
+export function confirmPreviousAgentHealthy(ctx: UpdaterCtx): boolean {
+  const settings = loadSettings(ctx);
+  if (!settings.previousAgent) return false;
+  const prevDir = previousAgentDir(ctx);
+  try {
+    if (fs.existsSync(prevDir)) fs.rmSync(prevDir, { recursive: true, force: true, maxRetries: 3 });
+    settings.previousAgent = null;
+    saveSettings(ctx, settings);
+    ctx.log('update', '新版启动确认健康，已清理上一版本备份');
+    return true;
+  } catch (err) {
+    ctx.log('update', '清理上一版本备份失败: ' + (err instanceof Error ? err.message : String(err)));
+    return false;
+  }
+}
+
+/// 启动失败时手动回退到上一版本：当前 overlay 移为 agent-broken-*，
+/// agent-previous 还原为 overlay。
+export function rollbackToPrevious(ctx: UpdaterCtx): string | null {
+  const settings = loadSettings(ctx);
+  const prevDir = previousAgentDir(ctx);
+  const overlay = overlayDir(ctx);
+  const prev = settings.previousAgent as AnyRecord | null;
+  if (!prev || !fs.existsSync(prevDir)) return null;
+  try {
+    if (fs.existsSync(overlay)) {
+      fs.renameSync(overlay, path.join(ctx.userDataDir, 'agent-broken-' + Date.now()));
+    }
+    fs.renameSync(prevDir, overlay);
+    settings.previousAgent = null;
+    saveSettings(ctx, settings);
+    ctx.log('update', '已回退到上一版本 ' + prev.version + '（坏副本保留在 agent-broken-*）');
+    return prev.version as string;
+  } catch (err) {
+    ctx.log('update', '回退到上一版本失败: ' + (err instanceof Error ? err.message : String(err)));
+    return null;
+  }
+}
+
+export function rollback(ctx: UpdaterCtx): string | null {
+  const overlay = overlayDir(ctx);
+  if (!fs.existsSync(overlay)) return null;
+  const broken = path.join(ctx.userDataDir, 'agent-broken-' + Date.now());
+  fs.renameSync(overlay, broken);
+  ctx.log('update', '已回退到内置版本（问题副本保留在 ' + broken + '）');
+  return broken;
+}
