@@ -88,9 +88,9 @@ export function removeMarketDuplicate(profileDir: string, builtinName: string, o
   let changed = false;
   try {
     const pkgFile = path.join(profileDir, 'package.json');
+    let dirty = false;
     if (fs.existsSync(pkgFile)) {
       const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8')) as ProfilePackage;
-      let dirty = false;
       if (pkg.dependencies && Object.prototype.hasOwnProperty.call(pkg.dependencies, builtinName)) {
         const spec = String(pkg.dependencies[builtinName] || '');
         // 用户自建 link:/file: 本地链接保留（fork/开发目录），只清市场版。
@@ -112,8 +112,10 @@ export function removeMarketDuplicate(profileDir: string, builtinName: string, o
         log(`移除市场版依赖残留 ${builtinName}（package.json）`);
       }
     }
+    // 仅当确实移除了市场依赖/捆绑时才剥 patch 行：否则会把上一轮同步
+    // 自己写回的内置行当成「市场残留」反复剥掉重写，导致接管通知每次启动都弹。
     const patchFile = path.join(profileDir, 'cordis.patch.yml');
-    if (fs.existsSync(patchFile)) {
+    if (dirty && fs.existsSync(patchFile)) {
       const patch = fs.readFileSync(patchFile, 'utf8');
       const { patch: patched, removed } = stripPatchRows(patch, builtinName, builtinName.split('/').pop() ?? '');
       if (removed.length) {

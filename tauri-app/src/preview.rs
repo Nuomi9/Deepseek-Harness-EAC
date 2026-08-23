@@ -4,7 +4,7 @@
 
 use std::io::Read;
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU16, Ordering};
 
 pub static PREVIEW_PORT: AtomicU16 = AtomicU16::new(0);
@@ -198,9 +198,6 @@ fn respond(stream: &mut std::net::TcpStream, code: u16, headers: &[(&str, &str)]
     let _ = stream.write_all(body);
     let _ = stream.flush();
 }
-
-#[allow(dead_code)]
-fn unused_path_helper(_p: &Path) {}
 
 #[cfg(test)]
 mod tests {

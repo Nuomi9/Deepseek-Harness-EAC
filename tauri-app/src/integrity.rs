@@ -6,6 +6,16 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// FNV-1a 64 位哈希（无外部依赖），用于 bundle-manifest 内容指纹。
+pub fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// 递归统计目录下文件数（符号链接计为文件）。
 pub fn count_files(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else {

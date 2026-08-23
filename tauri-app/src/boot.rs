@@ -13,8 +13,8 @@ use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-/// 创建主窗：无边框、隐藏启动、加载本地 loading 页，注入 chrome 脚本，
-/// 挂导航锁定与页面加载跟踪。
+/// 创建主窗：无边框、立即显示加载本地 loading 页（提供秒开反馈，随后导航到
+/// Web UI），注入 chrome 脚本，挂导航锁定与页面加载跟踪。
 pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let state: Arc<AppState> = app.state::<Arc<AppState>>().inner().clone();
     let state_for_load = state.clone();
@@ -30,7 +30,7 @@ pub fn create_main_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     .title("Deepseek Harness EAC")
     .inner_size(1400.0, 900.0)
     .min_inner_size(960.0, 640.0)
-    .visible(false)
+    .visible(true)
     .decorations(false);
     builder = builder.initialization_script(include_str!("inject/chrome.js"));
     if let Some(script) = ve_script {
@@ -967,9 +967,12 @@ fn boot_chain(state: &Arc<AppState>) {
     );
 
     // 看门狗 + 运行状态标记（安装版）：意外崩溃后自动拉起并告知用户。
+    // 先读上次运行状态（write_run_state 会覆盖 pid/cleanExit，必须先读），
+    // 据此决定是否清扫孤儿进程。
+    let unclean_prev = crate::watchdog::detect_unclean_previous_run(&paths.run_state_file(), std::process::id());
     crate::watchdog::write_run_state(&paths.run_state_file(), std::process::id(), &paths.version, None);
     start_watchdog(state);
-    if let Some(prev) = crate::watchdog::detect_unclean_previous_run(&paths.run_state_file(), std::process::id()) {
+    if let Some(prev) = &unclean_prev {
         let started = prev
             .get("startedAt")
             .and_then(|v| v.as_str())
@@ -984,7 +987,11 @@ fn boot_chain(state: &Arc<AppState>) {
     }
 
     // sidecar：插件生态编排（复用全部现有 JS 模块）。
-    sweep_orphaned_runtime(state);
+    // 孤儿清扫仅在「上次非正常退出」时执行：正常退出已回收 dsh web/sidecar，
+    // 无孤儿可清；此处省掉每次启动的 PowerShell CIM 查询（约 2s+）。
+    if unclean_prev.is_some() {
+        sweep_orphaned_runtime(state);
+    }
     let sc = match crate::sidecar::Sidecar::spawn(paths, &state.log) {
         Ok((s, rx)) => {
             let _ = state.sidecar.set(s.clone());
@@ -1037,13 +1044,16 @@ fn boot_chain(state: &Arc<AppState>) {
         Err(e) => state.log.log("preflight", &format!("koffi 预检执行失败（忽略）: {}", e)),
     }
 
-    // junction 归属守卫：先纠偏一次 + 周期巡检（5 分钟）。
-    junction_tick(state);
+    // junction 归属守卫：首次纠偏 + 周期巡检（5 分钟）都放后台线程，
+    // 不阻塞主启动链路（内部 PowerShell 探测约 0.3s+）。
     {
         let st = state.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(5 * 60));
+        std::thread::spawn(move || {
             junction_tick(&st);
+            loop {
+                std::thread::sleep(Duration::from_secs(5 * 60));
+                junction_tick(&st);
+            }
         });
     }
 
@@ -1106,8 +1116,22 @@ fn verify_bundled_modules(state: &Arc<AppState>) -> bool {
     let Ok(manifest) = serde_json::from_str::<Value>(&text) else {
         return true;
     };
+    // 缓存：manifest 内容未变（仅首次/重装/升级会变）则跳过全量遍历，
+    // 避免每次启动都递归数 600+ 个包的 node_modules。
+    let hash = format!("{:016x}", crate::integrity::fnv1a64(text.as_bytes()));
+    let cache_path = state.paths.user_data.join("bundle-verified.json");
+    if let Some(prev) = std::fs::read_to_string(&cache_path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+    {
+        if prev.get("hash").and_then(|v| v.as_str()) == Some(hash.as_str()) {
+            return true;
+        }
+    }
     let r = crate::integrity::verify_bundle(&state.paths.app_root.join("node_modules"), Some(&manifest));
     if r.skipped || r.ok {
+        // 校验通过才写缓存；受损或跳过不写，下次仍会重检。
+        let _ = std::fs::write(&cache_path, serde_json::json!({ "hash": hash }).to_string());
         return true;
     }
     let sample: Vec<String> = r.damaged.iter().take(5).map(|d| format!("{}（{}）", d.name, d.reason)).collect();
