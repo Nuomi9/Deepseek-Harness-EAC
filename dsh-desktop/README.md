@@ -20,21 +20,21 @@
 - ✅ **微信 ClawBot / OpenClaw 桥（v4）**：设置页「ClawBot」栏扫码绑定微信官方 ClawBot 小程序，微信里直接驱动常驻 DSH 会话（每用户独立会话/工作区/白名单）；OpenAI 兼容端点供 OpenClaw 网关接入
 - ✅ **会话完成系统通知**：agent 任务跑完时弹 Windows 系统通知，点击回到窗口
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 10 款 Web UI 皮肤（9 款 dsh-web-ui 皮肤 + 1 款深海女仆工坊），互斥切换、默认不启用、重启生效；随包标注出处与许可（详见「界面皮肤」章节）
-- ✅ **内置社区插件套件**（v2.0 起，详见「内置社区插件」章节）：插件市场 / 外置视觉模型 / 长期记忆 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
+- ✅ **内置社区插件套件**（v2.0 起，详见「内置社区插件」章节）：插件市场 / 全能读图读文档 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
 - ✅ **崩溃急救与撤销（v4，dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
 - ✅ **插件启停管理（v4）**：设置页「插件 → 管理」不重启切换任意插件启停（含默认禁用的大肥鱼桌宠）
 - ✅ **一键迁移（一键夺舍）**：设置页选择任意已有 AI 工具目录（如 Codex / Claude 安装目录）→ 自动新建工作区与对话 → 发送迁移指令，AI 在对话中全程可视化提取 skills / MCP 配置 / 长期记忆
 - ✅ **错误日志一键复制（v4.1）**：启动失败 / DSH 服务停止的报错弹窗带「复制日志」按钮，一键复制完整诊断信息（错误、堆栈、日志目录、最近日志尾部）供反馈
 - ✅ **应用内反馈入口（v4.1）**：⋯ 菜单与托盘「反馈建议…」直达 GitHub Issues，关于弹窗附交流群号
-- ✅ **拖文件/文件夹进对话（dsh-file-drop-eac，取代 dsh-file-drop）**：把本地文件/文件夹直接拖进对话输入框 —— 文本/代码自动注入（上限 256KB，带文件名头）；.sql / 二进制 / 超大文件只注入完整路径提示让 agent 按路径读取；文件夹识别 + 降级提示；图片不接管（交给内置图片入口/缩略图，避免重复注入）
+- ✅ **拖文件进对话（v4.1，dsh-file-drop）**：把本地文件直接拖进对话输入框 —— 文本/代码自动注入（上限 256KB，带文件名头）；图片注入路径配合 inspect_image 让 agent 看图；二进制/超大文件注入路径提示
 - ✅ **设置页边栏自定义（v4.1，dsh-settings-nav-custom）**：设置面板左侧导航底部「自定义边栏」，按需显示/隐藏与排序导航项，localStorage 持久化，默认全显
 - ✅ **更新保障（v4.1）**：更新前强制插件/配置快照（失败中止更新）；官方 dsh 更新后上一版本备份保留到下次启动确认健康，启动失败可一键「回退到上一版本」；便携版客户端更新后若新版崩溃自动回退上一版；更新完成弹窗明示插件/皮肤/会话全部保留
 
 ## 快速开始（成品用户）
 
 1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，选其一（链接永久有效，始终指向最新版）：
-   - [Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) —— 免安装便携版，双击运行
-   - [Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) —— 安装版，创建桌面/开始菜单快捷方式
+   - [Deepseek-Harness-EAC-Portable-v5.0.0-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v5.0.0-x64.exe) —— 免安装便携版，双击运行
+   - [Deepseek-Harness-EAC-Setup-v5.0.0-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v5.0.0-x64.exe) —— 安装版，创建桌面/开始菜单快捷方式
 2. 首次运行会显示启动动画，随后进入 DeepSeek Harness Web UI。
 3. 如尚未配置 API Key，在界面内完成配置即可开始使用（与命令行 dsh 完全一致）。
 
@@ -134,17 +134,16 @@
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
-| `dsh-unified-market` | 统一插件市场：三源合一（awesome-dsh-plugin.com 精选目录 + GitHub `dsh-plugin` 生态 + npm 检索），安装走试装验证 + 冲突预检；已下载插件更新面板（一键全部/逐个更新）、自动更新三档、更新进度窗口、市场自更新 | 设置 → 插件 → 统一市场 |
+| `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测）；目录中已被客户端内置的插件显示「已内置」徽标并拒绝重复安装 | 设置 → 插件 → 插件市场 |
+| `zat-dsh-engine` | 第二插件市场（Zat 可视化市场）：GitHub `dsh-plugin` topic 检索、中文插件简介、国内镜像兜底 | 设置 → 插件 → Zat 标签页 |
 | `dsh-plugin-manager`（v4） | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停 | 设置 → 插件 → 管理 |
 | `dsh-message-rewind` | 对话回退（Trae 风格）：悬停任意用户消息 →「编辑并回退」→ 从该消息之前分叉新会话并自动重发编辑后内容，原会话保留 | 对话界面（消息 hover 按钮） |
 | `dsh-dock-settings` | Skills 与 MCP 管理：技能目录浏览（EAC 内置/用户来源徽标、打开目录）+ MCP 服务增删改（stdio / streamable-http），保存后一键重启生效 | 设置 → Skills 与 MCP |
 | `dsh-pet` | 桌面宠物：28 个透明动画的悬浮宠物，空闲呼吸、随机动作、屏幕游走 | 随包自动启用 |
 | `dsh-dafeiyu`（v4） | 大肥鱼桌宠：真实会话状态驱动的原生置顶窗口（六态动画 + 项目状态卡 + 摸头/戳一戳；角色素材按 ASSET_LICENSE 分发） | 默认禁用，「插件 → 管理」启用 |
 | `picturereader` | 全能读图/读文档：视觉孪生 adapter（原生缩略图 + 粘贴即用自动分析，opencode 等 pi-ai provider 也可用，杜绝 UNSUPPORTED_CONTENT）；隐私/智能/严谨三模式；本地工具链（像素扫描/3 引擎 OCR/裁剪/取色/对比/批量）；pdf/word/excel/ppt 转图片；可选外部 VLM 桥（OpenAI 兼容端点） | 设置 → 图片阅读 |
-| `computer-user` | 读屏 + 鼠标键盘自动化（Codex-style computer use）：截图读出屏幕、点击/输入/按键/滚动/拖拽/移动鼠标/读光标；配 picturereader 让纯文本模型驱动桌面；纯本地（PowerShell + Win32 SendInput，不调外部 API）；四模式（禁用/只读/手动批准/自动） | 设置 → 电脑操作 |
 | `dsh-soul-md` | soul.md 人设卡：可视化编辑人设，热重载即时生效；未配置时注册空 section，**完全不影响官方系统提示词** | 设置 → 人设卡 |
 | `dsh-web-mobile-fix` | Web UI 移动端适配修复 | 随包自动启用 |
-| `dsh-settings-scroll-fix` | 设置面板滚轮与溢出滚动修复；使用语义识别和实际尺寸检测，不依赖易变化的 CSS 哈希类名 | 随包自动启用 |
 | `dsh-easy-setup` | 一键迁移（一键夺舍）：选择目录 → 新建工作区与对话 → AI 全程可视化迁移 skills / MCP / 记忆 | 设置 → 一键迁移 |
 | `dsh-change-review`（v4） | AI 变更审核：监控本会话文件改动，手动/自动让模型复查自己刚做的改动（正确性/安全性/目标一致性），配合「文件」页一键还原 | 设置 → AI 变更审核 |
 | `dsh-undo-savepoint`（v4） | 崩溃急救与撤销：配置/插件代码快照、undo/redo、一键安全模式、密钥脱敏 vault、跨机迁移 ZIP | 对话顶部 undo/redo 按钮 + 快照面板 |
@@ -247,8 +246,8 @@ dsh-desktop/
 ├── assets/               # 加载页、更新进度页、图标、托盘图标、配套 dsh 插件
 │   └── plugins/          # 桌面壳配套（dsh-balance、dsh-file-changes、dsh-terminal、
 │                         # dsh-easy-setup、dsh-skin-switch）+ 内置社区插件
-│                         # （dsh-unified-market、dsh-soul-md、dsh-web-mobile-fix，
-│                         # 含 vendor 与自包含依赖）
+│                         # （dsh-webui-market、picturereader、
+│                         # dsh-soul-md、dsh-web-mobile-fix，含 vendor 与自包含依赖）
 │                         # 全部自动同步进 web profile
 ├── scripts/
 │   ├── fetch-node.js     # 内置 node.exe 复制脚本

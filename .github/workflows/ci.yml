@@ -1,8 +1,14 @@
 # CI：push / PR 时跑测试并完整构建 dsh-desktop（Windows x64）
-# 缓存策略（三层，均按 dsh-desktop/package-lock.json 哈希命中）：
-#   1. npm 依赖下载缓存（setup-node 内置）
+# 缓存策略（四层）：
+#   1. npm 依赖下载缓存（setup-node 内置，按 dsh-desktop/package-lock.json 哈希命中）
 #   2. Electron 二进制缓存（npm install 与 electron-builder 共用）
 #   3. electron-builder 工具链缓存（NSIS / winCodeSign 等）
+#   4. cargo registry + 各原生模块 target（按 Cargo.lock 哈希命中）
+# Node 版本：26 —— 测试已迁 .test.ts，依赖原生 type-stripping 直跑（Node ≥ 26）；
+#   fetch-runtime 复制的 node.exe 即随包分发运行时，与测试/安装 ABI 一致。
+# Rust：native/{supervisor,snapshot} 两模块在跑测试前从源码构建（index.node
+#   仓库内亦有预编译提交，CI 构建保证测试与打包用最新源码产物），并跑
+#   cargo test；链接统一走 scripts/build-native.js 内置的 rust-lld 方案。
 # 镜像说明：GitHub 托管 runner 直连 npm registry / GitHub Releases，无需 README
 # 中的 ELECTRON_MIRROR 等镜像（仅自托管国内 runner 才需要，从美国 runner 访问 npmmirror 反而更慢）。
 name: CI
@@ -13,13 +19,13 @@ on:
   push:
     branches:
       - main
+      - refactor/vnext-ts-isolation
     paths:
       - '**'
       - '!**/*.md'
       - '!docs/**'
       - '!research/**'
       - '**/SKILL.md'
-      - '.agents/skills/deepseek-harness-eac-dev/**'
   pull_request:
     paths:
       - '**'
@@ -27,7 +33,6 @@ on:
       - '!docs/**'
       - '!research/**'
       - '**/SKILL.md'
-      - '.agents/skills/deepseek-harness-eac-dev/**'
   workflow_dispatch:
 
 concurrency:
@@ -49,26 +54,9 @@ jobs:
       - name: 安装 Node.js（含 npm 缓存）
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
-
-      - name: 校验开发者 Skill（PowerShell 7）
-        shell: pwsh
-        working-directory: ${{ github.workspace }}
-        run: |
-          .\.agents\skills\deepseek-harness-eac-dev\scripts\validate-skill.ps1 `
-            -SkillPath .\.agents\skills\deepseek-harness-eac-dev `
-            -RepoPath .
-
-      - name: 校验开发者 Skill（Windows PowerShell 5.1）
-        shell: powershell
-        working-directory: ${{ github.workspace }}
-        run: |
-          .\.agents\skills\deepseek-harness-eac-dev\scripts\validate-skill.ps1 `
-            -SkillPath .\.agents\skills\deepseek-harness-eac-dev `
-            -RepoPath . `
-            -SkipRuntimeMatrix
 
       - name: 缓存 Electron 二进制
         uses: actions/cache@v4
@@ -86,8 +74,33 @@ jobs:
           restore-keys: |
             dsh-electron-builder-win-x64-
 
+      - name: 缓存 Rust 构建产物（cargo registry + 各原生模块 target）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            dsh-desktop/native/supervisor/target
+            dsh-desktop/native/snapshot/target
+          key: dsh-cargo-win-x64-${{ hashFiles('dsh-desktop/native/*/Cargo.lock') }}
+          restore-keys: |
+            dsh-cargo-win-x64-
+
       - name: 安装依赖
         run: npm ci
+
+      - name: 构建 Rust 原生模块（supervisor + snapshot → index.node）
+        # main 尚无 native/ 目录（模块仅存在于 vnext 分支），按 Cargo.toml 存在性跳过
+        if: hashFiles('dsh-desktop/native/*/Cargo.toml') != ''
+        run: |
+          node scripts/build-native.js build
+          node scripts/build-native.js build snapshot
+
+      - name: Rust 原生模块测试（cargo test --release）
+        if: hashFiles('dsh-desktop/native/*/Cargo.toml') != ''
+        run: |
+          node scripts/build-native.js test
+          node scripts/build-native.js test snapshot
 
       - name: 获取内置运行时（node.exe + npm CLI）
         run: npm run fetch-runtime

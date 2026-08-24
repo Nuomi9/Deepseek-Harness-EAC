@@ -1,6 +1,3 @@
-# ⚠️ FROZEN (v5.0, 2026-08)：Electron 打包配置冻结维护（可回退救生索）。
-# v5.0 默认分发走 Tauri：tauri-shell/tauri.conf.json + stage-resources.mjs
-# + make-portable.mjs。本文件保留以支持 `npm run dist` 回退产出。
 appId: com.deepseek.dsh.desktop
 # No version suffix in productName: a versioned install dir gets nested on
 # upgrades (.../v1.0/v2.0) when the registry keeps the old INSTALLDIR, which
@@ -28,6 +25,87 @@ buildDependenciesFromSource: false
 
 files:
   - main.js
+  # Task 1.x/2.x：lib/ 为 tsc 原地编译产物（prepack 时生成），bundled-files 防呆覆盖。
+  - lib/state.js
+  - lib/log.js
+  - lib/proc.js
+  - lib/paths.js
+  - lib/bridge.js
+  - lib/run-state.js
+  - lib/watchdog-boot.js
+  - lib/server.js
+  - lib/terminal.js
+  - lib/preview.js
+  - lib/market-modules.js
+  - lib/window.js
+  - lib/tray.js
+  - lib/session-heal.js
+  - lib/plugin-copy.js
+  - lib/plugin-registry-data.js
+  - lib/plugin-manager-core.js
+  - lib/plugins.js
+  - lib/market-ops.js
+  - lib/migration.js
+  - lib/guard.js
+  - lib/preflight.js
+  - lib/onboarding.js
+  - lib/balance-ui.js
+  - lib/shortcuts.js
+  - lib/shortcut-maintenance.js
+  - lib/update-flow.js
+  - lib/ipc/index.js
+  - lib/ipc/sender.js
+  - lib/ipc/app.js
+  - lib/ipc/recovery.js
+  - lib/ipc/plugin.js
+  - lib/ipc/onboard.js
+  - lib/ipc/session.js
+  - lib/boot.js
+  # 门面背后的实现子目录（Task 6/14 拆分；bundled-files 闭包测试防漏）：
+  - lib/logger/index.js
+  - lib/logger/api.js
+  - lib/logger/redact.js
+  - lib/logger/rotate.js
+  - lib/logger/diagnostics.js
+  - lib/client-update/index.js
+  - lib/client-update/types.js
+  - lib/client-update/net.js
+  - lib/client-update/release.js
+  - lib/client-update/download.js
+  - lib/client-update/apply.js
+  - lib/plugin-guard/index.js
+  - lib/plugin-guard/ctx.js
+  - lib/plugin-guard/snapshot.js
+  - lib/plugin-guard/scan.js
+  - lib/plugin-guard/heal.js
+  - lib/renderer-recovery/policy.js
+  - lib/renderer-recovery/load.js
+  - lib/renderer-recovery/machine.js
+  - lib/supervisor/registry.js
+  - lib/supervisor/state-machine.js
+  - lib/supervisor/incidents.js
+  - lib/supervisor/permissions.js
+  - lib/supervisor/installer.js
+  - lib/extension-host/rpc.js
+  - lib/extension-host/job-fence.js
+  - lib/extension-host/manager.js
+  - lib/extension-host/bridge-server.js
+  - lib/extension-host/sdk/index.js
+  - lib/recovery-center/register.js
+  # 快照管理器（Rust 引擎 + 调度 + IPC 域；prepack 经 build-native.js copy
+  # snapshot 强制校验 index.node 存在）
+  - lib/snapshot/native.js
+  - lib/snapshot/paths.js
+  - lib/snapshot/scheduler.js
+  - lib/snapshot/manager.js
+  - lib/ipc/snapshot.js
+  - preload/snapshot-ui.js
+  - native/snapshot/index.node
+  - shared/protocol.js
+  # VNext Phase 2：Host 进程入口（内置 node.exe 拉起）与 Rust 围栏预编译产物
+  # （predist 经 scripts/build-native.js copy 强制校验存在）。
+  - host-bootstrap.js
+  - native/supervisor/index.node
   - updater.js
   - client-updater.js
   - logger.js
@@ -40,32 +118,16 @@ files:
   - builtin-collision.js
   - plugin-manager-state.js
   - plugin-guard.js
-  - rescue-agent.js
   - preset-sync.js
-  - compact-preset-migrate.js
   - error-detail.js
   - bundle-integrity.js
   - stable-port.js
-  - stream-write-guard.js
   - koffi-preflight.js
   - renderer-recovery.js
   - watchdog.js
-  - shortcut-maintenance.js
   - preload.js
-  # L2 业务服务层模块（ADR 0002）：main.js 顶层 require 的 lib/desktop/*。
-  - lib/desktop/file-roots.js
-  - lib/desktop/proc.js
-  - lib/desktop/runtime-paths.js
-  - lib/desktop/profile.js
-  - lib/desktop/guard-box.js
-  - lib/desktop/runtime-patches.js
-  - lib/desktop/companion-sync.js
-  - lib/desktop/plugin-ops.js
-  - lib/desktop/market.js
-  - lib/desktop/shortcuts.js
-  - lib/desktop/junction-patrol.js
-  - lib/desktop/client-update.js
-  - lib/desktop/static-preview.js
+  - preload/api.js
+  - preload/chrome.js
   - assets/**/*
   # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
   # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。
@@ -102,7 +164,8 @@ win:
 # releases/latest/download/<file>.exe 要求「最新 release 里存在同名资产」，
 # 因此每次发版必须同步更新 README.md / README.en.md 的下载链接文件名
 # （旧链接在旧 release 上仍有资产，不会 404，但 /latest/ 只认最新 release 的
-# 同名文件）。client-updater.js 的资产选择兼容固定名与两种版本位置形态。
+# 同名文件）。client-update/release.ts 的资产选择兼容固定名与两种版本位置
+# 形态。便携版解压缓存目录由 unpackDirName（固定字符串）决定，与产物名无关。
 portable:
   artifactName: Deepseek-Harness-EAC-Portable-v${version}-${arch}.${ext}
   # 稳定缓存目录名：配合 scripts/patch-portable-template.js 复用已解压目录，
@@ -110,6 +173,10 @@ portable:
   unpackDirName: deepseek-harness-eac-portable
 
 nsis:
+  # 带版本号与 main 主线发布渠道对齐：旧版（≤4.6.0）更新器的资产匹配面
+  # 是 /setup.*x64\.exe$/i 正则 + Gitee 分片候选名（含
+  # Deepseek-Harness-EAC-v<version>-Setup-x64.exe 形态），两种命名都能命中，
+  # 统一为带版本形态避免同 dist 目录下新旧产物混存。
   artifactName: Deepseek-Harness-EAC-Setup-v${version}-${arch}.${ext}
   include: build/installer.nsh
   oneClick: false
