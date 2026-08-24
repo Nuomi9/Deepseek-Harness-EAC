@@ -29,6 +29,12 @@
   - [x] 2.2 ~~删除 refactor 独有旧插件~~ 已由 Task 0 合并自动完成：webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 随 main 删除胜出清场；`dsh-eac-core-bridge` 经核实为 refactor 新增且被活跃引用，**保留**
   - [x] 2.3 注册表清理（TDD red→green→反转再红→恢复全绿）：新增 `test/plugin-registry-consistency.test.ts`（4 用例：dir 存在性/孤儿映射/两个 ESM 加载形状断言，RED 阶段 4/4 失败精确复现 4 条缺失条目）；`plugin-registry-data.ts` 删 4 条已删插件条目（`dsh-market-plugin`/`zat-market`/`auto-compact`/`file-drop`）+ 3 条孤儿/死映射（含 line 106 npm 源映射及 `tool-vision`/`tdai-memory` 死映射——pluginUpdateSources 只遍历 COMPANION_PLUGINS，二者永不消费）。**额外发现并修复**：refactor 侧 `lib/market-modules.ts` 仍指向已删的 `dsh-webui-market`（artifact-keep/allow-builds ESM 静默降级空对象），对齐 main v5.1.0 已切换的 `dsh-unified-market`（导出面完全匹配：snapshotArtifacts/restoreArtifacts/parseBlockedBuildKeys/ensureAllowBuilds；main 侧过渡区 `lib/desktop/market.ts` 本已指向 unified-market，此为 refactor 分叉期未同步的 main 演进）
   - [x] 2.4 grep 验收（活跃代码零引用达成）：lib/scripts 下已删插件标识剩余命中仅 3 类合理保留——① `RETIRED_BUILTIN_PLUGINS` 的 tdai-memory 退役记录（plugins.ts 消费做旧安装清理，活数据）；② `scripts/e2e-full.ts` 的 dsh-tdai-memory 市场安装测试目标（npm 在架非内置插件，活测试）；③ 注释（e2e 设计说明与替换史，其中 registry 内历史点名已精简）。门禁全绿（typecheck 零错 + npm test 562/562，新增 4 用例）→ commit
+  - [ ] 2.5 main 演进吸收（2026-08-25 上游推进 fe299dd..f04ed56，15 commits；主文档 §4 Phase 0B / §7 第 12-16 项）
+    - [ ] 2.5a `git merge origin/main --no-ff`；Phase 1-4 平行版本重叠文件取 ours（refactor 完整版），逐类列出冲突清单
+    - [ ] 2.5b main 独有修复行级并入：e171abc manager.ts 崩溃对账块 → ours `lib/extension-host/manager.ts`；bb3daae `--no-open` → ours spawn 点；stage-resources 漏装/skip-npm 与 main.rs serve_ws/exit overlay 逐段甄别（ours 两文件均有大改）
+    - [ ] 2.5c 测试重名甄别：main 转换版 `.test.ts` vs refactor 原生版（如 `dsh-file-drop-eac-core.test.ts` vs `file-drop-core.test.ts` 同插件双文件）→ 保留 refactor 版、main 独有用例并入；Node24 门禁差异核对（我们 Node26 基线不动）
+    - [ ] 2.5d 受控补丁核对：`node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js` patch 完整性（merge 动 node_modules 时）
+    - [ ] 2.5e 门禁全绿（typecheck + npm test 基线 562 不降）→ merge commit + tasks 回写
 
 - [ ] Task 3: 根模块与测试冲突解决（§6-D/E/F 组）
   - [ ] 3.1 删 .js 侧：`main.js`/`client-updater.js`/`updater.js`/`plugin-guard.js`/`wsl-backend.js`（refactor .ts 为唯一源）

@@ -25,6 +25,7 @@
 | 合并基点 | `66bd9a1`（2026-08-19） |
 | refactor 独有 | 41 commits（全量 TS 化 37 模块、extension-host 插件隔离、Rust native supervisor/snapshot、boot -79.8%、快照面板、CI 适配 Node26+cargo） |
 | main 独有 | 197 commits（Tauri 壳 + sidecar 14 模块、TS Wave0-3、内核 0.1.1-rc.2、picturereader 3.1.0、unified-market、6+ 核心修复、NSIS/便携打包链、版本 5.1.0） |
+| **main 演进（2026-08-25 纳入）** | **+15 commits（fe299dd..f04ed56）**：main 侧自行吸收 vnext 的 Phase 1-4 平行版本（TS 化收口/插件隔离/native 构建链/测试 77×.mjs→.ts 转 Node24 直跑，与 refactor 完整版同源不同版本）+ 5 项 main 独有修复（见 §7 追加 12-16）+ G1-G4 发布可用性验证修复 + exit overlay 壳能力 |
 | git 冲突 | 72 处：26 content / 20 add-add / 9 modify-delete / 17 rename 类 |
 | 语义冲突（git 之外） | main `lib/desktop/*`（14 模块，ctx 注入、宿主无关）与 refactor `lib/*`（37 模块，`import { app } from 'electron'` 直连）为并行实现；sidecar 仅挂 14 模块 |
 
@@ -71,6 +72,14 @@ Tauri Shell (Rust + WebView2)                    tauri-shell/src/main.rs
 1. `git checkout main && git checkout -b merge/vnext-tauri`
 2. `git merge refactor/vnext-ts-isolation --no-ff`（预期 72 处冲突）
 3. 按 §6 冲突解决表逐组解决；`package-lock.json` 不手解，合并后 `npm install --package-lock-only` 重建。
+
+### Phase 0B：main 演进吸收（2026-08-25，Task 2.5）
+上游 main 已推进 `fe299dd..f04ed56`（15 commits），第二次 `git merge origin/main --no-ff` 纳入。冲突解决原则：
+- **Phase 1-4 平行版本重叠文件**（extension-host/supervisor/recovery-center/根模块 .ts/native/CI/scripts/test 转换）：**取 ours（refactor 完整版）**——main 吸收版只覆盖 Phase 1-4 切片且基线更旧（Node24 vs 我们 Node26、平铺根模块 vs 37 模块结构）
+- **main 独有新文件**：自动并入（exit-overlay.js、HANDOVER R10/R11 文档、settings-scroll-fix 阈值资产等）
+- **main 独有修复**（§7 第 12-16 项）：行级甄别并入 ours 对应文件
+- **测试重名甄别**：main 转换版 `.test.ts`（如 `dsh-file-drop-eac-core.test.ts`）与 refactor 原生版（`file-drop-core.test.ts`）同插件双测试文件 → 保留 refactor 版、main 版去重后并入其独有用例
+- node_modules 受控补丁（dsh-tool-bash）：merge 后核对 patch 完整性
 
 ### Phase 1：修复移植（冲突解决同时/紧随）
 按 §7 修复移植清单，把 main 落在 refactor 已重写文件里的 11 项修复移植进 refactor 对应模块，逐项行级核对。
@@ -239,6 +248,11 @@ Tauri Shell (Rust + WebView2)                    tauri-shell/src/main.rs
 | 9 | 2dd37bd 流写入保护（#137） | stream-write-guard | refactor 已有对应物，核对含修复 |
 | 10 | 18b0fd4 全访问时豁免必填 escalation（PR #199） | Phase 1 定位（插件 schema 或核心） | 落点核实后移植 |
 | 11 | 客户端插件类修复（9593672 bash 折叠、a825fda 侧边栏换行、5ca8c5a offpeak、432f89a 皮肤禁用等） | 插件资产 | 随 main 资产树自动获得，无需移植 |
+| 12 | e171abc G1-G4 发布可用性修复：extension-host/manager 残留 running 态崩溃对账（上次会话异常终止后状态机拒绝 running→starting，插件永不拉起） | lib/extension-host/manager.ts（main 吸收版） | `lib/extension-host/manager.ts`（ours）：startPlugin 对账块行级并入 |
+| 13 | e171abc 同 commit：stage-resources 漏装 plugin-copy.js/shared/protocol.js（安装态 sidecar MODULE_NOT_FOUND 100% 复现）；main.rs 恢复中心直开模式缺 serve_ws（rc.* 全失效白屏） | stage-resources.mjs + main.rs | 随 Phase 0B merge 核对（两文件 ours 也有大改，逐段甄别） |
+| 14 | bb3daae boot `--no-open`（dsh-web-app openBrowser 默认 true，就绪即开系统浏览器，日志实锤 50 次）+ stage-resources `--skip-npm` 死代码修复（先 rmSync 后 existsSync 必假） | lib/desktop/boot-server.ts + main.js + stage-resources.mjs | ours 对应 spawn 点（lib/server.ts / lib/boot.ts）补 --no-open；skip-npm 修复随 merge 甄别 |
+| 15 | d6481c3 退出弹窗 overlay 注入（不新建窗口、不替换页面；win.close-dialog / win.hide-and-close-dialog 壳方法） | tauri-shell/src/main.rs + exit-overlay.js（新文件） | Phase 3 壳层能力；exit-overlay.js 自动并入，main.rs 两版手工合流 |
+| 16 | f04ed56 settings-scroll-fix 检测阈值放宽（子串匹配+尺寸门槛降低+NAV 加权）+ 98fdabf NSIS 开头 ping→原生 Sleep 2000 + bzip2 压缩 | 插件资产 + installer.nsh | 随 main 资产树自动获得（merge 无冲突自动并入） |
 
 ---
 

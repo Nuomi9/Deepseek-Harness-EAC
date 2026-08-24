@@ -8,6 +8,8 @@
 
 `refactor/vnext-ts-isolation`（41 commits：全量 TS、插件隔离架构、Rust supervisor/snapshot、boot -79.8%、499 测试）与 `main`（197 commits：Tauri 壳 + Node sidecar、内核 0.1.1-rc.2、新资产基线、NSIS/便携打包链）是**并行且部分矛盾的两套重构**，git 报告 72 处冲突，更大的语义冲突（`lib/desktop/*` 14 模块 vs `lib/*` 37 模块）在 git 之外。战略方向已定：**去 Electron，Tauri + WebView2 为唯一壳，双平台（Windows + Linux）同时编译与使用**，两条支线的成果全部保留并择优合并。
 
+**2026-08-25 增补**：上游 main 在合并骨架（fe299dd）之后又推进 15 commits（至 f04ed56）——含 main 侧自行吸收 vnext 的 Phase 1-4 平行版本与 5 项 main 独有修复（主文档 §7 第 12-16 项），以第二次 merge（Task 2.5）纳入合并范围：平行版本重叠取 refactor 完整版，main 独有修复行级甄别并入。
+
 ## 用户已确认的决策（不再重议）
 
 | # | 决策 |
