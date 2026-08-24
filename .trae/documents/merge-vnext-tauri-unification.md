@@ -200,7 +200,7 @@ Tauri Shell (Rust + WebView2)                    tauri-shell/src/main.rs
 | `assets/plugins/picturereader/*` 全部 add-add（README/client.js/package.json/src/*，3.0.6 vs 3.1.0）+ node_modules 210 文件 + 4 处 LICENSE rename 类 | 树级解决：`git checkout main -- dsh-desktop/assets/plugins/picturereader`（main 3.1.0 整目录为准，refactor 3.0.6 树作废） |
 | `dsh-compact/LICENSE`、`dsh-file-drop-eac/LICENSE`（modify/delete + rename/delete） | 取 main（资产保留即取 main 版） |
 | `dsh-settings-nav-custom/lib/client.js`（content） | 取 main |
-| refactor 独有旧插件 `dsh-webui-market`、`zat-dsh-engine`、`dsh-file-drop`、`dsh-auto-compact`、`dsh-eac-core-bridge`、`dsh-tool-vision`、`dsh-tdai-memory` | 删除（main 已由 unified-market/dsh-compact/file-drop-eac/picturereader 替代或退役）；删除前核对 `builtin-plugins.json` 与插件注册表无残留引用（重点：`dsh-eac-core-bridge` 是否被 extension-host SDK 引用） |
+| refactor 独有旧插件 `dsh-webui-market`、`zat-dsh-engine`、`dsh-file-drop`、`dsh-auto-compact`、`dsh-tool-vision`、`dsh-tdai-memory` | 删除（main 已由 unified-market/dsh-compact/file-drop-eac/picturereader 替代或退役）；删除前核对 `builtin-plugins.json` 与插件注册表无残留引用（重点：`dsh-eac-core-bridge` 是否被 extension-host SDK 引用）——**执行结果（d64d7f5）**：7 个旧插件随 main 删除胜出自动清场；`dsh-eac-core-bridge` 经核实为 refactor 新增且被 `plugin-registry-data.ts`/`extension-host/bridge-server.ts` 活跃引用，**保留**；`plugin-registry-data.ts` 残留 4 条已删插件引用由 Task 2.3 清理 |
 
 ### D. 根模块 .js→.ts（约 20 处）
 | 文件 | 类型 | 解决方案 |

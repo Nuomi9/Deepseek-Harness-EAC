@@ -7,12 +7,13 @@
 > 4. 冲突解决以主文档 `.trae/documents/merge-vnext-tauri-unification.md` §6 解决表为唯一依据。
 > 5. 平台分支统一写法：`const IS_WIN = process.platform === 'win32'`（Rust 侧 `#[cfg(windows)]`/`#[cfg(unix)]`）。
 
-- [ ] Task 0: 集成分支与合并骨架
-  - [ ] 0.1 `git checkout main && git checkout -b merge/vnext-tauri`；记录基线（main HEAD = fe299dd）
-  - [ ] 0.2 `git merge refactor/vnext-ts-isolation --no-ff`（预期 72 冲突）
-  - [ ] 0.3 树级批量解决（不逐文件读）：`git checkout main -- dsh-desktop/assets/plugins/picturereader`、`git checkout main -- docs/qq-group-qrcode.jpg`、取 main 的 LICENSE 三处、`dsh-settings-nav-custom/lib/client.js`
-  - [ ] 0.4 二进制/锁定文件：`package-lock.json` 标记 ours 后续重建；`npm install --package-lock-only`
-  - [ ] 0.5 `git status` 核对冲突清单与主文档 §6 逐组对应，无遗漏后 commit（merge commit）
+- [x] Task 0: 集成分支与合并骨架（完成于 merge commit `d64d7f5`）
+  - [x] 0.1 `git checkout main && git checkout -b merge/vnext-tauri`；记录基线（main HEAD = fe299dd）
+  - [x] 0.2 `git merge refactor/vnext-ts-isolation --no-ff`（实际 64 个未解决条目；预分析 72 处含 rename 源/目标对拆分，无遗漏）
+  - [x] 0.3 树级批量解决：`picturereader` 整树取 main 3.1.0（238 文件）、`qq-group-qrcode.jpg`、三处 LICENSE（dsh-compact/file-drop-eac/settings-scroll-fix）取 main、`dsh-settings-nav-custom/lib/client.js` 取 main
+  - [x] 0.4 package-lock.json 粗取 refactor 侧（与 package.json 粗取 refactor 一致自洽）；**Task 1 deps 并集后重建**
+  - [x] 0.5 `git status` 零未解决 + 全树零冲突标记核验通过 → merge commit `d64d7f5`
+  - 执行偏差记录：① wsl-backend.js/.ts 按 refactor 删除（核实 main 侧无代码消费、refactor 升级契约测试断言其属 legacy 已删清单）；② 旧插件 webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 由合并自动删除（main 侧删除胜出），**Task 2.2 大半已完成**；③ `dsh-eac-core-bridge` 改为**保留**（refactor 新增且被 `plugin-registry-data.ts` + `extension-host/bridge-server.ts` 活跃引用，非退役插件）；④ 已知遗留：`plugin-registry-data.ts` 残留 4 条已删插件引用（webui-market/zat-market/auto-compact/file-drop）→ Task 2.3 清理
 
 - [ ] Task 1: 配置与文档冲突解决（§6-A/B 组）
   - [ ] 1.1 `.github/workflows/ci.yml`：refactor 版基底（Node26+cargo+native）并入 main paths 过滤（`.agents/skills/**`）
@@ -23,9 +24,9 @@
   - [ ] 1.6 tsconfig include 并入 `../tauri-shell/sidecar/**`；门禁全绿 → commit
 
 - [ ] Task 2: 插件资产冲突与旧插件清理（§6-C 组）
-  - [ ] 2.1 确认 picturereader 树已取 main 3.1.0（Task 0.3 完成）；`node_modules` 210 文件无冲突残留
-  - [ ] 2.2 删除 refactor 独有旧插件：`dsh-webui-market`、`zat-dsh-engine`、`dsh-file-drop`、`dsh-auto-compact`、`dsh-eac-core-bridge`、`dsh-tool-vision`、`dsh-tdai-memory`
-  - [ ] 2.3 删除前核对：`grep -r "dsh-eac-core-bridge\|zat-dsh-engine\|dsh-webui-market" dsh-desktop/lib dsh-desktop/scripts dsh-desktop/test` 零引用；`builtin-plugins.json` 与 `plugin-registry-data.ts` 注册表同步清理
+  - [ ] 2.1 确认 picturereader 树已取 main 3.1.0（Task 0.3 已完成，238 文件）；`node_modules` 210 文件无冲突残留
+  - [ ] 2.2 ~~删除 refactor 独有旧插件~~ 已由 Task 0 合并自动完成：webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 随 main 删除胜出清场；`dsh-eac-core-bridge` 经核实为 refactor 新增且被活跃引用，**保留**
+  - [ ] 2.3 注册表清理：`plugin-registry-data.ts` 删除 4 条已删插件条目（`dsh-market-plugin`/`zat-market`/`auto-compact`/`file-drop`，含 line 106 npm 源映射）；`grep -r "dsh-webui-market\|zat-dsh-engine\|dsh-auto-compact\|dsh-plugin-marketplace\|dsh-tool-vision\|dsh-tdai-memory" dsh-desktop/lib dsh-desktop/scripts` 零引用；补注册表一致性测试（无 dir 指向不存在目录的条目）
   - [ ] 2.4 门禁全绿 → commit
 
 - [ ] Task 3: 根模块与测试冲突解决（§6-D/E/F 组）
