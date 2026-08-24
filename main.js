@@ -541,7 +541,7 @@ async function startServer(unsafePortRetries = 4, overlays = []) {
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
     // 硬编码别名，不接受父级 --profile）；app 入口由 profile bundles 决定，
     // --host/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
-    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
+    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), '--no-open', ...patchArgs], {
       cwd: userDataDir,
       env: childEnv(),
       windowsHide: true,
@@ -1782,6 +1782,11 @@ const COMPANION_PLUGINS = [
   // （配置面快照）和「文件」还原（会话内改动）互补，覆盖「配置改坏、dsh
   // 起不来」的急救场景。GitHub 分发锁定拷贝（npm 未发布）。
   { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
+  // 社区插件市场 dsh-market（github.com/dsh-market/dsh-market，MIT）：设置 →
+  // 插件市场。1250+ 插件目录、主题一键切换、备份/WebDAV/Gist 恢复、插件级
+  // 更新与自更新渠道。要求 dsh ≥ 0.1.0-rc.6（当前内核 0.1.1-rc.2 满足）。
+  // 与既有 dsh-webui-market / dsh-plugin-marketplace 并存，互不接管。
+  { id: 'dsh-market', name: 'dshmarket', dir: 'dsh-market' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1796,6 +1801,8 @@ const COMPANION_PLUGINS = [
 const PLUGIN_UPDATE_SOURCES = {
   'better-sidebar': { npm: 'dsh-better-sidebar' },
   'dsh-market-plugin': { npm: '@sanqi-normal/dsh-webui-market-plugin' },
+  // dsh-market 自身也持续发版（stable/dev 渠道由其设置卡管理）。
+  'dsh-market': { npm: 'dshmarket' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
 };

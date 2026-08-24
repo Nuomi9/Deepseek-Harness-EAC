@@ -121,7 +121,9 @@ pub fn start_server(
         .arg("--host")
         .arg("127.0.0.1")
         .arg("--port")
-        .arg(web_port.to_string());
+        .arg(web_port.to_string())
+        // 内核 0.1.1-rc.2 起本机启动默认拉起系统浏览器，桌面壳自带窗口必须关掉
+        .arg("--no-open");
     for p in overlays {
         if !p.is_empty() && PathBuf::from(p).exists() {
             cmd.arg("--patch").arg(p);

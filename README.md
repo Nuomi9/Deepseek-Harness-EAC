@@ -10,7 +10,7 @@
 - ✅ **退出即清理**：退出应用有界等待 dsh 进程树真正退出（优雅 → 强杀），不留孤儿进程
 - ✅ **数据目录隔离**：默认使用 `DSH_HOME = ~\.dsh-v4lite`（与原版 `~\.dsh` 完全隔离，两端可并行安装运行），已有会话/API Key 可复制 `~\.dsh\settings.yaml` 迁移
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 9 款 Web UI 皮肤，互斥切换、默认不启用、重启生效；随包标注出处与许可
-- ✅ **内置插件套件**（10 个，详见「内置插件」章节）：插件市场 ×2 / 插件保护中心 / 启停管理 / 余额小部件（含峰谷倒计时）/ 峰谷价格卫士 / 崩溃急救撤销 / 右侧栏工作台 / 自动压缩 / 皮肤切换，全部随包分发、开箱即用
+- ✅ **内置插件套件**（11 个，详见「内置插件」章节）：插件市场 ×3 / 插件保护中心 / 启停管理 / 余额小部件（含峰谷倒计时）/ 峰谷价格卫士 / 崩溃急救撤销 / 右侧栏工作台 / 自动压缩 / 皮肤切换，全部随包分发、开箱即用
 - ✅ **崩溃急救与撤销（dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
 - ✅ **错误日志一键复制**：启动失败 / DSH 服务停止的报错弹窗带「复制日志」按钮，一键复制完整诊断信息供反馈
 - ✅ **快捷方式自动维护**：按「目标 exe」识别既有快捷方式（用户改名/换图标不再重复新建），自定义图标绝不覆盖
@@ -31,7 +31,7 @@
 ## 更新与版本策略（v4Lite）
 
 - **v4Lite 不内置任何更新接口**：不检查官方 @deepseek-ai/dsh 的新版本，不提供「检查更新」菜单/托盘入口，也不做客户端自更新。新版本请从 Releases 页手动下载安装包替换；插件与配置格式与 4.4.0 完全兼容，升级/降级不破坏 `DSH_HOME` 数据。
-- **内置插件上游更新检查仍保留**（设置 → 插件 → 更新）：仅针对随包分发的 3 个社区插件（`dsh-better-sidebar`、`@sanqi-normal/dsh-webui-market-plugin`、`dsh-undo-savepoint`），默认只提示不下载（24h 节流），可手动更新。
+- **内置插件上游更新检查仍保留**（设置 → 插件 → 更新）：仅针对随包分发的 4 个社区插件（`dsh-better-sidebar`、`@sanqi-normal/dsh-webui-market-plugin`、`dshmarket`、`dsh-undo-savepoint`），默认只提示不下载（24h 节流），可手动更新。
 
 ## 界面皮肤
 
@@ -57,12 +57,13 @@
 
 ## 内置插件（v4Lite）
 
-以下 10 个插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；启动时的 heal 流程会自动清理模块双实例遮蔽包。
+以下 11 个插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；启动时的 heal 流程会自动清理模块双实例遮蔽包。
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
 | `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测）；目录中已被客户端内置的插件显示「已内置」徽标并拒绝重复安装 | 设置 → 插件 → 插件市场 |
 | `dsh-plugin-marketplace` | 第二插件市场（npm 检索）：搜索 npm 上的 dsh 插件并一键安装（跑在桌面专属 profile，与原版完全隔离） | 设置 → 插件 → 插件市场 |
+| `dsh-market` | 第三插件市场（github.com/dsh-market/dsh-market，MIT）：1250+ 社区插件目录、主题一键切换即时生效、备份/ WebDAV / Gist 同步恢复、插件级更新与自更新渠道管理 | 设置 → 插件市场 |
 | `dsh-plugin-manager` | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停；核心组（启停管理/保护中心）拒绝移除 | 设置 → 插件 → 管理 |
 | `dsh-plugin-shield` | 插件保护中心 UI：快照列表/一键回滚/健康检查/事故报告，经桌面壳 IPC（`guard:action`）驱动 plugin-guard.js 引擎 | 设置 → 插件 → 保护中心 |
 | `dsh-skin-switch` | 皮肤切换（见「界面皮肤」）：列出/切换/恢复 9 款内置皮肤 | 设置 → 皮肤 |
@@ -74,7 +75,7 @@
 
 > **Windows 文件锁排队**：运行中的 Web 服务加载着原生模块（sqlite-vec 等 DLL）时，插件安装/卸载会遇到 `EPERM` 文件锁 —— 任务会自动排队（`.dsh-market-pending.json`），下次服务重启前（无锁窗口）自动完成，市场界面提供「立即重启并完成」按钮。
 >
-> **内置插件上游更新源**（仅登记仍在 npm / GitHub 发布的插件，EAC 独占私有包绝不登记；运行时 npm 404 优雅降级为「无上游」）：`dsh-better-sidebar`（npm）、`@sanqi-normal/dsh-webui-market-plugin`（npm）、`dsh-undo-savepoint`（GitHub lire1131）。
+> **内置插件上游更新源**（仅登记仍在 npm / GitHub 发布的插件，EAC 独占私有包绝不登记；运行时 npm 404 优雅降级为「无上游」）：`dsh-better-sidebar`（npm）、`@sanqi-normal/dsh-webui-market-plugin`（npm）、`dshmarket`（npm）、`dsh-undo-savepoint`（GitHub lire1131）。
 
 ## 退出行为三档
 

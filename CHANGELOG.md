@@ -13,7 +13,37 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 4.2.0（安装版更新挂死 + 插件市场/守护启动的 pnpm 拦截 + 插件互相
 影响治理 + 内置接管同名市场包）→
 4.3.0（本版：内置插件更新 + 插件市场「更新」标签 + 市场插件更新）→
-4.4.0（本版：修复设置页「Skills 与 MCP → 打开目录」失效）。
+4.4.0（修复设置页「Skills 与 MCP → 打开目录」失效）→
+4.5.0（本版：内核升级 0.1.1-rc.2 + 内置 dsh-market 社区插件市场）。
+
+## [4.5.0] — 2026-08-23
+
+### 升级：内核 @deepseek-ai/dsh 0.1.0-rc.7 → 0.1.1-rc.2（上游最新 RC）
+- 19 个内核包整体升到 0.1.1-rc.2（npm 官方发布版，非本地改包）；兼容面逐一核实：
+  profile bundle 模板（dsh-base / dsh-web-app）、`dsh web --host/--port/--profile`
+  启动参数、stdout 就绪行格式、`dsh plugin --profile` pnpm 转发器全部保留。
+- **行为适配**：rc.2 起 `dsh web` 本机启动默认自动打开系统浏览器 —— Electron 壳与
+  Tauri 壳（service.rs）均显式追加 `--no-open`，不再多弹浏览器窗口。
+- **补丁健壮化**：「pnpm 黑窗」补丁此前硬编码 rc.7 的 chunk 文件名
+  （plugin-9h8shc4d.js），内核升级后必然静默失效；现按「plugin-*.js 且内容命中
+  spawnSync 目标代码」扫描定位，任意哈希名都能打上 windowsHide。新增契约测试钉死。
+
+### 新增：内置 dsh-market 社区插件市场（github.com/dsh-market/dsh-market）
+- 以配套插件形式内置分发（dshmarket 1.20.2，MIT），设置页新增其插件市场入口：
+  1250+ 社区插件目录浏览/搜索/一键安装、主题一键切换即时生效、备份/ WebDAV /
+  Gist 同步恢复、插件级更新检查与自更新渠道管理。
+- 要求 dsh ≥ 0.1.0-rc.6，当前内核满足；与既有 dsh-webui-market /
+  dsh-plugin-marketplace 并存互不影响，均可随时停用或移除。
+- 登记上游 npm 更新源（「设置 → 插件 → 更新」可跟随上游升级 dshmarket 本体）。
+
+### 变更：Windows 发行物切换为 Tauri 2 + Rust 壳
+- 本版起 Windows 安装包由 Tauri 2（Rust + 系统 WebView2）构建，不再使用
+  Electron 壳：安装包体积 166.8MB → **73.2MB**，内存占用更低；业务编排层
+  （desktop-core.js sidecar）、内置 Node 运行时与全部内置插件两轨完全同构。
+- `mainBinaryName` 显式定为产品名（主程序 `Deepseek Harness EAC v4Lite.exe`，
+  快捷方式/安装钩子/进程名一致）；NSIS 钩子沿用 v4.2 实战逻辑（无管道进程
+  清理、有界等待、旧快捷方式清理），覆盖安装由 Tauri 自带旧版卸载步骤处理。
+- Electron 壳源码（main.js 等）继续保留且测试套件照常守护，便于随时回退双轨。
 
 ## [4.4.0] — 2026-08-18
 

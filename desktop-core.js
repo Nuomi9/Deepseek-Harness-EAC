@@ -108,6 +108,8 @@ function createDesktopCore(ctx) {
     { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
     { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
     { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
+    // 社区插件市场 dsh-market（与 main.js COMPANION_PLUGINS 保持同构）。
+    { id: 'dsh-market', name: 'dshmarket', dir: 'dsh-market' },
   ];
 
   // ------------------------------------------------------ 保护中心（guard）--

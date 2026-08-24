@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Deepseek Harness EAC v4Lite",
-  "version": "4.4.0",
+  "mainBinaryName": "Deepseek Harness EAC v4Lite",
+  "version": "4.5.0",
   "identifier": "com.deepseek.dsh.desktop.lite",
   "build": {
     "beforeDevCommand": "npm run build:inject",

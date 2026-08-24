@@ -118,24 +118,34 @@ const PNPM_HIDE_MARKER = 'windowsHide: true';
 const PNPM_SHELL_OLD = 'stdio: "inherit",\n\t\tshell: process.platform === "win32"\n\t});';
 const PNPM_SHELL_NEW = 'stdio: "inherit",\n\t\tshell: process.platform === "win32",\n\t\twindowsHide: true\n\t});';
 
-function patchDshPluginPnpmHide() {
-  const file = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'plugin-9h8shc4d.js');
-  if (!fs.existsSync(file)) {
-    console.log('[patch-deps] 内置 dsh plugin forwarder 不存在，跳过');
-    return;
+function patchDshPluginPnpmHide(root = path.resolve(__dirname, '..')) {
+  // rc.7 时代 chunk 文件名是 plugin-9h8shc4d.js；上游每次发版哈希都会变，
+  // 所以按「plugin-*.js 且内容命中 spawnSync 目标代码」扫描，认死文件名会
+  // 在内核升级后静默失效（pnpm 黑窗回归）。任一候选已带幂等标记则跳过。
+  const libDir = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib');
+  let names = [];
+  try { names = fs.readdirSync(libDir); } catch { return { patched: false }; }
+  const candidates = [];
+  const legacy = path.join(libDir, 'plugin-9h8shc4d.js');
+  if (fs.existsSync(legacy)) candidates.push(legacy);
+  for (const name of names) {
+    if (!/^plugin-[\w-]+\.js$/.test(name)) continue;
+    const p = path.join(libDir, name);
+    if (!candidates.includes(p)) candidates.push(p);
   }
-  let src = fs.readFileSync(file, 'utf8');
-  if (src.includes(PNPM_HIDE_MARKER)) {
-    console.log('[patch-deps] pnpm windowsHide 补丁已应用，跳过');
-    return;
+  let target = null;
+  for (const p of candidates) {
+    let src = '';
+    try { src = fs.readFileSync(p, 'utf8'); } catch { continue; }
+    if (src.includes(PNPM_HIDE_MARKER)) return { patched: false };
+    if (src.includes(PNPM_SHELL_OLD)) { target = p; break; }
   }
-  if (!src.includes(PNPM_SHELL_OLD)) {
-    console.log('[patch-deps] dsh plugin forwarder 未匹配到 spawnSync 目标代码（上游版本可能已更新），跳过');
-    return;
-  }
+  if (!target) return { patched: false };
+  let src = fs.readFileSync(target, 'utf8');
   src = src.replace(PNPM_SHELL_OLD, PNPM_SHELL_NEW);
-  fs.writeFileSync(file, src);
-  console.log('[patch-deps] 已补丁 dsh CLI：pnpm 调用 windowsHide，插件市场不再弹 cmd 黑窗');
+  fs.writeFileSync(target, src);
+  console.log('[patch-deps] 已补丁 dsh CLI（' + path.basename(target) + '）：pnpm 调用 windowsHide，插件市场不再弹 cmd 黑窗');
+  return { patched: true, file: target };
 }
 
 function main() {
@@ -145,4 +155,6 @@ function main() {
   patchDshPluginPnpmHide();
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { patchDshPluginPnpmHide };
