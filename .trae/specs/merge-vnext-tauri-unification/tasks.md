@@ -24,11 +24,11 @@
   - [x] 1.6 门禁全绿 → commit。**决策修正**：tsconfig **不并入** `../tauri-shell/sidecar/**`——sidecar/server.ts 仍 mount main 侧 `lib/desktop/*` 布局（`mount('proc')` 等 13 处），与 refactor `lib/*` 37 模块不匹配，并入即 typecheck 崩；sidecar include 与 `lib/desktop` 排除项一并随 **Task 3.5**（sidecar 依赖签名核对/重写）落地。附带修复：`test/file-drop-core.test.ts` 适配 `dsh-file-drop-eac`（旧 `dsh-file-drop` 插件已随合并删除，测试原指向旧路径加载失败；核心 API 同构：classifyFile/buildTextInsertion/buildPathHint/looksBinary/TEXT_MAX_BYTES，仅 id 与暴露名 `__dshFileDropEacCore` 不同）
   - 执行偏差记录：① `node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js`（git 跟踪的补丁文件）曾被 npm install 重装 rc.2 覆盖丢失补丁，已从 HEAD 恢复（该文件 rc.7/rc.2 内容除补丁外一致，且补丁不受 patch-deps.js 管理）；② 本地首次 `npm test` 挂起系 6 个遗留 `electron/install.js` 进程（旧 npm install 下载卡死）阻塞 worker，清理后 dist 已完整无需重下；③ 测试基线 558/558 全绿（refactor 侧 499 → 合并后 558，增量来自 main 侧 client-update 系列等已并入测试）
 
-- [ ] Task 2: 插件资产冲突与旧插件清理（§6-C 组）
-  - [ ] 2.1 确认 picturereader 树已取 main 3.1.0（Task 0.3 已完成，238 文件）；`node_modules` 210 文件无冲突残留
-  - [ ] 2.2 ~~删除 refactor 独有旧插件~~ 已由 Task 0 合并自动完成：webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 随 main 删除胜出清场；`dsh-eac-core-bridge` 经核实为 refactor 新增且被活跃引用，**保留**
-  - [ ] 2.3 注册表清理：`plugin-registry-data.ts` 删除 4 条已删插件条目（`dsh-market-plugin`/`zat-market`/`auto-compact`/`file-drop`，含 line 106 npm 源映射）；`grep -r "dsh-webui-market\|zat-dsh-engine\|dsh-auto-compact\|dsh-plugin-marketplace\|dsh-tool-vision\|dsh-tdai-memory" dsh-desktop/lib dsh-desktop/scripts` 零引用；补注册表一致性测试（无 dir 指向不存在目录的条目）
-  - [ ] 2.4 门禁全绿 → commit
+- [x] Task 2: 插件资产冲突与旧插件清理（§6-C 组）
+  - [x] 2.1 核验通过：picturereader 3.1.0（238 文件）；`assets/` 与 `node_modules/` 零冲突标记残留。偏差：main 侧 node_modules 210 个跟踪文件已随合并删除胜出，git 仅剩 1 个跟踪文件（`dsh-tool-bash/lib/index.js` 受控补丁）
+  - [x] 2.2 ~~删除 refactor 独有旧插件~~ 已由 Task 0 合并自动完成：webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 随 main 删除胜出清场；`dsh-eac-core-bridge` 经核实为 refactor 新增且被活跃引用，**保留**
+  - [x] 2.3 注册表清理（TDD red→green→反转再红→恢复全绿）：新增 `test/plugin-registry-consistency.test.ts`（4 用例：dir 存在性/孤儿映射/两个 ESM 加载形状断言，RED 阶段 4/4 失败精确复现 4 条缺失条目）；`plugin-registry-data.ts` 删 4 条已删插件条目（`dsh-market-plugin`/`zat-market`/`auto-compact`/`file-drop`）+ 3 条孤儿/死映射（含 line 106 npm 源映射及 `tool-vision`/`tdai-memory` 死映射——pluginUpdateSources 只遍历 COMPANION_PLUGINS，二者永不消费）。**额外发现并修复**：refactor 侧 `lib/market-modules.ts` 仍指向已删的 `dsh-webui-market`（artifact-keep/allow-builds ESM 静默降级空对象），对齐 main v5.1.0 已切换的 `dsh-unified-market`（导出面完全匹配：snapshotArtifacts/restoreArtifacts/parseBlockedBuildKeys/ensureAllowBuilds；main 侧过渡区 `lib/desktop/market.ts` 本已指向 unified-market，此为 refactor 分叉期未同步的 main 演进）
+  - [x] 2.4 grep 验收（活跃代码零引用达成）：lib/scripts 下已删插件标识剩余命中仅 3 类合理保留——① `RETIRED_BUILTIN_PLUGINS` 的 tdai-memory 退役记录（plugins.ts 消费做旧安装清理，活数据）；② `scripts/e2e-full.ts` 的 dsh-tdai-memory 市场安装测试目标（npm 在架非内置插件，活测试）；③ 注释（e2e 设计说明与替换史，其中 registry 内历史点名已精简）。门禁全绿（typecheck 零错 + npm test 562/562，新增 4 用例）→ commit
 
 - [ ] Task 3: 根模块与测试冲突解决（§6-D/E/F 组）
   - [ ] 3.1 删 .js 侧：`main.js`/`client-updater.js`/`updater.js`/`plugin-guard.js`/`wsl-backend.js`（refactor .ts 为唯一源）

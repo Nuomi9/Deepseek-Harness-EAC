@@ -31,14 +31,13 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
   { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
-  { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin', dir: 'dsh-webui-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
   // 社区功能插件（视觉 / 人设 / 移动端布局修复）：npm registry
   // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
   // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
-  // v4.5 起 picturereader（v3.0.4）替换 dsh-tool-vision 作为内置图像理解插件。
+  // v4.5 起内置图像理解插件（替换已退役的旧视觉插件）。
   { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，schema required 无默认值，
   // 全新安装校验失败拖垮整个插件树（详见 patch-row-heal 的存量修复）。
@@ -49,10 +48,8 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   // 行必须带 config：dsh-pet 的 apply 读 config.fullRoot，无 config 块的行会让
   // loader 传 undefined 直接拖垮插件树（v3.1.0 全新安装即「启动失败」根因）。
   { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet', config: { size: 260, position: 'bottom-right' }, disabled: true },
-  { id: 'zat-market', name: 'zat-dsh-engine', dir: 'zat-dsh-engine' },
   { id: 'dock-settings', name: 'dsh-dock-settings', dir: 'dsh-dock-settings' },
   { id: 'font-custom', name: 'dsh-font-custom', dir: 'dsh-font-custom' },
-  { id: 'auto-compact', name: 'dsh-auto-compact', dir: 'dsh-auto-compact' },
   { id: 'plugin-shield', name: 'dsh-plugin-shield', dir: 'dsh-plugin-shield' },
   { id: 'change-review', name: 'dsh-change-review', dir: 'dsh-change-review' },
   { id: 'float-window', name: '@deepseek-ai/dsh-float-window' },
@@ -69,10 +66,6 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
   { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  // 拖入文件到对话（V4.1，用户建议）：文本/代码文件拖进输入框自动注入
-  // 内容（上限 256KB）。默认禁用 —— 与内置 picturereader 的「粘贴即用/
-  // 图片桥自动分析」入口语义重叠，避免拖入图片时重复/竞争注入。
-  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop', disabled: true },
   // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
   // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
   // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
@@ -95,15 +88,12 @@ export const RETIRED_BUILTIN_PLUGINS: { id: string; name: string }[] = [
 
 /** 内置插件上游更新源（V4.3，plugin-updater.js 消费；npm 404 优雅降级）。 */
 export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: string }> = {
-  'tool-vision': { npm: 'dsh-tool-vision' },
   'soul-md': { npm: 'dsh-soul-md' },
-  'tdai-memory': { npm: 'dsh-tdai-memory' },
   'dsh-pet': { npm: 'dsh-pet' },
   'better-sidebar': { npm: 'dsh-better-sidebar' },
   'dsh-navbar': { npm: '@vlln/dsh-navbar' },
   'mobile-fix': { npm: 'dsh-web-mobile-fix' },
   offpeak: { npm: 'dsh-offpeak' },
-  'dsh-market-plugin': { npm: '@sanqi-normal/dsh-webui-market-plugin' },
   'dsh-session-manager': { npm: 'dsh-session-manager' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },

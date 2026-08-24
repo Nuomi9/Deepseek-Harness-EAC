@@ -1,10 +1,11 @@
 /**
  * lib/market-modules.ts — 插件市场 ESM 模块惰性加载器（Task 2 自 main.js 提取）。
  *
- * artifact-keep / allow-builds 两个 ESM 随市场插件（dsh-webui-market）分发，
- * 被 server 域（守护启动 preRetry）与 plugins 域（排队任务）共用，故独立
- * 成模块。加载结果缓存在 state（artifactKeepMod / allowBuildsMod），失败
- * 降级为空对象（调用方自行判空）。
+ * artifact-keep / allow-builds 两个 ESM 随市场插件（dsh-unified-market，main
+ * v5.1.0 起替换已退役的 dsh-webui-market）分发，被 server 域（守护启动
+ * preRetry）与 plugins 域（排队任务）共用，故独立成模块。加载结果缓存在
+ * state（artifactKeepMod / allowBuildsMod），失败降级为空对象（调用方自行
+ * 判空；一致性测试 test/plugin-registry-consistency.test.ts 守护路径不失效）。
  */
 
 import * as path from 'node:path';
@@ -13,11 +14,11 @@ import { state } from './state.js';
 import { log } from './log.js';
 
 const ARTIFACT_KEEP_MODULE = path.join(
-  __dirname, '..', 'assets', 'plugins', 'dsh-webui-market', 'lib', 'artifact-keep.mjs',
+  __dirname, '..', 'assets', 'plugins', 'dsh-unified-market', 'lib', 'artifact-keep.mjs',
 );
 
 const ALLOW_BUILDS_MODULE = path.join(
-  __dirname, '..', 'assets', 'plugins', 'dsh-webui-market', 'lib', 'allow-builds.mjs',
+  __dirname, '..', 'assets', 'plugins', 'dsh-unified-market', 'lib', 'allow-builds.mjs',
 );
 
 /** 惰性加载市场插件的 artifact-keep ESM（失败降级空对象并缓存）。 */
