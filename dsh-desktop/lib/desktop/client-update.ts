@@ -6,9 +6,9 @@
 
 import path = require('node:path');
 import fs = require('node:fs');
-import { updCtx, nodeExe } from './runtime-paths';
-import { desktopProfile } from './profile';
-import { ensureGuard } from './guard-box';
+import { updCtx, nodeExe } from './runtime-paths.js';
+import { desktopProfile } from './profile.js';
+import { ensureGuard } from './guard-box.js';
 const updater = require('../../updater') as {
   loadSettings(c: ReturnType<typeof updCtx>): Record<string, unknown>;
   saveSettings(c: ReturnType<typeof updCtx>, s: unknown): void;

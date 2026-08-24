@@ -35,8 +35,8 @@ const {
   readJsonFile(file: string): Record<string, unknown> | null;
   copyPluginPackage(profileDir: string, src: string, name: string): void;
 };
-import { desktopProfileDir } from './profile';
-import { APP_ROOT } from './runtime-paths';
+import { desktopProfileDir } from './profile.js';
+import { APP_ROOT } from './runtime-paths.js';
 
 interface CompanionPlugin {
   id: string;

@@ -10,9 +10,9 @@
 
 import path = require('node:path');
 import cp = require('node:child_process');
-import { ensureGuard } from './guard-box';
-import { APP_ROOT } from './runtime-paths';
-import type { GuardBoxCtx } from './guard-box';
+import { ensureGuard } from './guard-box.js';
+import { APP_ROOT } from './runtime-paths.js';
+import type { GuardBoxCtx } from './guard-box.js';
 
 const IS_WIN = process.platform === 'win32';
 

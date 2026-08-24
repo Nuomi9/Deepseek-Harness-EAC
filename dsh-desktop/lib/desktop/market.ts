@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // 插件市场排队任务（ADR 0002 L2 业务服务层；Wave 2 自 market.js 类型化迁出，
 // 行为零变更）：服务运行中安装/卸载撞上 Windows 文件锁（EPERM，如
@@ -12,10 +12,10 @@ import os = require('node:os');
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { nodeExe, dshBin, APP_ROOT } from './runtime-paths';
-import { childEnv } from './proc';
-import { desktopProfile } from './profile';
-import { ensureGuard } from './guard-box';
+import { nodeExe, dshBin, APP_ROOT } from './runtime-paths.js';
+import { childEnv } from './proc.js';
+import { desktopProfile } from './profile.js';
+import { ensureGuard } from './guard-box.js';
 const {
   COMPANION_PLUGINS,
   SKINS_DIR,

@@ -9,7 +9,7 @@
 import path = require('node:path');
 import os = require('node:os');
 import fs = require('node:fs');
-import { APP_ROOT } from './runtime-paths';
+import { APP_ROOT } from './runtime-paths.js';
 // scripts/patch-session-manage.js 尚未类型化（工具链脚本，暂不收编）。
 const { patchSessionManage } = require('../../scripts/patch-session-manage') as {
   patchSessionManage(root: string, log: (m: string) => void): number;

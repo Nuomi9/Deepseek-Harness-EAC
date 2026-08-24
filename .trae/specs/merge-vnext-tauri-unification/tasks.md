@@ -40,12 +40,13 @@
       - 适配修复：`electron-builder.yml` files 补 `- compact-preset-migrate.js`（lib/desktop/companion-sync.ts 启动 require，漏装破坏 dsh-compact 托管 preset 迁移）；`test/onboarding-selection.test.ts` 样本注册表对齐合并后现实（删 dsh-market-plugin/zat-market 退役条目、compact 入核心；相关断言与 fixture 同步改写，测试意图不变）
       - 关键认知修正：**rescue-agent 不再按主文档 §7 前言「Phase 1 核对等价覆盖后删除」处理**——main 演进（f04ed56）已在 tauri-shell/sidecar/rescue-integration.ts + server.ts + bridge.ts 建成完整 sidecar 救援链（rescue.*/safe-mode 域），rescue-agent.js 是其活跃依赖，**保留**；Task 4 执行时据此调整
 
-- [ ] Task 3: 根模块与测试冲突解决（§6-D/E/F 组）
-  - [ ] 3.1 删 .js 侧：`main.js`/`client-updater.js`/`updater.js`/`plugin-guard.js`/`wsl-backend.js`（refactor .ts 为唯一源）
-  - [ ] 3.2 add/add 根模块 .ts（balance/builtin-collision/bundle-integrity/error-detail/koffi-preflight/patch-row-heal/plugin-manager-state/session-watcher/profile-module-heal）：取 refactor 版
-  - [ ] 3.3 content 类（plugin-updater/preset-sync/preload/chrome/stable-port/watchdog/session-encoding-heal/scripts 六个/test 四个）：refactor 版基底
-  - [ ] 3.4 删 `.test.mjs` 两处（client-updater-apply/recovery-integration）：先确认 refactor .ts 等价覆盖，不足则先补测试再删
-  - [ ] 3.5 sidecar 依赖签名核对：`resolveRepos`/balance API/updater API/plugin-updater API 逐一对齐（refactor 导出面 ⊇ main 消费面）→ 门禁全绿 → commit
+- [x] Task 3: 根模块与测试冲突解决（§6-D/E/F 组）
+  - [x] 3.1 删 .js 侧：`main.js`/`client-updater.js`/`updater.js`/`plugin-guard.js`/`wsl-backend.js`（refactor .ts 为唯一源）
+  - [x] 3.2 add/add 根模块 .ts（balance/builtin-collision/bundle-integrity/error-detail/koffi-preflight/patch-row-heal/plugin-manager-state/session-watcher/profile-module-heal）：取 refactor 版
+  - [x] 3.3 content 类（plugin-updater/preset-sync/preload/chrome/stable-port/watchdog/session-encoding-heal/scripts 六个/test 四个）：refactor 版基底
+  - [x] 3.4 删 `.test.mjs` 两处（client-updater-apply/recovery-integration）：先确认 refactor .ts 等价覆盖，不足则先补测试再删
+  - [x] 3.5 sidecar 依赖签名核对：`resolveRepos`/balance API/updater API/plugin-updater API 逐一对齐（refactor 导出面 ⊇ main 消费面）→ 门禁全绿 → commit
+    - 完成记录：`client-updater.ts` 门面已含 `resolveRepos`（lib/client-update/index.ts:21）；balance 7 成员/updater 6 成员/onboarding 6 成员/plugin-updater 全量消费逐一核对覆盖。**吸收 main 侧 plugin-copy.ts 4 项增量**（平行版本重叠，main vnext-absorb Phase 3 语义）：`COPY_STAMP` 导出 + `pluginCopyEntries`（旧 companion-sync 导出面兼容）+ `pluginCopyIsComplete`/`invalidatePluginCompleteCache`（companion-copy-integrity 契约：源戳记一致但目标文件缺失必须重拷，判定按 dest+mtime+stamp 进程内缓存）+ `copyPluginPackage` 跳过判定升级为「内容未变且目标完整」。sidecar `onboardingLogic` 类型断言精确化（CORE/RECOMMENDED_PLUGIN_IDS 为 Set 非 string[]，main 侧本就是 Set，运行时无碍）。过渡链路落地：`lib/state.ts`+`initVNextState`、`lib/log.ts`+`setLogSink`、`lib/recovery-center/register-sidecar.ts`（sidecar 恢复中心动作分发，剥离 Electron 依赖）、`tsconfig.transition.json`（erasableSyntaxOnly:false 编译 lib/desktop 过渡层）、stage-resources.mjs 清单同步。门禁：typecheck 主配置+过渡配置零错误，npm test 661/661（上游 main 合并后 558→661）。
 
 - [ ] Task 4: main 修复移植（11 项，§7 清单；每项先写失败测试再移植——见 tdd.md T1-T11）
   - [ ] 4.1 `lib/server.ts` ← 7f7fa05 并发 dsh web 检测（fix #22，main.js +81 行语义）

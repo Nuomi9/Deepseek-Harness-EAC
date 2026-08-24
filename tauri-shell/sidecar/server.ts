@@ -72,7 +72,7 @@ const vnextState = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'state.js')) as {
 const vnextLog = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'log.js')) as {
   setLogSink(fn: ((tag: string, msg: string) => void) | null): void;
 };
-const recoveryCenter = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'recovery-center', 'register.js')) as {
+const recoveryCenter = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'recovery-center', 'register-sidecar.js')) as {
   init(d: {
     appVersion: string;
     profile: string;
@@ -902,11 +902,11 @@ const updater = require(path.join(DSH_DESKTOP_ROOT, 'updater.js')) as {
   applyUpdate(c: unknown, latest: string, o: { onProgress: (ev: string) => void }): Promise<void>;
 };
 const onboardingLogic = require(path.join(DSH_DESKTOP_ROOT, 'scripts', 'onboarding.js')) as {
-  CORE_PLUGIN_IDS: string[];
-  RECOMMENDED_PLUGIN_IDS: string[];
+  CORE_PLUGIN_IDS: Set<string>;
+  RECOMMENDED_PLUGIN_IDS: Set<string>;
   pluginCurrentState(entries: unknown[], plugins: unknown[]): Record<string, boolean>;
-  buildSelectionOps(plugins: unknown[], coreIds: string[], want: Set<string>, current: Record<string, boolean> | null): Array<{ id: string; enable: boolean }>;
-  sanitizeSelection(ids: unknown, plugins: unknown[], coreIds: string[]): Set<string>;
+  buildSelectionOps(plugins: unknown[], coreIds: Set<string>, want: Set<string>, current: Record<string, boolean> | null): Array<{ id: string; enable: boolean }>;
+  sanitizeSelection(ids: unknown, plugins: unknown[], coreIds: Set<string>): Set<string>;
   buildCatalog(plugins: unknown[], o: unknown): unknown[];
 };
 let agentUpdateBusy = false;
@@ -1029,10 +1029,10 @@ Object.assign(methods, {
     const ids = p && Array.isArray(p.ids) ? p.ids : [];
     try {
       (profileMod.ensureDesktopProfileInit as () => void)();
-      const want = (onboardingLogic.sanitizeSelection as (i: unknown, p: unknown[], c: string[]) => Set<string>)(ids, companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS);
+      const want = (onboardingLogic.sanitizeSelection as (i: unknown, p: unknown[], c: Set<string>) => Set<string>)(ids, companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS);
       const current = wizardMode === 'rerun' ? pluginCurrentState() : null;
       const ops = (onboardingLogic.buildSelectionOps as unknown as (
-        p: unknown[], c: string[], w: Set<string>, cur: Record<string, boolean> | null,
+        p: unknown[], c: Set<string>, w: Set<string>, cur: Record<string, boolean> | null,
       ) => Array<{ id: string; enable: boolean }>)(companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS, want, current);
       const errors: string[] = [];
       for (const op of ops) {

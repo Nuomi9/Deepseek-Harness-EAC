@@ -16,7 +16,7 @@
 import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
-import { updCtx, APP_ROOT } from './runtime-paths';
+import { updCtx, APP_ROOT } from './runtime-paths.js';
 // updater.js 尚未类型化（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
   loadSettings(c: ReturnType<typeof updCtx>): { shareWebProfile?: boolean };

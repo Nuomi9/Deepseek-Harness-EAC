@@ -29,7 +29,7 @@ export const EXTRA_PACKAGE_FILES = [
   'README.md', 'README.zh.md', 'THIRD-PARTY-NOTICES.md',
 ];
 
-const COPY_STAMP = '.eac-copy-stamp.json';
+export const COPY_STAMP = '.eac-copy-stamp.json';
 
 // 顶层候选文件与目录（拷贝清单；多算/漏算只影响戳记稳定性，不会拷错内容：
 // 目录不存在时走树器直接跳过）。与旧实现清单逐项一致。
@@ -109,6 +109,13 @@ function walkCopySet(src: string, onFile: (rel: string, st: fs.Stats) => void): 
   }
 }
 
+/** 拷贝清单内的相对路径列表（兼容旧 companion-sync 导出面；实现复用单遍走树）。 */
+export function pluginCopyEntries(src: string): string[] {
+  const out: string[] = [];
+  walkCopySet(src, (rel) => out.push(rel));
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // 内容戳记（Task 12.2：{v,f,b} → {v,f,b,h}）
 // ---------------------------------------------------------------------------
@@ -182,14 +189,55 @@ export function invalidatePluginStampCache(): void {
   stampCache.clear();
 }
 
+// ---------------------------------------------------------------------------
+// 目标完整性判定（vnext-absorb Phase 3 保留项，带进程内缓存）
+// ---------------------------------------------------------------------------
+// 本地 companion-copy-integrity 契约：源戳记一致但目标文件被外部移除（中断
+// 拷贝 / 杀软清理）时必须重拷。重构版为提速丢弃了该判定；这里保留语义，
+// 但把判定结果按 (dest, stamp, dest 顶层 mtime) 缓存 —— 同进程内第二次
+// sync 时目标未被我们自己改写、mtime 不变 → 命中缓存免全量走目标树。
+const completeCache = new Map<string, { mtimeMs: number; stamp: string; complete: boolean }>();
+
+/** 目标是否与源拷贝清单完整一致（带进程内判定缓存）。 */
+export function pluginCopyIsComplete(src: string, dest: string, stamp: string): boolean {
+  try {
+    const mtimeMs = fs.statSync(dest).mtimeMs;
+    const hit = completeCache.get(dest);
+    if (hit && hit.mtimeMs === mtimeMs && hit.stamp === stamp) return hit.complete;
+    let complete = true;
+    try {
+      const entries = new Set<string>();
+      walkCopySet(src, (rel) => entries.add(rel));
+      for (const rel of entries) {
+        const target = path.join(dest, rel);
+        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+          complete = false;
+          break;
+        }
+      }
+    } catch {
+      complete = false;
+    }
+    completeCache.set(dest, { mtimeMs, stamp, complete });
+    return complete;
+  } catch {
+    return false;
+  }
+}
+
+/** 清空完整性判定缓存（源树被整体替换时调用）。 */
+export function invalidatePluginCompleteCache(): void {
+  completeCache.clear();
+}
+
 /** 拷贝插件包到 profile node_modules（内容戳记一致则跳过；幂等）。 */
 export function copyPluginPackage(profileDirP: string, src: string, name: string): void {
   const destRoot = path.join(profileDirP, 'node_modules', ...name.split('/'));
   const stampFile = path.join(destRoot, COPY_STAMP);
   const want = pluginStampOf(src);
   try {
-    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want) {
-      return; // 内容未变：跳过全量重拷
+    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want && pluginCopyIsComplete(src, destRoot, want)) {
+      return; // 内容未变 + 目标完整：跳过全量重拷
     }
   } catch {
     /* 比对失败按需重拷 */

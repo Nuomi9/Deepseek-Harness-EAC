@@ -8,8 +8,8 @@
 import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
-import { APP_ROOT, updCtx } from './runtime-paths';
-import { DESKTOP_PROFILE, desktopProfileDir } from './profile';
+import { APP_ROOT, updCtx } from './runtime-paths.js';
+import { DESKTOP_PROFILE, desktopProfileDir } from './profile.js';
 // companion-sync / updater / shortcut-maintenance 尚未类型化（Wave 2/3 收编）。
 const updater = require('../../updater') as {
   loadSettings(c: ReturnType<typeof updCtx>): ShortcutSettings;

@@ -19,7 +19,8 @@ const dd = path.join(root, 'dsh-desktop');
 const staged = path.join(root, 'tauri-shell', 'staged-resources');
 const skipNpm = process.argv.includes('--skip-npm');
 
-// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 已废弃，不再打包）。
+// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 已废弃，不再打包；
+// wsl-backend.js 已随 refactor 删除，Task 0 起不再装配）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
   'balance.js', 'session-watcher.js', 'session-encoding-heal.js', 'profile-module-heal.js',
@@ -27,7 +28,7 @@ const ROOT_FILES = [
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
   'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
-  'wsl-backend.js', 'host-bootstrap.js',
+  'host-bootstrap.js',
 ];
 const LIB_DESKTOP = [
   'file-roots.js', 'proc.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',
@@ -48,7 +49,7 @@ const LIB_VNEXT = [
   'supervisor/permissions.js', 'supervisor/incidents.js',
   'extension-host/manager.js', 'extension-host/bridge-server.js',
   'extension-host/job-fence.js', 'extension-host/rpc.js', 'extension-host/sdk/index.js',
-  'recovery-center/register.js',
+  'recovery-center/register-sidecar.js',
 ];
 const NATIVE_MODULES = ['supervisor/index.node', 'snapshot/index.node'];
 

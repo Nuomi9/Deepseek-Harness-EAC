@@ -171,3 +171,14 @@ export const state: AppState = {
   previewStaticPort: 0,
   eacBridge: null,
 };
+
+/**
+ * 由 sidecar boot 链注入真实路径（Tauri 三层架构，Task 3.5 吸收 main 侧
+ * vnext-absorb 变体的导出面）：幂等，缺失字段保持原值。Electron 宿主不走
+ * 本函数（main.ts 启动时逐项赋值），因此对既有 Electron 路径零影响。
+ */
+export function initVNextState(d: Partial<Pick<AppState, 'dshHome' | 'userDataDir' | 'logsDir'>>): void {
+  if (d.dshHome) state.dshHome = d.dshHome;
+  if (d.userDataDir) state.userDataDir = d.userDataDir;
+  if (d.logsDir) state.logsDir = d.logsDir;
+}

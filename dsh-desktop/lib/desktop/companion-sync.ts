@@ -7,10 +7,10 @@
 import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
-import { updCtx, APP_ROOT } from './runtime-paths';
-import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './profile';
-import { ensureGuard } from './guard-box';
-import { applySessionManageFix } from './runtime-patches';
+import { updCtx, APP_ROOT } from './runtime-paths.js';
+import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './profile.js';
+import { ensureGuard } from './guard-box.js';
+import { applySessionManageFix } from './runtime-patches.js';
 // 未类型化依赖（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
   loadSettings(c: ReturnType<typeof updCtx>): { removedPlugins?: unknown };

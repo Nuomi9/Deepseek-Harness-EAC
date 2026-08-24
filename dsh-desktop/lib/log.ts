@@ -14,6 +14,22 @@
 import * as structuredLogger from '../logger.js';
 import { state } from './state.js';
 
+/** 外部注入的日志出口（Tauri sidecar 宿主；null = 默认双通道行为）。 */
+export type LogSink = (tag: string, msg: string) => void;
+
+let sinkOverride: LogSink | null = null;
+
+/**
+ * 注入日志出口（Tauri sidecar boot 链调用，幂等；Task 3.5 吸收 main 侧
+ * vnext-absorb 变体的导出面）。设置后 log() 只走注入 sink（sidecar 的
+ * stderr → Rust 壳统一收集），不再写 desktop.log/结构化通道——两通道的
+ * 初始化依赖 Electron userData 流程，sidecar 宿主不适用。Electron 宿主
+ * 不调用本函数，行为保持双通道不变。
+ */
+export function setLogSink(fn: LogSink | null): void {
+  sinkOverride = fn;
+}
+
 /** 把 Date 格式化为 `YYYY-MM-DD HH:mm:ss.SSS UTC+HH:MM`（本地时间+偏移）。 */
 function formatLocalTimestamp(d: Date): string {
   const off = -d.getTimezoneOffset();
@@ -34,6 +50,15 @@ function formatLocalTimestamp(d: Date): string {
  * @param msg 消息文本（结构化通道会做 PII 脱敏）。
  */
 export function log(tag: string, msg: string): void {
+  if (sinkOverride) {
+    // sidecar 宿主：日志只走注入出口（sink 故障不影响业务）。
+    try {
+      sinkOverride(tag, msg);
+    } catch {
+      /* 忽略 sink 异常 */
+    }
+    return;
+  }
   const line = `[${formatLocalTimestamp(new Date())}] [${tag}] ${msg}\n`;
   // 通道 1：desktop.log 纯文本（写入流可能尚未初始化/已销毁，静默容错）。
   try {
