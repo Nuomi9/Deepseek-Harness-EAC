@@ -48,7 +48,7 @@ function desktopShortcutDirs(userDesktop: string, publicRoot: string): Array<{ s
 }
 
 interface LnkLike { target?: string; icon?: string; args?: string; arguments?: string; description?: string }
-interface ClassifyOpts { target?: string; previousTarget?: string | null; managedIcon?: string }
+interface ClassifyOpts { target?: string; previousTarget?: string | null | undefined; managedIcon?: string | undefined }
 
 function classifyManagedShortcut(entry: { filePath?: string; link?: LnkLike | null } | null, {
   target,

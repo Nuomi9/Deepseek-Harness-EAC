@@ -242,7 +242,7 @@ export async function processPendingMarketOps(): Promise<void> {
         resolve();
         return;
       }
-      const { marker, job } = items[idx];
+      const { marker, job } = items[idx]!;
       const retried = retriedMarkers.has(marker);
       const attempts = Number(job.attempts || 0) + 1;
       const action = job.kind === 'uninstall' ? 'remove' : 'add';

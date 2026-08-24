@@ -70,8 +70,8 @@ window.__ModuleLoader__.load({
         if (current === document.body || current === document.documentElement) break
         const rect = rectOf(current)
         const role = String(current.getAttribute('role') || '').toLowerCase()
-        if (role === 'dialog' && rect.width >= 280 && rect.height >= 200 && settingsSignalCount(current) >= 2) return current
-        if (rect.width >= 320 && rect.height >= 220 && settingsSignalCount(current) >= 3) return current
+        if (role === 'dialog' && rect.width >= 200 && rect.height >= 150 && settingsSignalCount(current) >= 1) return current
+        if (rect.width >= 250 && rect.height >= 180 && settingsSignalCount(current) >= 2) return current
         current = current.parentElement
       }
       return null
@@ -105,13 +105,13 @@ window.__ModuleLoader__.load({
       }
 
       const navigationSignals = []
-      for (const element of document.querySelectorAll('button, a, [role="tab"], [role="menuitem"]')) {
+      for (const element of document.querySelectorAll('button, a, [role="tab"], [role="menuitem"], nav a, nav button')) {
         const text = normalizedText(element)
-        if (text.length <= 24 && SETTINGS_LABELS.includes(text) && isVisible(element)) {
+        if (text.length <= 32 && SETTINGS_LABELS.some(label => text.includes(label)) && isVisible(element)) {
           navigationSignals.push(element)
         }
       }
-      if (navigationSignals.length >= 2) {
+      if (navigationSignals.length >= 1) {
         const ancestor = commonAncestor(navigationSignals)
         if (ancestor !== null) seeds.push(ancestor)
       }
@@ -138,11 +138,11 @@ window.__ModuleLoader__.load({
       if (!isVisible(element) || isExcludedScrollable(element)) return -1
       const clientHeight = Number(element.clientHeight || 0)
       const scrollHeight = Number(element.scrollHeight || 0)
-      if (clientHeight < 72 || scrollHeight <= clientHeight + 3) return -1
+      if (clientHeight < 24 || scrollHeight <= clientHeight + 1) return -1
 
       const rect = rectOf(element)
       const rootRect = rectOf(root)
-      if (rect.width < 100 || rect.height < 72) return -1
+      if (rect.width < 50 || rect.height < 40) return -1
 
       const style = window.getComputedStyle(element)
       let score = Math.min(scrollHeight - clientHeight, 2000)
@@ -150,6 +150,7 @@ window.__ModuleLoader__.load({
       if (style.overflowY === 'auto' || style.overflowY === 'scroll') score += 300
       const role = String(element.getAttribute('role') || '').toLowerCase()
       if (role === 'navigation' || role === 'tablist') score += 400
+      if (element.tagName === 'NAV') score += 500
       if (rootRect.width > 0 && rect.width < rootRect.width * 0.45) score += 120
       score += Math.min(rect.width * rect.height / 1000, 300)
       return score
@@ -157,7 +158,10 @@ window.__ModuleLoader__.load({
 
     function collectScrollableCandidates(root) {
       const all = [root, ...root.querySelectorAll('*')]
-      return all
+      // Also include nav elements within the root
+      const navElements = root.querySelectorAll('nav')
+      const combined = [...new Set([...all, ...navElements])]
+      return combined
         .map(element => ({ element, score: scoreCandidate(element, root) }))
         .filter(entry => entry.score >= 0)
         .sort((left, right) => right.score - left.score)
@@ -226,9 +230,9 @@ window.__ModuleLoader__.load({
       }
 
       const canScroll = (element, delta) => {
-        if (element.scrollHeight <= element.clientHeight + 1) return false
+        if (element.scrollHeight <= element.clientHeight) return false
         if (delta < 0) return element.scrollTop > 0
-        return element.scrollTop + element.clientHeight < element.scrollHeight - 1
+        return element.scrollTop + element.clientHeight < element.scrollHeight
       }
 
       const wheelDeltaPixels = event => {

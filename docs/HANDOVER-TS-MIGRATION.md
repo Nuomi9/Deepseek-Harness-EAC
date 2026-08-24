@@ -164,6 +164,9 @@
 - 官方内核 `@deepseek-ai/*`（上游已是 TS，npm 包为产物）
 - 第三方社区插件包本体（assets/plugins 中非自研部分）——只补类型，不改实现
 - 纯静态资源（皮肤 CSS/HTML、桌宠素材、加载页）
+- **`main.js`（冻结的 Electron 回退链，2026-08-24 vnext-absorb 决策登记豁免）**：R8 红线已冻结、
+  不再进入 Tauri 发布产物（stage-resources ROOT_FILES 已剔除），转换是纯风险无发布收益；
+  `electron .` 开发回退继续跑手写 main.js。豁免条件：任何触碰 main.js 的改动需另行评审。
 
 ---
 
@@ -182,6 +185,17 @@
 > 内核决议：**保留 0.1.0-rc.7**。
 > 下一步顺序：companion-sync 收官 Wave 2 → P2 Rust 回环 WS 桥（main.rs 改指 server.js 弃 ping.js、
 > tauri-plugin-single-instance/notification/dialog、浮窗 per-webview data_directory PoC）。
+
+> **2026-08-24 vnext-absorb 执行进度（更新③，见 HANDOVER-R9）**：Wave 2 ✅ 收官（companion-sync
+> 已 .ts，且 plugin-copy 收编至 lib/plugin-copy.ts）；**Wave 3 ✅**（根模块 logger/updater/
+> client-updater/plugin-guard/plugin-updater/rescue-agent/renderer-recovery 等全部 .ts）；
+> **Wave 4 ✅ 活层**（sidecar server.ts 本就 .ts、ping.js 已转、发布链 6 脚本 .ts、preload.ts）；
+> **测试套件 ✅**（77×.mjs → .ts，Node 24 type-stripping 直跑，test-runner 默认 test/*.test.ts）。
+> tsconfig 追加 noUncheckedIndexedAccess/exactOptionalPropertyTypes/noImplicitOverride（保留
+> commonjs + import-equals 直译，刻意不启 erasableSyntaxOnly——测试 import 编译产物无需
+> type-stripping）。main.js 冻结不转（登记豁免，见 §3.5）。在此基础上落地插件隔离体系
+> （ADR 0003：L2 sidecar 为 Supervisor）+ Rust 原生双模块 + 恢复中心（Tauri 窗口），
+> 653/653 测试全绿。总验收剩余：随机社区插件回归抽样 + 打包体积/冷启动无劣化（Phase 5）。
 
 > 原则：**渐进式、每波全绿、行为零变更**。复用 T1「纯移动」的验证体系（608 测试 + CDP 真实启动），在其上叠加 `tsc --noEmit` 类型门禁。
 

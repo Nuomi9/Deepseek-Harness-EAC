@@ -62,6 +62,36 @@ const bootMod = mount('boot-server');
 
 const MOUNTED = ['proc', 'runtime-paths', 'profile', 'guard-box', 'runtime-patches', 'companion-sync', 'plugin-ops', 'market', 'shortcuts', 'junction-patrol', 'client-update', 'static-preview', 'file-roots', 'boot-server'];
 
+// ---- vnext 隔离体系（vnext-absorb Phase 2）：supervisor / extension-host / 恢复中心 ----
+// 这些模块位于 lib/{state,log,supervisor,extension-host,recovery-center}，
+// 不走 lib/desktop 的 mount 通道，按绝对路径 require（编译产物 .js）。
+const vnextState = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'state.js')) as {
+  initVNextState(d: { dshHome?: string; userDataDir?: string; logsDir?: string }): void;
+  state: { eacBridge: { url: string; token: string; close(): void } | null };
+};
+const vnextLog = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'log.js')) as {
+  setLogSink(fn: ((tag: string, msg: string) => void) | null): void;
+};
+const recoveryCenter = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'recovery-center', 'register.js')) as {
+  init(d: {
+    appVersion: string;
+    profile: string;
+    restartWebService(): Promise<{ ok: boolean; url?: string; error?: string }>;
+    requestSafeModeRelaunch(): void;
+  }): void;
+  handleRcAction(action: string, value?: unknown): Promise<Record<string, unknown>>;
+  archivePluginProfiles(): void;
+};
+const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'manager.js')) as {
+  ensureBundledSdkPlugins(): void;
+  startEnabledExtensionHosts(): Promise<void>;
+  shutdownExtensionHosts(): Promise<void>;
+  getExtensionHostManager(): unknown;
+};
+const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
+  startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
+};
+
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
 const desktopProfileFn = profileMod.desktopProfile as () => string;
 const showBoxFallback = async (opts: Record<string, unknown>) => {
@@ -243,6 +273,63 @@ bootMod.init({
 
 say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
 
+// ---- vnext 初始化：日志 sink + 共享状态 + 恢复中心 ctx ----------------------
+vnextLog.setLogSink(log);
+vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
+
+// 前置文件树准备（= main.js boot() 在 startAndShowGuarded 之前的序列，摘除
+// GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽修复 → 构建
+// 产物回填。boot.start 与重启/恢复中心 retry-boot 共用。
+async function preBootSync(): Promise<void> {
+  await (marketMod.processPendingMarketOps as () => Promise<void>)();
+  (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
+  (companionSyncMod.syncCompanionPlugins as () => void)();
+  (marketMod.syncBundledSkills as () => void)();
+  (companionSyncMod.healProfileModules as () => void)();
+  await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
+}
+
+// 原地重启（= main.js restartWebServiceCore）：无锁窗口内消费市场排队 →
+// 同步配套插件 → 修复模块遮蔽 → 恢复保留产物 → 重新拉起。boot.restart 与
+// 恢复中心的 retry-boot 共用；服务未在运行（恢复中心直开模式）时走 boot.start
+// 同款前置链直接拉起。
+async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; port?: number; error?: string }> {
+  const running = (bootMod.state as () => { running: boolean })().running;
+  (bootMod.setIsRestarting as (v: boolean) => void)(true);
+  try {
+    if (!running) {
+      log('service', '请求启动 dsh web 服务（未在运行）');
+      await preBootSync();
+      const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
+      log('service', 'dsh web 服务已启动: ' + r.webUrl);
+      notify('boot.web-ready', r);
+      return { ok: true, webUrl: r.webUrl, port: r.port };
+    }
+    log('service', '请求重启 dsh web 服务');
+    await (bootMod.killAndWaitForRestart as () => Promise<void>)();
+    await (marketMod.processPendingMarketOps as () => Promise<void>)();
+    (companionSyncMod.syncCompanionPlugins as () => void)();
+    (companionSyncMod.healProfileModules as () => void)();
+    await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
+    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
+    log('service', 'dsh web 服务已重启: ' + r.webUrl);
+    notify('boot.web-ready', r);
+    return { ok: true, webUrl: r.webUrl, port: r.port };
+  } catch (e) {
+    log('service', '重启失败: ' + String(((e as Error).message) || e));
+    return { ok: false, error: String(((e as Error).message) || e) };
+  } finally {
+    (bootMod.setIsRestarting as (v: boolean) => void)(false);
+  }
+}
+
+recoveryCenter.init({
+  appVersion: pkgVersion,
+  profile: desktopProfileFn(),
+  restartWebService: async () => restartWebServiceCore(),
+  requestSafeModeRelaunch: () => notify('shell.relaunch-safe-mode', {}),
+});
+
 // ---- 方法注册表 -----------------------------------------------------------
 interface RpcReq { id: number | null; method: string; params?: Record<string, unknown> }
 type RpcResult = Record<string, unknown>;
@@ -288,14 +375,38 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     // 摘除 GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽
     // 修复 → 构建产物回填。koffi 预检与 junction 巡检属 P3 壳层集成。
     try {
-      await (marketMod.processPendingMarketOps as () => Promise<void>)();
-      (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
-      (companionSyncMod.syncCompanionPlugins as () => void)();
-      (marketMod.syncBundledSkills as () => void)();
-      (companionSyncMod.healProfileModules as () => void)();
-      await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
+      await preBootSync();
     } catch (e) {
       say('boot 前置准备失败（继续尝试拉起服务）: ' + String(((e as Error).message) || e));
+    }
+    // vnext（Phase 2）：插件档案登记 + 示例 SDK 插件安装（幂等）。
+    try {
+      recoveryCenter.archivePluginProfiles();
+    } catch (e) {
+      say('插件档案登记失败: ' + String(((e as Error).message) || e));
+    }
+    try {
+      extHost.ensureBundledSdkPlugins();
+    } catch (e) {
+      say('示例 SDK 插件安装失败: ' + String(((e as Error).message) || e));
+    }
+    // 恢复中心直开模式（Rust 壳检测 DSH_DESKTOP_RECOVERY=1 已打开恢复中心
+    // 窗口）：跳过 dsh web 启动，sidecar 只保持存活供恢复中心动作调用。
+    if (process.env.DSH_DESKTOP_RECOVERY === '1') {
+      say('[vnext] DSH_DESKTOP_RECOVERY=1，跳过 dsh web 启动（恢复中心直开模式）');
+      return { ok: true, recoveryMode: true };
+    }
+    // vnext（Phase 2）：Core Bridge 回环端点必须在拉起 dsh web 之前就绪，
+    // 其 URL/token 经 process.env 注入（childEnv 展开 process.env）。
+    try {
+      const mgr = extHost.getExtensionHostManager();
+      const bridge = await bridgeServer.startExtensionBridgeServer(mgr);
+      vnextState.state.eacBridge = bridge;
+      process.env.DSH_EAC_BRIDGE_URL = bridge.url;
+      process.env.DSH_EAC_BRIDGE_TOKEN = bridge.token;
+      say('[vnext] Core Bridge 端点就绪: ' + bridge.url);
+    } catch (e) {
+      say('[vnext] Core Bridge 端点启动失败（隔离工具桥接不可用）: ' + String(((e as Error).message) || e));
     }
     let r: { webUrl: string; port: number };
     try {
@@ -311,6 +422,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     notify('boot.web-ready', r);
     startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
     scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
+    // vnext（Phase 2）：并行拉起全部启用的 SDK 插件宿主（不阻塞 boot）。
+    void extHost.startEnabledExtensionHosts();
     return r;
   },
   'boot.stop': async (): Promise<RpcResult> => {
@@ -353,29 +466,16 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     };
   },
   // 原地重启（= main.js restartWebServiceCore）：无锁窗口内消费市场排队 →
+  // 原地重启（= main.js restartWebServiceCore）：无锁窗口内消费市场排队 →
   // 同步配套插件 → 修复模块遮蔽 → 恢复保留产物 → 重新拉起。
-  'boot.restart': async (): Promise<RpcResult> => {
-    const running = (bootMod.state as () => { running: boolean })().running;
-    if (!running) return { ok: false, error: 'not-running' };
-    log('service', '请求重启 dsh web 服务');
-    (bootMod.setIsRestarting as (v: boolean) => void)(true);
-    try {
-      await (bootMod.killAndWaitForRestart as () => Promise<void>)();
-      await (marketMod.processPendingMarketOps as () => Promise<void>)();
-      (companionSyncMod.syncCompanionPlugins as () => void)();
-      (companionSyncMod.healProfileModules as () => void)();
-      await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
-      const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
-      log('service', 'dsh web 服务已重启: ' + r.webUrl);
-      notify('boot.web-ready', r);
-      return { ok: true, webUrl: r.webUrl, port: r.port };
-    } catch (e) {
-      log('service', '重启失败: ' + String(((e as Error).message) || e));
-      return { ok: false, error: String(((e as Error).message) || e) };
-    } finally {
-      (bootMod.setIsRestarting as (v: boolean) => void)(false);
-    }
+  'boot.restart': async (): Promise<RpcResult> => restartWebServiceCore(),
+  // ---- 恢复中心（vnext-absorb Phase 2）：Rust 壳创建的恢复中心窗口经专用
+  // preload（WS JSON-RPC）调用这两个方法；动作分发在 lib/recovery-center。----
+  'rc.action': async (p): Promise<RpcResult> => {
+    const action = String((p && p.action) || '');
+    return await recoveryCenter.handleRcAction(action, p && p.value);
   },
+  'rc.close': (): RpcResult => ({ ok: true }),
 };
 
 // P3 渐进收编：尚未在 sidecar 落地的桥方法返回 null（桥/插件侧按「无数据」
@@ -520,8 +620,8 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
             continue;
           }
           const providerMatch = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([a-z][\\w-]*)\\s*:`));
-          if (providerMatch && !inModels && !['models', 'baseurl', 'apikeyenv', 'displayname', 'api'].includes(providerMatch[1].toLowerCase())) {
-            currentProvider = providerMatch[1];
+          if (providerMatch && !inModels && !['models', 'baseurl', 'apikeyenv', 'displayname', 'api'].includes(providerMatch[1]!.toLowerCase())) {
+            currentProvider = providerMatch[1]!;
             continue;
           }
           if (/^\s+models\s*:/i.test(line) && indent > providerIndent) { inModels = true; modelsIndent = indent; continue; }
@@ -530,19 +630,19 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
               inModels = false;
               currentModel = null;
               const reProvider = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([\\w][\\w-]*)\\s*:`));
-              if (reProvider) currentProvider = reProvider[1];
+              if (reProvider) currentProvider = reProvider[1]!;
               continue;
             }
             const modelMatch = line.match(/^\s+-\s+id\s*:\s*(\S+)/);
             if (modelMatch) {
-              const modelId = modelMatch[1].replace(/^["']|["']$/g, '');
+              const modelId = modelMatch[1]!.replace(/^["']|["']$/g, '');
               currentModel = { id: modelId, name: modelId, provider: currentProvider };
               models.push(currentModel);
               continue;
             }
             const nameMatch = line.match(/^\s+name\s*:\s*(.+)/);
             if (nameMatch && currentModel) {
-              currentModel.name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+              currentModel.name = nameMatch[1]!.trim().replace(/^["']|["']$/g, '');
               continue;
             }
           }
@@ -1010,7 +1110,7 @@ function respond(msg: Record<string, unknown>): void {
 
 function modCall(name: string, fn: string, args: unknown[]): unknown {
   if (!CALLABLE.has(name)) throw new Error('module not callable: ' + name);
-  const f = MODULES_BY_NAME[name][fn];
+  const f = MODULES_BY_NAME[name]![fn];
   if (typeof f !== 'function') throw new Error('no export: ' + name + '.' + fn);
   return (f as (...a: unknown[]) => unknown)(...(Array.isArray(args) ? args : []));
 }
@@ -1036,6 +1136,12 @@ async function handleLine(line: string): Promise<void> {
   try {
     if (method === 'ping') return respond({ jsonrpc: '2.0', id, result: { pong: true, ts: Date.now() } });
     if (method === 'shutdown') {
+      // vnext（Phase 2）：退出前树杀全部 Extension Host（含 Core Bridge 端点）。
+      try {
+        await extHost.shutdownExtensionHosts();
+      } catch (e) {
+        say('关闭插件宿主异常: ' + String(((e as Error).message) || e));
+      }
       respond({ jsonrpc: '2.0', id, result: { bye: true } });
       rl.close();
       return;

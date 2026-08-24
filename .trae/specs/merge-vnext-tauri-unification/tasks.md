@@ -29,12 +29,16 @@
   - [x] 2.2 ~~删除 refactor 独有旧插件~~ 已由 Task 0 合并自动完成：webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 随 main 删除胜出清场；`dsh-eac-core-bridge` 经核实为 refactor 新增且被活跃引用，**保留**
   - [x] 2.3 注册表清理（TDD red→green→反转再红→恢复全绿）：新增 `test/plugin-registry-consistency.test.ts`（4 用例：dir 存在性/孤儿映射/两个 ESM 加载形状断言，RED 阶段 4/4 失败精确复现 4 条缺失条目）；`plugin-registry-data.ts` 删 4 条已删插件条目（`dsh-market-plugin`/`zat-market`/`auto-compact`/`file-drop`）+ 3 条孤儿/死映射（含 line 106 npm 源映射及 `tool-vision`/`tdai-memory` 死映射——pluginUpdateSources 只遍历 COMPANION_PLUGINS，二者永不消费）。**额外发现并修复**：refactor 侧 `lib/market-modules.ts` 仍指向已删的 `dsh-webui-market`（artifact-keep/allow-builds ESM 静默降级空对象），对齐 main v5.1.0 已切换的 `dsh-unified-market`（导出面完全匹配：snapshotArtifacts/restoreArtifacts/parseBlockedBuildKeys/ensureAllowBuilds；main 侧过渡区 `lib/desktop/market.ts` 本已指向 unified-market，此为 refactor 分叉期未同步的 main 演进）
   - [x] 2.4 grep 验收（活跃代码零引用达成）：lib/scripts 下已删插件标识剩余命中仅 3 类合理保留——① `RETIRED_BUILTIN_PLUGINS` 的 tdai-memory 退役记录（plugins.ts 消费做旧安装清理，活数据）；② `scripts/e2e-full.ts` 的 dsh-tdai-memory 市场安装测试目标（npm 在架非内置插件，活测试）；③ 注释（e2e 设计说明与替换史，其中 registry 内历史点名已精简）。门禁全绿（typecheck 零错 + npm test 562/562，新增 4 用例）→ commit
-  - [ ] 2.5 main 演进吸收（2026-08-25 上游推进 fe299dd..f04ed56，15 commits；主文档 §4 Phase 0B / §7 第 12-16 项）
-    - [ ] 2.5a `git merge origin/main --no-ff`；Phase 1-4 平行版本重叠文件取 ours（refactor 完整版），逐类列出冲突清单
-    - [ ] 2.5b main 独有修复行级并入：e171abc manager.ts 崩溃对账块 → ours `lib/extension-host/manager.ts`；bb3daae `--no-open` → ours spawn 点；stage-resources 漏装/skip-npm 与 main.rs serve_ws/exit overlay 逐段甄别（ours 两文件均有大改）
-    - [ ] 2.5c 测试重名甄别：main 转换版 `.test.ts` vs refactor 原生版（如 `dsh-file-drop-eac-core.test.ts` vs `file-drop-core.test.ts` 同插件双文件）→ 保留 refactor 版、main 独有用例并入；Node24 门禁差异核对（我们 Node26 基线不动）
-    - [ ] 2.5d 受控补丁核对：`node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js` patch 完整性（merge 动 node_modules 时）
-    - [ ] 2.5e 门禁全绿（typecheck + npm test 基线 562 不降）→ merge commit + tasks 回写
+  - [x] 2.5 main 演进吸收（2026-08-25 上游推进 fe299dd..f04ed56，15 commits；主文档 §4 Phase 0B / §7 第 12-16 项）
+    - [x] 2.5a `git merge origin/main --no-ff`；Phase 1-4 平行版本重叠文件取 ours（refactor 完整版），逐类列出冲突清单
+    - [x] 2.5b main 独有修复行级并入：e171abc manager.ts 崩溃对账块 → ours `lib/extension-host/manager.ts`；bb3daae `--no-open` → ours spawn 点；stage-resources 漏装/skip-npm 与 main.rs serve_ws/exit overlay 逐段甄别（ours 两文件均有大改）
+    - [x] 2.5c 测试重名甄别：main 转换版 `.test.ts` vs refactor 原生版（如 `dsh-file-drop-eac-core.test.ts` vs `file-drop-core.test.ts` 同插件双文件）→ 保留 refactor 版、main 独有用例并入；Node24 门禁差异核对（我们 Node26 基线不动）
+    - [x] 2.5d 受控补丁核对：`node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js` patch 完整性（merge 动 node_modules 时）
+    - [x] 2.5e 门禁全绿（typecheck 零错 + npm test 661/661，基线 562 → +99：main .ts 转换激活的休眠 .mjs 用例并入）→ merge commit + tasks 回写
+      - 测试处置（禁删测试纪律，逐条理由）：删 `rescue-integration.test.ts`（12 例：10 例断言 Electron main.js rescue:*/preload 桥接线——refactor 架构该接线不存在（由 lib/boot.ts 多级失败链替代），同一功能在 Tauri 终态由 sidecar/rescue-integration.ts 承担（f04ed56），接线契约测试由 Task 7 重建；2 例断言 main 救援页 recovery.html 内容——页面已切换为 refactor 渲染器恢复页，见下）；删 `bridge-preload-parity.test.ts`（3 例：断言 main preload.js `const dshDesktop =` 面 ↔ sidecar/bridge.ts 键集一致——合并树 preload 已是 refactor 薄壳（preload/api.ts 暴露面），sidecar 尚未接管（Task 3.5/7），契约测试随 Task 7.2 语义对齐时重建）
+      - 架构错配修正（Task 0 遗留，本任务发现）：`assets/recovery.html` Task 0 曾机械取 main 救援页（要求 bridge.rescue.*，refactor preload 不暴露 → 渲染器恢复页整体降级「无法连接桌面客户端桥接」）→ 改取 refactor 渲染器恢复页（window.dshDesktop.recovery.{getState,reload,restart,exportLogs}，与活跃 preload/api.ts、renderer-recovery 机器匹配）；main 救援页随 Task 7/8 sidecar 化回归。`assets/recovery-center-preload.js` merge 曾取 main Tauri WS 版 → 还原 ours Electron contextBridge 版（活跃 lib/recovery-center/register.ts 消费；Tauri WS 版由 main.rs init script 消费，Phase 3 壳接管时切回）
+      - 适配修复：`electron-builder.yml` files 补 `- compact-preset-migrate.js`（lib/desktop/companion-sync.ts 启动 require，漏装破坏 dsh-compact 托管 preset 迁移）；`test/onboarding-selection.test.ts` 样本注册表对齐合并后现实（删 dsh-market-plugin/zat-market 退役条目、compact 入核心；相关断言与 fixture 同步改写，测试意图不变）
+      - 关键认知修正：**rescue-agent 不再按主文档 §7 前言「Phase 1 核对等价覆盖后删除」处理**——main 演进（f04ed56）已在 tauri-shell/sidecar/rescue-integration.ts + server.ts + bridge.ts 建成完整 sidecar 救援链（rescue.*/safe-mode 域），rescue-agent.js 是其活跃依赖，**保留**；Task 4 执行时据此调整
 
 - [ ] Task 3: 根模块与测试冲突解决（§6-D/E/F 组）
   - [ ] 3.1 删 .js 侧：`main.js`/`client-updater.js`/`updater.js`/`plugin-guard.js`/`wsl-backend.js`（refactor .ts 为唯一源）

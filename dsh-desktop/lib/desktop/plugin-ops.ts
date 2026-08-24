@@ -231,9 +231,9 @@ export const IMAGE_PASTE_EXT: Record<string, string> = {
 export function imagePasteSave(dataUrl: string, name: string): { ok: boolean; error?: string; path?: string; size?: number } {
   const m = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
   if (!m) return { ok: false, error: '不是合法的图片 data URL' };
-  const mime = m[1].toLowerCase();
+  const mime = m[1]!.toLowerCase();
   if (!IMAGE_PASTE_EXT[mime]) return { ok: false, error: '不支持的图片类型: ' + mime };
-  const buf = Buffer.from(m[2], 'base64');
+  const buf = Buffer.from(m[2]!, 'base64');
   if (buf.length === 0) return { ok: false, error: '图片内容为空' };
   if (buf.length > IMAGE_PASTE_MAX_BYTES) return { ok: false, error: '图片超过 15MB 上限' };
   const dir = path.join(os.tmpdir(), 'dsh-paste');

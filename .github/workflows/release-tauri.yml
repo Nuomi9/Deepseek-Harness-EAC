@@ -68,7 +68,7 @@ jobs:
       - name: 安装 Node.js（含 npm 缓存）
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 
@@ -102,6 +102,9 @@ jobs:
 
       - name: 运行测试
         run: npm test
+
+      - name: 构建 Rust 原生模块（supervisor + snapshot，供 stage-resources 装配）
+        run: npm run build:native && npm run build:native -- snapshot
 
       - name: 装配打包资源（staged-resources：sidecar + dsh-desktop 运行树）
         # tauri-shell 与 dsh-desktop 是仓库根下的兄弟目录（R6 静态自查修正）

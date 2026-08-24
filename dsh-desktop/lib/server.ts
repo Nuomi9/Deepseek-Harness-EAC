@@ -100,7 +100,7 @@ export async function startServer(
       return;
     }
     const out = fs.createWriteStream(path.join(state.logsDir, 'dsh-web.log'), { flags: 'a' });
-    log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port ${webPort}`);
+    log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port ${webPort} --no-open`);
     // --use-system-ca: 让 dsh web 进程信任系统证书库（代理/MITM 场景下内置 node 的
     // 默认 CA 无法验证，导致插件市场等对外 fetch 失败）。
     const patchArgs = overlays
@@ -108,7 +108,9 @@ export async function startServer(
       .flatMap((p) => ['--patch', p]);
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
     // 硬编码别名，不接受父级 --profile）；app 入口由 profile bundles 决定，
-    // --host/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
+    // --host/--no-open/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
+    // --no-open：web-app 内核插件的 openBrowser 默认 true，就绪后会用系统默认
+    // 浏览器再开一次本端口 URL；壳已有自己的窗口，必须关掉这个行为（bb3daae）。
     const proc = spawn(
       nodeBin,
       [
@@ -118,6 +120,7 @@ export async function startServer(
         desktopProfile(),
         '--host',
         '127.0.0.1',
+        '--no-open',
         '--port',
         String(webPort),
         ...patchArgs,

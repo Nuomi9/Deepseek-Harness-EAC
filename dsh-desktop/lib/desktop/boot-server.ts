@@ -95,10 +95,12 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
       .filter((p) => typeof p === 'string' && p && fs.existsSync(p))
       .flatMap((p) => ['--patch', p]);
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
-    // 硬编码别名，不接受父级 --profile）；--host/--port 透传给该 app。
+    // 硬编码别名，不接受父级 --profile）；--host/--no-open/--port 透传给该 app。
+    // --no-open：web-app 内核插件的 openBrowser 默认 true，就绪后会用系统默认
+    // 浏览器再开一次本端口 URL；壳已有自己的窗口，必须关掉这个行为。
     const proc = cp.spawn(
       nodeBin,
-      ['--use-system-ca', bin, '--profile', ctx.getDesktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs],
+      ['--use-system-ca', bin, '--profile', ctx.getDesktopProfile(), '--host', '127.0.0.1', '--no-open', '--port', String(webPort), ...patchArgs],
       {
         cwd: ctx.getUserDataDir(),
         env: childEnv(),
@@ -147,7 +149,7 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
       for (const line of text.split(/\r?\n/)) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
         if (!m) continue;
-        const blocked = restrictedPortOf(m[1]);
+        const blocked = restrictedPortOf(m[1]!);
         if (blocked && opts.unsafePortRetries > 0) {
           // 端口命中 Chromium 受限列表：结束该实例重启换端口（有上限）。
           handedOff = true;
@@ -164,14 +166,14 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
         }
         // 稳定端口：若 dsh 最终监听端口与请求的不同（极端兜底），以实际为准并保存。
         try {
-          const actual = Number(new URL(m[1]).port) || 0;
+          const actual = Number(new URL(m[1]!).port) || 0;
           if (actual > 0 && actual !== opts.expectedPort) {
             const settings = ctx.loadSettings();
             settings.webPort = actual;
             ctx.saveSettings(settings);
           }
         } catch { /* URL 解析失败时忽略 */ }
-        finish(null, m[1]);
+        finish(null, m[1]!);
       }
     };
     const onStderrData = (chunk: Buffer) => output.write(chunk);

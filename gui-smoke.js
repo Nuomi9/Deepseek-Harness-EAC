@@ -183,48 +183,40 @@ async function listOrphans() {
     const mainBarStill = await c.evalJs('!!document.getElementById("__dsh_desktop_chrome__")');
     check('主窗仍为 36px 完整栏（浮窗模式未串扰）', mainBarStill);
 
-    // 7) 退出策略页（exitAction=ask 默认）：win.close → /exit 选择页 → 取消回跳。
-    //    导航会销毁 CDP 执行上下文 —— 每次导航后重取 target 重建会话。
+    // 7) 退出策略（exitAction=ask 默认）：win.close → 退出确认 overlay 注入主窗。
+    //    overlay 方案不新建窗口、不替换页面（旧 /exit 导航已移除）——
+    //    无导航则 CDP 会话不销毁，同一 c 会话可观察与操作。
+    const waitOverlay = (present) => c.evalJs(`new Promise(function(res) {
+      var t = setTimeout(function() { res(false); }, 12000);
+      (function chk() {
+        if ((${present} ? !!document.getElementById('dsh-exit-overlay') : !document.getElementById('dsh-exit-overlay'))) { clearTimeout(t); res(true); }
+        else setTimeout(chk, 250);
+      })();
+    })`).catch(() => false);
     await c.evalJs('window.dshDesktop.windowControls.close()');
-    await sleep(2200);
-    c.close();
-    const exitTarget = await waitForTarget((t) => t.type === 'page' && t.url.includes(`:19873/exit`), 15000).catch(() => null);
-    let onExitPage = false;
-    if (exitTarget) {
-      const ce = cdp(exitTarget.webSocketDebuggerUrl);
-      await ce.ready;
-      onExitPage = await ce.evalJs(`new Promise(function(res) {
-        var t = setTimeout(function() { res(false); }, 12000);
-        (function chk() {
-          if (document.querySelector('button[data-v=quit]') && document.getElementById('remember')) { clearTimeout(t); res(true); }
-          else setTimeout(chk, 250);
-        })();
-      })`).catch(() => false);
-      check('win.close → /exit 选择页（ask 策略 + 记住选择）', onExitPage === true, exitTarget.url.slice(0, 90));
-      if (onExitPage) {
-        await ce.evalJs(`document.querySelector('button[data-v=cancel]').click(); 0`).catch(() => {});
-        await sleep(2500);
-        ce.close();
-        const backTarget = await waitForTarget((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(t.url) && !t.url.includes(`:${CDP_PORT}`) && !t.url.includes(':19873'), 15000).catch(() => null);
-        check('取消 → 返回 Web UI', !!backTarget, backTarget ? backTarget.url : 'no target');
-      }
-    } else {
-      check('win.close → /exit 选择页（ask 策略）', false, 'exit target not found');
+    await sleep(1500);
+    const overlayShown = await waitOverlay(true);
+    check('win.close → 退出确认 overlay（ask 策略，不替换页面）', overlayShown === true);
+    if (overlayShown) {
+      // 取消 → overlay 消失，主窗与 Web UI 原样保留
+      await c.evalJs(`document.querySelector('#dsh-exit-overlay [data-v=cancel]').click(); 0`).catch(() => {});
+      const dismissed = await waitOverlay(false);
+      check('取消 → overlay 消失且 Web UI 保留', dismissed === true);
+      // 再触发一次，选「退出应用」→ win.close-force → 优雅退出链
+      await c.evalJs('window.dshDesktop.windowControls.close()');
+      await sleep(1500);
+      const overlay2 = await waitOverlay(true);
+      check('再次 win.close → overlay 重现', overlay2 === true);
+      await c.evalJs(`document.querySelector('#dsh-exit-overlay [data-v=quit]').click(); 0`).catch(() => {});
     }
-    // 回到 Web UI 后重建主会话
-    const main2 = await waitForTarget((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(t.url) && !t.url.includes(`:${CDP_PORT}`) && !t.url.includes(':19873'), 15000).catch(() => null);
-    if (!main2) { check('返回 Web UI 会话重建', false, 'no main target'); throw new Error('main target lost after cancel'); }
-    const c2 = cdp(main2.webSocketDebuggerUrl);
-    await c2.ready;
 
-    // 7b) 菜单壳动作：quit（Rust 拦截 → app.exit → 优雅退出链）
-    await c2.evalJs('window.dshDesktop.menu.action("quit")');
+    // 7b) 退出应用（overlay quit 按钮 → win.close-force → app.exit → 优雅退出链）
     const exited = await new Promise((res) => {
       const t0 = Date.now();
       const tick = () => (shell.exitCode !== null ? res(true) : Date.now() - t0 > 20000 ? res(false) : setTimeout(tick, 500));
       tick();
     });
-    check('菜单退出（进程收口）', exited, 'exitCode=' + shell.exitCode);
+    check('退出应用（进程收口）', exited, 'exitCode=' + shell.exitCode);
 
     // 8) 零孤儿：DSH_HOME 指向 tmp 的 node/dsh 进程应已回收
     await sleep(3500);
@@ -232,7 +224,6 @@ async function listOrphans() {
     check('零孤儿进程（sidecar/dsh web 均回收）', orphans === '', orphans || '(none)');
 
     c.close();
-    c2.close();
   } catch (e) {
     check('GUI 冒烟执行流', false, e.message);
     try { shell.kill(); } catch {}

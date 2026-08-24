@@ -29,9 +29,22 @@ interface GuardDeps {
   log(tag: string, msg: string): void;
 }
 
-/** 保护中心实例的已消费面（随 Wave 2/3 消费方扩展）。 */
+/** 保护中心快照档案（对应 plugin-guard 的 meta.json 形态）。 */
+export interface GuardSnapshot {
+  id: string;
+  reason: string;
+  at: string;
+  files: string[];
+  pluginRows: string[];
+}
+
+/** 保护中心实例的已消费面（vnext-absorb：恢复中心补全快照/回滚/事故读取）。 */
 export interface GuardInstance {
-  snapshot(label: string): boolean;
+  snapshot(label: string): GuardSnapshot | null;
+  listSnapshots(): GuardSnapshot[];
+  restore(id: string): { ok: boolean; restored?: string[]; error?: string };
+  lastGoodSnapshot(): GuardSnapshot | null;
+  listIncidents(): { id: string; title: string }[];
   junctionFindings(): unknown[];
   repairJunctions(): { repaired: string[] };
 }

@@ -77,9 +77,8 @@
   ; webm 等资源锁不释放则解压同样报「不能打开要写入的文件」。
   !insertmacro DSH_KillAppExe "dsh-eac-shell.exe"
   !insertmacro DSH_KillAppExe "Deepseek Harness EAC.exe"
-  ; 句柄异步释放，给文件系统一点缓冲。
-  nsExec::ExecToLog 'ping -n 3 -w 500 127.0.0.1'
-  Pop $R1
+  ; 句柄异步释放，给文件系统一点缓冲（NSIS 原生 Sleep，不产生网络行为）。
+  Sleep 2000
   !insertmacro DSH_TakeoverOldShell "Deepseek Harness EAC"
   !insertmacro DSH_TakeoverOldShell "com.deepseek.dsh.desktop"
 !macroend

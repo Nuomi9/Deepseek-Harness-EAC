@@ -34,8 +34,8 @@ function readPrunerConfig(block: string): string[] {
   if (start < 0) return [];
   const result: string[] = [];
   for (let i = start + 1; i < lines.length; i++) {
-    if (/^\s*-\s*id:\s*/.test(lines[i])) break;
-    const match = /^\s+(thresholdChars|headChars|tailChars):(\s*.+)$/.exec(lines[i]);
+    if (/^\s*-\s*id:\s*/.test(lines[i]!)) break;
+    const match = /^\s+(thresholdChars|headChars|tailChars):(\s*.+)$/.exec(lines[i]!);
     if (match) result.push(`    ${match[1]}:${match[2]}`);
   }
   return result;
@@ -43,7 +43,7 @@ function readPrunerConfig(block: string): string[] {
 
 function compactionSectionBodyStart(lines: string[], groupIndex: number): number {
   for (let i = groupIndex - 1; i >= 0; i--) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (line === '' || line.startsWith('#')) {
       if (/^# ── compaction\b/.test(line)) return i + 1;
       continue;
@@ -58,12 +58,12 @@ function replaceCompactionGroup(text: string): { text: string; changed: boolean 
   const lines = text.split(/\r?\n/);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   for (let i = 0; i < lines.length; i++) {
-    if (!/^- id:\s*compaction\s*(?:#.*)?$/.test(lines[i])) continue;
+    if (!/^- id:\s*compaction\s*(?:#.*)?$/.test(lines[i]!)) continue;
     let end = i + 1;
     while (
       end < lines.length
-      && !/^- id:\s*/.test(lines[end])
-      && !/^# ── /.test(lines[end])
+      && !/^- id:\s*/.test(lines[end]!)
+      && !/^# ── /.test(lines[end]!)
     ) end += 1;
     const block = lines.slice(i, end).join('\n');
     const hasEngine = block.includes(`name: '${OLD_ENGINE}'`)

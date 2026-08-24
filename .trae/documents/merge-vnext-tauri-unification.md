@@ -81,6 +81,8 @@ Tauri Shell (Rust + WebView2)                    tauri-shell/src/main.rs
 - **测试重名甄别**：main 转换版 `.test.ts`（如 `dsh-file-drop-eac-core.test.ts`）与 refactor 原生版（`file-drop-core.test.ts`）同插件双测试文件 → 保留 refactor 版、main 版去重后并入其独有用例
 - node_modules 受控补丁（dsh-tool-bash）：merge 后核对 patch 完整性
 
+**执行结果（Task 2.5 完成回写）**：48 处冲突解决（43 批量取 ours + 5 手工合流：ci.yml/.gitignore/recovery-center-preload.js/package.json/tsconfig.json）；main 独有修复全部并入（崩溃对账块/`--no-open`/stage-resources 漏装与 skip-npm/main.rs serve_ws 与 exit overlay/settings-scroll-fix 阈值放宽）；门禁 661/661（基线 562 +99：main .ts 转换激活的休眠 .mjs 用例并入）。三处修正超出预分析：① `assets/recovery.html` Task 0 机械取 main 救援页与 refactor preload 桥错配（渲染器恢复页整体降级）→ 改取 refactor 渲染器恢复页，main 救援页随 Phase 3 sidecar 化回归；② 删 2 个架构淘汰测试文件（rescue-integration 12 例 + bridge-preload-parity 3 例，理由见 tasks.md 2.5e，契约随 Task 7 重建）；③ rescue-agent 归宿修正（见 §5 认知修正）。
+
 ### Phase 1：修复移植（冲突解决同时/紧随）
 按 §7 修复移植清单，把 main 落在 refactor 已重写文件里的 11 项修复移植进 refactor 对应模块，逐项行级核对。
 
@@ -149,7 +151,7 @@ Tauri Shell (Rust + WebView2)                    tauri-shell/src/main.rs
 
 **refactor 独有 23 模块（全保留，仅需 ctx 化）**：balance-ui、bridge、extension-host/*（manager/rpc/job-fence/sdk）、guard、ipc、log、logger、migration、onboarding、plugin-registry-data、recovery-center、renderer-recovery、run-state、session-heal、snapshot/*、state、supervisor/*（registry/installer/state-machine）、terminal、tray、update-flow、window、watchdog-boot（部分与上表重叠按功能归并）。
 
-**main 侧根级模块归宿**：client-updater.js/updater.js/plugin-guard.js → 删 .js，refactor .ts 为源，sidecar require 编译产物；main.js → 删（main.ts 为源，Phase 4 随 Electron 退役）；logger.js/preload.js/renderer-recovery.js → refactor 已有同名 .ts；rescue-agent.js → Phase 1 核对 refactor `lib/recovery-center/*` 等价覆盖后删除；extract-css.mjs → 若 tauri 打包链需要则保留（或随 Phase 2 转 .ts）。
+**main 侧根级模块归宿**：client-updater.js/updater.js/plugin-guard.js → 删 .js，refactor .ts 为源，sidecar require 编译产物；main.js → 删（main.ts 为源，Phase 4 随 Electron 退役）；logger.js/preload.js/renderer-recovery.js → refactor 已有同名 .ts；~~rescue-agent.js → Phase 1 核对 refactor `lib/recovery-center/*` 等价覆盖后删除~~ **认知修正（Phase 0B 执行期）**：main 演进（f04ed56）已在 `tauri-shell/sidecar/rescue-integration.ts`+`server.ts`+`bridge.ts` 建成完整 sidecar 救援链（rescue.\*/safe-mode 域，rescue-agent.js 为其活跃依赖）→ **保留**，Electron 侧接线测试随架构淘汰删除（Task 7 sidecar 接管时重建契约）；extract-css.mjs → 若 tauri 打包链需要则保留（或随 Phase 2 转 .ts）。
 
 ### 5.1 快照管理器完整保留方案（用户明确要求）
 

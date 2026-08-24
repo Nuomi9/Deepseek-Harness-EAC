@@ -260,8 +260,7 @@ async fn serve_ws(state: BridgeState, app: tauri::AppHandle) {
 }
 
 /// 退出策略（= main.js getExitAction/askExitAction）：
-/// minimize → 隐藏到托盘；quit → 优雅退出；ask → /exit 选择页（三选 +
-/// 「记住我的选择」，对齐 Electron 的 askExitAction 弹窗）。
+/// minimize → 隐藏到托盘；quit → 优雅退出；ask → 弹出独立退出选择窗口。
 async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
     use tauri::Manager;
     let action = sidecar_exit_action(app).await.unwrap_or_else(|| "ask".to_string());
@@ -274,21 +273,7 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
         "quit" => app.exit(0),
         _ => {
             if allow_ask {
-                let back = current_web_url().unwrap_or_default();
-                let href = format!(
-                    "http://127.0.0.1:{}/exit?back={}",
-                    WS_PORT,
-                    back.replace(':', "%3A").replace('/', "%2F")
-                );
-                let app2 = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Some(win) = app2.get_webview_window("main") {
-                        let _ = win.show();
-                        if let Ok(parsed) = tauri::Url::parse(&href) {
-                            let _ = win.navigate(parsed);
-                        }
-                    }
-                });
+                open_exit_dialog(app);
             } else {
                 // 非用户主动路径（防误触兜底）：隐藏。
                 if let Some(w) = app.get_webview_window("main") {
@@ -298,6 +283,15 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
         }
     }
 }
+
+/// 注入退出确认 overlay 到主窗（无新窗口，不替换现有内容）。
+fn open_exit_dialog(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        win.eval(include_str!("exit-overlay.js")).ok();
+    }
+}
+
 
 /// 从 sidecar 的 chrome.init 读 exitAction（settings 同源）。
 async fn sidecar_exit_action(_app: &tauri::AppHandle) -> Option<String> {
@@ -340,12 +334,27 @@ async fn handle_shell_method(
         }
         "win.close" => {
             // 退出策略（= Electron exitAction）：minimize→隐藏；quit→退出；
-            // ask→导航到 /exit 选择页（三选 + 记住选择，对齐 Electron 弹窗语义）。
+            // ask→弹出独立退出选择窗口。
             apply_exit_policy(app, true).await;
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "win.close-dialog" => {
+            // 移除 overlay，恢复主窗
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
+            }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.close-force" => {
             app.exit(0);
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "win.hide-and-close-dialog" => {
+            // 最小化到托盘：隐藏主窗 + 移除 overlay，不恢复
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
+            }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.hide" => {
@@ -447,8 +456,23 @@ async fn handle_shell_method(
             eprintln!("[page-error] {}", msg);
             Ok(None)
         }
+        "shell.exit-dismiss" => {
+            // 已改为 overlay 注入，不再需要此方法
+            Ok(None)
+        }
         "recovery.restart" => {
             // 整应用重启（= Electron app.relaunch+exit）。
+            app.restart();
+        }
+        "rc.open" => {
+            // 恢复中心：托盘菜单 / 启动失败链 / DSH_DESKTOP_RECOVERY 共用入口。
+            open_recovery_center_window(app);
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "shell.relaunch-safe-mode" => {
+            // 安全模式 relaunch（恢复中心 safe-mode 动作 → sidecar 通知）：
+            // 注入环境标记后整壳重启，新进程的 sidecar 继承该 env。
+            std::env::set_var("DSH_DESKTOP_SAFE_MODE", "1");
             app.restart();
         }
         _ => Err(()),
@@ -539,6 +563,42 @@ fn open_float_window(app: &tauri::AppHandle, session_id: &str) -> Result<bool, S
         .map_err(|e| e.to_string())?;
     println!("[shell] float window {} created", label);
     Ok(true)
+}
+
+/// 恢复中心窗口（vnext-absorb Phase 2）：独立 WebviewWindow，加载壳层
+/// /recovery-center 页（http_serve 注入 RC preload → window.rc）。与主窗/
+/// 浮窗互不依赖 —— 任意插件树启动失败时用户仍能进入这里治理插件。
+/// 已存在时聚焦；返回 false 表示已存在。
+fn open_recovery_center_window(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let label = "recovery-center";
+    if let Some(existing) = app.get_webview_window(label) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return false;
+    }
+    let url_str = format!("http://127.0.0.1:{}/recovery-center", WS_PORT);
+    let Ok(url) = tauri::Url::parse(&url_str) else {
+        return false;
+    };
+    // 独立 data_directory：不继承主窗的 WebView2 环境（与浮窗同策略）。
+    let data_dir: std::path::PathBuf = app
+        .path()
+        .app_data_dir()
+        .map(|p| p.join("recovery-center-webview"))
+        .unwrap_or_default();
+    let builder = tauri::webview::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External(url))
+        .title("恢复中心")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(760.0, 520.0)
+        .data_directory(data_dir)
+        .focused(true);
+    if let Err(e) = builder.build() {
+        eprintln!("[shell] recovery-center window build failed: {}", e);
+        return false;
+    }
+    println!("[shell] recovery-center window created");
+    true
 }
 
 async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandle) -> std::io::Result<()> {
@@ -689,44 +749,6 @@ fn died_page(log_path: &str, code: &str) -> String {
     )
 }
 
-/// 退出选择页（= Electron askExitAction 弹窗的三选 + 记住选择）。
-fn exit_page() -> String {
-    format!(
-        "<!doctype html><meta charset=utf-8><title>退出 Deepseek Harness</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
-         <div style=\"text-align:center;max-width:420px;padding:28px 32px;border:1px solid rgba(255,255,255,.08);\
-         border-radius:16px;background:color-mix(in srgb,#0b1220 92%,white)\">\
-         <div style=\"font-size:19px;font-weight:600;margin-bottom:8px\">退出 Deepseek Harness</div>\
-         <div style=\"font-size:12.5px;color:#8b9ac4;margin-bottom:20px\">后台运行时窗口会隐藏到系统托盘，任务完成后会发通知。</div>\
-         <div style=\"display:flex;flex-direction:column;gap:10px\">\
-         <button data-v=\"minimize\" style=\"padding:10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;\
-           background:rgba(91,140,255,.14);color:#dfe6ff;font-size:13.5px;cursor:pointer\">最小化到后台</button>\
-         <button data-v=\"quit\" style=\"padding:10px;border:1px solid rgba(255,120,133,.25);border-radius:10px;\
-           background:rgba(232,17,35,.10);color:#ffb3ba;font-size:13.5px;cursor:pointer\">退出程序</button>\
-         <button data-v=\"cancel\" style=\"padding:8px;border:none;border-radius:10px;background:transparent;\
-           color:#8b9ac4;font-size:12.5px;cursor:pointer\">取消</button>\
-         </div>\
-         <label style=\"display:flex;align-items:center;justify-content:center;gap:6px;margin-top:16px;\
-           font-size:12px;color:#8b9ac4;cursor:pointer\">\
-           <input type=\"checkbox\" id=\"remember\" /> 记住我的选择，不再询问</label>\
-         </div>\
-         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}\
-         var BACK=new URLSearchParams(location.search).get('back')||'';\
-         document.querySelectorAll('button[data-v]').forEach(function(b){{\
-           b.addEventListener('click',function(){{\
-             var v=b.getAttribute('data-v');\
-             var remember=document.getElementById('remember').checked;\
-             if (v==='cancel') {{ if (BACK) location.replace(BACK); return; }}\
-             var fin=function(){{ window.dshDesktop._call(v==='quit'?'win.close-force':'win.hide',{{}}); }};\
-             if (remember) {{ window.dshDesktop.menu.action('set-exit-action',{{value:v}}).then(fin).catch(fin); }}\
-             else fin();\
-           }});\
-         }});</script></body>",
-        WS_PORT, BRIDGE_JS
-    )
-}
-
 /// 主窗导航助手（壳页打开/返回共用；show + navigate 原子化到主线程）。
 fn navigate_main(app: &tauri::AppHandle, href: String) {
     let app2 = app.clone();
@@ -835,10 +857,32 @@ fn wizard_page() -> String {
     }
 }
 
+/// 恢复中心页：serve 真实 assets/recovery-center.html，注入回环 WS 地址 +
+/// 专用 preload（recovery-center-preload.js 的 IIFE，暴露 window.rc）。
+/// 窗口由 open_recovery_center_window 创建；页面只消费 rc.action/rc.close
+/// （走 sidecar 的 rc.* 方法，与主窗 bridge.js 的 dshDesktop 互不干扰）。
+fn recovery_center_page() -> String {
+    let file = resource_root().join("dsh-desktop").join("assets").join("recovery-center.html");
+    let html = std::fs::read_to_string(&file).unwrap_or_else(|_| {
+        "<!doctype html><meta charset=utf-8><title>恢复中心</title><body style=\"background:#0b1220;color:#dfe6ff;font-family:sans-serif;display:grid;place-items:center;height:100vh\">恢复中心资源缺失（assets/recovery-center.html）</body>".to_string()
+    });
+    let preload = std::fs::read_to_string(resource_root().join("dsh-desktop").join("assets").join("recovery-center-preload.js")).unwrap_or_default();
+    let injection = format!(
+        "<script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\n{}</script>",
+        WS_PORT, preload
+    );
+    let marker = "<meta charset=\"utf-8\" />";
+    if html.contains(marker) {
+        html.replacen(marker, &format!("{}{}", marker, injection), 1)
+    } else {
+        format!("{}{}", injection, html)
+    }
+}
+
 async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     eprintln!("[http] serve {}", path);
     // 真正消费请求头（读到空行）：未读数据残留会让连接以 RST 而非 FIN 收尾，
-    // WebView2 视为响应中断并反复重试（/exit 加载卡死的根因）。
+    // WebView2 视为响应中断并反复重试。
     {
         use tokio::io::AsyncReadExt;
         let mut consumed = Vec::with_capacity(1024);
@@ -859,10 +903,10 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     }
     let (body, ctype) = if path.starts_with("/inject/bridge.js") {
         (BRIDGE_JS.to_string(), "application/javascript")
+    } else if path.starts_with("/recovery-center") {
+        (recovery_center_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
-    } else if path.starts_with("/exit") {
-        (exit_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/update") {
         // /update?v=..&kind=..（client-update.show 通知方拼好）
         let mut version = String::new();
@@ -1108,6 +1152,10 @@ fn main() {
                 let _ = win.unminimize();
                 let _ = win.set_focus();
             }
+            // 主窗导航完成：清理可能残留的退出 overlay
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
+            }
         }))
         .invoke_handler(tauri::generate_handler![shell_ping, sidecar_call])
         .setup(move |app| {
@@ -1136,6 +1184,22 @@ fn main() {
                                     }
                                 }
                             });
+
+                            // 恢复中心直开模式（DSH_DESKTOP_RECOVERY=1）：不建主窗、
+                            // 不拉起 dsh web —— 直开恢复中心窗口，sidecar 的 boot.start
+                            // 检测该 env 后跳过服务启动（保持存活供 rc.* 动作调用）。
+                            // 必须先起 serve_ws：恢复中心页（http_serve /recovery-center）
+                            // 与 rc.preload 的 WS 桥都挂在这个同端口服务上，漏起则
+                            // 窗口白屏、rc.* 全部不可达（G2 实测抓出）。
+                            if std::env::var("DSH_DESKTOP_RECOVERY").as_deref() == Ok("1") {
+                                let app_rc = app_handle.clone();
+                                let app_rc_inner = app_rc.clone();
+                                let _ = app_rc.run_on_main_thread(move || {
+                                    open_recovery_center_window(&app_rc_inner);
+                                });
+                                serve_ws(st, app_handle).await;
+                                return;
+                            }
 
                             // 主窗：先加载壳层 /loading 页（即起即见）。
                             let app_win = app_handle.clone();
@@ -1212,15 +1276,16 @@ fn main() {
                 });
             });
 
-            // 托盘（L1）：对齐 Electron 托盘全项（显示/隐藏、重启服务、反馈、退出）。
+            // 托盘（L1）：对齐 Electron 托盘全项（显示/隐藏、恢复中心、重启服务、反馈、退出）。
             let app_handle = app.handle().clone();
             let show = tauri::menu::MenuItem::with_id(app, "show", "显示 / 隐藏窗口", true, None::<&str>)?;
+            let recovery = tauri::menu::MenuItem::with_id(app, "recovery", "恢复中心…", true, None::<&str>)?;
             let restart = tauri::menu::MenuItem::with_id(app, "restart", "重启 Web 服务", true, None::<&str>)?;
             let feedback = tauri::menu::MenuItem::with_id(app, "feedback", "反馈建议", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
             let sep2 = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &sep2, &feedback, &quit])?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &recovery, &restart, &sep2, &feedback, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu);
@@ -1258,6 +1323,9 @@ fn main() {
                 }
                 "feedback" => {
                     open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
+                }
+                "recovery" => {
+                    open_recovery_center_window(app);
                 }
                 "quit" => app_handle.exit(0),
                 _ => {}

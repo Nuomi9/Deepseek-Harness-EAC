@@ -153,8 +153,8 @@ export class ExtensionHostManager {
    */
   async startPlugin(id: string): Promise<boolean> {
     if (this.hosts.has(id)) return true;
-    const reg = readRegistry();
-    const e = reg.plugins[id] as RegistryEntry | undefined;
+    let reg = readRegistry();
+    let e = reg.plugins[id] as RegistryEntry | undefined;
     if (!e) {
       log('ext-host', `拉起失败：${id} 未建档`);
       return false;
@@ -162,6 +162,17 @@ export class ExtensionHostManager {
     if (e.kind !== 'isolated') {
       log('ext-host', `跳过：${id} 非 SDK 插件（kind=${e.kind}，Legacy 走 Core 注入）`);
       return false;
+    }
+    // 残留 running 态对账：上方 hosts.has 已排除内存中的活宿主，故注册表里的
+    // running 只可能是上次会话异常终止（sidecar 被杀/断电）留下的 stale 标记。
+    // 按运行期崩溃转移（running→retrying/quarantined，自动退避），否则状态机
+    // 拒绝 running→starting，该插件将从此永不拉起（安装态冒烟实测抓出）。
+    if (e.state === 'running') {
+      log('ext-host', `${id}: 对账残留 running（上次会话异常退出），按崩溃转移`);
+      applyTransition(id, { type: 'crash', reason: 'stale-running-reconcile' });
+      reg = readRegistry();
+      e = reg.plugins[id] as RegistryEntry | undefined;
+      if (!e) return false;
     }
     // 测试加速模式：清退避门（见 opts.restartDelayOverrideMs 注释）。
     if (this.o.restartDelayOverrideMs !== undefined && e.nextRetryAt) {

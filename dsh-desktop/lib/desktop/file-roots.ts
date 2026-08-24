@@ -34,8 +34,8 @@ export function fileRoots(): string[] {
         const buf = fs.readFileSync(p);
         const { frames } = scanZstdFrames(buf);
         if (frames.length === 0) continue;
-        const text = zlib.zstdDecompressSync(buf.subarray(frames[0].start, frames[0].end)).toString('utf8');
-        const header = JSON.parse(text.split('\n', 1)[0]) as SessionHeader;
+        const text = zlib.zstdDecompressSync(buf.subarray(frames[0]!.start, frames[0]!.end)).toString('utf8');
+        const header = JSON.parse(text.split('\n', 1)[0]!) as SessionHeader;
         if (header && typeof header.cwd === 'string' && header.cwd) roots.push(header.cwd);
       } catch { /* 跳过损坏日志 */ }
     }

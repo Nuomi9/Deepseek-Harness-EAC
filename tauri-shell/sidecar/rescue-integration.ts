@@ -76,7 +76,7 @@ export function clearRescueState(): void {
 }
 
 function guardInst(): Record<string, (...a: unknown[]) => unknown> {
-  return (H.mods.guardBox.ensureGuard as () => unknown)() as Record<string, (...a: unknown[]) => unknown>;
+  return (H.mods.guardBox!.ensureGuard as () => unknown)() as Record<string, (...a: unknown[]) => unknown>;
 }
 
 export function safeModeStatus(): Record<string, unknown> | null {
@@ -85,7 +85,7 @@ export function safeModeStatus(): Record<string, unknown> | null {
 }
 
 export function safeModeSet(on: boolean): Record<string, unknown> {
-  const running = ((H.mods.boot.state as () => { running: boolean })()).running;
+  const running = ((H.mods.boot!.state as () => { running: boolean })()).running;
   if (running) {
     return { ok: false, error: 'service-running', hint: '请先停止 Web 服务（或从救援页进入安全模式）' };
   }
@@ -97,7 +97,7 @@ export function safeModeSet(on: boolean): Record<string, unknown> {
     const patchFile = path.join(H.desktopProfileDir(), 'cordis.patch.yml');
     let text = '';
     try { text = fs.readFileSync(patchFile, 'utf8'); } catch { /* 无 patch 文件按空处理 */ }
-    const rows = (() => { try { return (H.mods.pluginOps.pluginManagerCollect as () => Array<{ core?: boolean; id: string }>)(); } catch { return []; } })();
+    const rows = (() => { try { return (H.mods.pluginOps!.pluginManagerCollect as () => Array<{ core?: boolean; id: string }>)(); } catch { return []; } })();
     const coreIds = rows.filter((r) => r.core).map((r) => r.id);
     const { patch, removed } = (ra().safeModePatch as (t: string, ids: string[]) => { patch: string; removed: unknown[] })(text, coreIds);
     try {
@@ -134,7 +134,7 @@ function buildRescueDiagnosis(): { sendManifest: unknown; totalBytes: number; pa
       logsDir: path.join(H.userDataDir, 'logs'),
       profile: H.desktopProfile(),
       versions: { app: H.pkgVersion, dsh: H.dshVersion(), source: H.dshVersionSource() },
-      plugins: () => { try { return (H.mods.pluginOps.pluginManagerCollect as () => unknown[])(); } catch { return []; } },
+      plugins: () => { try { return (H.mods.pluginOps!.pluginManagerCollect as () => unknown[])(); } catch { return []; } },
       snapshots: () => (g.listSnapshots as () => unknown[])(),
       lastGood: () => (g.lastGoodSnapshot as () => unknown)(),
       incidents: () => (g.listIncidents as () => unknown[])().slice(0, 6),
@@ -156,7 +156,7 @@ function buildRescueDiagnosis(): { sendManifest: unknown; totalBytes: number; pa
 // AI 建议执行器（只接受 rescue-agent 白名单动作）。
 async function rescueExecuteSuggestion(s: { action: string; params: Record<string, unknown>; reason?: string; risk?: string }): Promise<Record<string, unknown>> {
   const g = guardInst();
-  const serverState = () => (H.mods.boot.state as () => { running: boolean; webUrl: string })();
+  const serverState = () => (H.mods.boot!.state as () => { running: boolean; webUrl: string })();
   switch (s.action) {
     case 'restore': {
       if (serverState().running) {
@@ -168,16 +168,16 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
         : { ok: false, error: String((r && r.error) || '回滚失败') };
     }
     case 'disable': {
-      const row = (H.mods.pluginOps.pluginManagerCollect as () => Array<{ id: string; toggleable?: boolean }>)().find((x) => x.id === s.params.pluginId);
+      const row = (H.mods.pluginOps!.pluginManagerCollect as () => Array<{ id: string; toggleable?: boolean }>)().find((x) => x.id === s.params.pluginId);
       if (!row) return { ok: false, error: '未知插件: ' + String(s.params.pluginId) };
       if (!row.toggleable) return { ok: false, error: '该插件不可关闭: ' + String(s.params.pluginId) };
-      const r = (H.mods.pluginOps.pluginManagerSetEnabled as (id: string, en: boolean) => Record<string, unknown>)(String(s.params.pluginId), false);
+      const r = (H.mods.pluginOps!.pluginManagerSetEnabled as (id: string, en: boolean) => Record<string, unknown>)(String(s.params.pluginId), false);
       return r.ok
         ? { ok: true, result: '已停用插件 ' + String(s.params.pluginId), restartRequired: true }
         : { ok: false, error: String((r && r.error) || '停用失败') };
     }
     case 'remove': {
-      const r = (H.mods.pluginOps.pluginManagerSetRemoved as (id: string, rm: boolean) => Record<string, unknown>)(String(s.params.pluginId), true);
+      const r = (H.mods.pluginOps!.pluginManagerSetRemoved as (id: string, rm: boolean) => Record<string, unknown>)(String(s.params.pluginId), true);
       return r.ok
         ? { ok: true, result: '已卸载插件 ' + String(s.params.pluginId), restartRequired: true }
         : { ok: false, error: String((r && r.error) || '卸载失败') };
@@ -205,10 +205,10 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
         return { ok: false, error: 'service-running', hint: '请先重启服务（模块树重装需在重启间隙执行）' };
       }
       const notes: string[] = [];
-      try { (H.mods.companionSync.syncCompanionPlugins as () => void)(); notes.push('内置插件树已同步'); } catch (err) {
+      try { (H.mods.companionSync!.syncCompanionPlugins as () => void)(); notes.push('内置插件树已同步'); } catch (err) {
         return { ok: false, error: '内置插件同步失败: ' + String(((err as Error).message) || err) };
       }
-      try { (H.mods.companionSync.healProfileModules as () => void)(); notes.push('模块遮蔽已清理'); } catch (err) {
+      try { (H.mods.companionSync!.healProfileModules as () => void)(); notes.push('模块遮蔽已清理'); } catch (err) {
         return { ok: false, error: '模块树修复失败: ' + String(((err as Error).message) || err) };
       }
       return { ok: true, result: notes.join('；'), restartRequired: true };
@@ -224,7 +224,7 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
         const r = await H.bootRestart();
         return r.ok ? { ok: true, result: '服务已重启: ' + String(r.webUrl) } : r;
       }
-      const r = await (H.mods.boot.startAndWait as (o: string[]) => Promise<{ webUrl: string }>)([]);
+      const r = await (H.mods.boot!.startAndWait as (o: string[]) => Promise<{ webUrl: string }>)([]);
       H.notify('boot.web-ready', r);
       return { ok: true, result: '服务已启动: ' + r.webUrl };
     }
@@ -288,10 +288,10 @@ export function rescueMethods(): Record<string, (p: Record<string, unknown> | un
         agentSource: H.dshVersionSource(),
         profile: H.desktopProfile(),
         logsDir: path.join(H.userDataDir, 'logs'),
-        aiReady: !!((H.mods.balance.readApiKey as (h: string) => string)(H.dshHome)),
+        aiReady: !!((H.mods.balance!.readApiKey as (h: string) => string)(H.dshHome)),
         busy: rescueBusy,
         safeMode: safeModeStatus(),
-        serverAlive: ((H.mods.boot.state as () => { running: boolean })()).running,
+        serverAlive: ((H.mods.boot!.state as () => { running: boolean })()).running,
         crash,
         threshold: RA_OPTS.BOOT_FAILURE_THRESHOLD,
         snapshots,
@@ -312,7 +312,7 @@ export function rescueMethods(): Record<string, (p: Record<string, unknown> | un
       const selections = Array.isArray(p && p.selections) ? (p!.selections as unknown[]) : [];
       const userNote = String((p && p.userNote) || '').slice(0, 2000);
       const payload = (ra().filterDiagnosisPayload as (pl: unknown, m: unknown, s: unknown[]) => unknown)(diag.payload, diag.sendManifest, selections);
-      const apiKey = (H.mods.balance.readApiKey as (h: string) => string)(H.dshHome);
+      const apiKey = (H.mods.balance!.readApiKey as (h: string) => string)(H.dshHome);
       if (!apiKey) {
         return { ok: false, error: 'no-key', hint: '未找到 DEEPSEEK_API_KEY（环境变量或 ~/.dsh/.credentials.yaml）' };
       }
@@ -366,7 +366,7 @@ export function rescueMethods(): Record<string, (p: Record<string, unknown> | un
     },
     'rescue.auto-repair': async (): Promise<Record<string, unknown>> => {
       if (rescueBusy) return { ok: false, error: 'busy' };
-      const apiKey = (H.mods.balance.readApiKey as (h: string) => string)(H.dshHome);
+      const apiKey = (H.mods.balance!.readApiKey as (h: string) => string)(H.dshHome);
       if (!apiKey) {
         return { ok: false, error: 'no-key', hint: '未找到 DEEPSEEK_API_KEY（环境变量或 ~/.dsh/.credentials.yaml）' };
       }
@@ -427,10 +427,10 @@ export function rescueMethods(): Record<string, (p: Record<string, unknown> | un
     }),
     'recovery.reload': async (): Promise<Record<string, unknown>> => {
       // 服务已退出时先拉起（可能换端口），boot.web-ready 通知驱动壳层重导航。
-      const st = (H.mods.boot.state as () => { running: boolean })();
+      const st = (H.mods.boot!.state as () => { running: boolean })();
       if (!st.running) {
         try {
-          const r = await (H.mods.boot.startAndWait as (o: string[]) => Promise<{ webUrl: string }>)([]);
+          const r = await (H.mods.boot!.startAndWait as (o: string[]) => Promise<{ webUrl: string }>)([]);
           H.notify('boot.web-ready', r);
         } catch (err) {
           return { ok: false, error: String(((err as Error).message) || err) };

@@ -27,6 +27,10 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   // 桥接进 dsh Agent（回环端点见 lib/extension-host/bridge-server.ts）。
   // 必须先于其余伴生插件同步（它们不依赖它，但保持 bridge 常驻可用）。
   { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge' },
+  // dsh-compact（main v4.6 并入）：复合 agent 插件 —— 托管 preset 直接引用
+  // dsh-compact/engine，属核心依赖（onboarding CORE 锁定，不可取消勾选）；
+  // 接替已退役的 dsh-auto-compact（浏览器触发式压缩，见 RETIRED 表）。
+  { id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' },
   { id: 'balance', name: '@deepseek-ai/dsh-balance' },
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
@@ -84,6 +88,14 @@ export const RETIRED_BUILTIN_PLUGINS: { id: string; name: string }[] = [
   // tdai-memory：唯一携带 node_modules 的内置插件，v4.5 起退役 —— 体积
   // ~310MB 占安装包近半，且 vendor 任一小缺失即 import 失败拖垮插件树。
   { id: 'tdai-memory', name: 'dsh-tdai-memory' },
+  // main v4.6 退役批次（2.5 并入）：auto-compact 由 dsh-compact 复合 agent
+  // 接替；其余三个市场类插件随 unified-market 收敛移除。老安装（main 线
+  // 升级上来）profile 里残留的 patch 行/包副本由 retireRemovedBuiltinPlugins
+  // 清理 —— 不登记则残留行会在插件树加载时拖垮启动。
+  { id: 'auto-compact', name: 'dsh-auto-compact' },
+  { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },
+  { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin' },
+  { id: 'zat-market', name: 'zat-dsh-engine' },
 ];
 
 /** 内置插件上游更新源（V4.3，plugin-updater.js 消费；npm 404 优雅降级）。 */

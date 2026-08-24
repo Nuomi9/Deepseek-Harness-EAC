@@ -91,6 +91,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
+  // VNext Core Bridge（受信组件，vnext-absorb Phase 2）：把隔离 SDK 插件的
+  // 工具/上下文经回环端点桥接进 dsh Agent（DSH_EAC_BRIDGE_URL/TOKEN 由
+  // sidecar 在拉起 dsh web 前注入）；必须随包分发并默认启用。
+  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge', dir: 'dsh-eac-core-bridge' },
   // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
   // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
@@ -303,125 +307,23 @@ export function readJsonFile(file: string): Record<string, unknown> | null {
 }
 
 // 拷贝一个插件包目录到 profile node_modules（按包名 scope 落位，幂等）。
-// 除运行必需文件外，LICENSE/NOTICE/README 等许可与出处文件以及 preview/
-// 目录（皮肤预览图）一并随包分发。
-// V4：先比对「源 vs 目标」的内容戳记（版本+文件数+字节数），一致则跳过 ——
-// 旧逻辑每次启动全量重拷（dsh-pet 15MB、dsh-dafeiyu ~58MB 资产，拖慢启动）。
-// 戳记文件放在包目录内（.eac-copy-stamp.json），pnpm 重写 node_modules 时
-// 随目录消失，天然触发重建。
-export const COPY_STAMP = '.eac-copy-stamp.json';
+// 插件包复制（vnext-absorb Phase 3）：戳记/拷贝/完整性判定收编到
+// lib/plugin-copy.ts —— 戳记 {v,f,b}→{v,f,b,h}（FNV-1a 滚动哈希，捕获同字节
+// 就地改写）+ 单遍走树 + 进程内源戳缓存 + 目标完整性判定缓存（同进程内
+// 第二次 sync 免全量走树）。行为契约不变：companion-copy-integrity 锁定的
+// 「源戳记一致但目标文件缺失 → 重拷」语义保留（pluginCopyIsComplete 缓存按
+// 目标顶层 mtime 失效）。re-export 保持既有消费方（plugin-ops / 契约测试）
+// 零改动。
+import { copyPluginPackage } from '../plugin-copy.js';
 
-// 随插件/皮肤包一起拷贝到 profile 的许可与出处文件（存在才拷贝）。
-export const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'README.md', 'README.zh.md', 'THIRD-PARTY-NOTICES.md'];
-
-// 与 copyPluginPackage 的拷贝清单保持一致（多算/漏算都会导致每次都重拷，
-// 只会浪费不会出错）。
-export function pluginCopyEntries(src: string): string[] {
-  const out: string[] = [];
-  const copyFile = (rel: string): void => {
-    const sf = path.join(src, rel);
-    if (!fs.existsSync(sf) || fs.statSync(sf).isDirectory()) return;
-    out.push(rel);
-  };
-  const copyDir = (rel: string): void => {
-    const sd = path.join(src, rel);
-    if (!fs.existsSync(sd) || !fs.statSync(sd).isDirectory()) return;
-    for (const entry of fs.readdirSync(sd, { withFileTypes: true })) {
-      const sub = rel + '/' + entry.name;
-      if (entry.isDirectory()) copyDir(sub);
-      else copyFile(sub);
-    }
-  };
-  for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
-  for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
-  for (const d of ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client']) copyDir(d);
-  return out;
-}
-
-export function pluginStampOf(src: string): string | null {
-  try {
-    const pkg = readJsonFile(path.join(src, 'package.json')) || {};
-    let files = 0;
-    let bytes = 0;
-    for (const rel of pluginCopyEntries(src)) {
-      files += 1;
-      try { bytes += fs.statSync(path.join(src, rel)).size; } catch { /* 文件消失按 0 计 */ }
-    }
-    return JSON.stringify({ v: String(pkg.version || ''), f: files, b: bytes });
-  } catch {
-    return null;
-  }
-}
-
-// A source stamp alone is not enough: an interrupted copy or an antivirus
-// cleanup can remove files from the profile while leaving the stamp behind.
-// Verify the destination against the same copy manifest before skipping.
-function pluginCopyIsComplete(src: string, dest: string): boolean {
-  try {
-    return pluginCopyEntries(src).every((rel) => {
-      const target = path.join(dest, rel);
-      return fs.existsSync(target) && fs.statSync(target).isFile();
-    });
-  } catch {
-    return false;
-  }
-}
-
-export function copyPluginPackage(profileDirP: string, src: string, name: string): void {
-  const destRoot = path.join(profileDirP, 'node_modules', ...name.split('/'));
-  const stampFile = path.join(destRoot, COPY_STAMP);
-  const want = pluginStampOf(src);
-  try {
-    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want && pluginCopyIsComplete(src, destRoot)) {
-      return; // 内容未变：跳过全量重拷
-    }
-  } catch { /* 比对失败按需重拷 */ }
-  fs.mkdirSync(path.dirname(destRoot), { recursive: true });
-  const copyFile = (rel: string): void => {
-    const sf = path.join(src, rel);
-    if (!fs.existsSync(sf) || fs.statSync(sf).isDirectory()) return;
-    const df = path.join(destRoot, rel);
-    fs.mkdirSync(path.dirname(df), { recursive: true });
-    fs.copyFileSync(sf, df);
-  };
-  const copyDir = (rel: string): void => {
-    const sd = path.join(src, rel);
-    if (!fs.existsSync(sd) || !fs.statSync(sd).isDirectory()) return;
-    for (const entry of fs.readdirSync(sd, { withFileTypes: true })) {
-      const sub = rel + '/' + entry.name;
-      if (entry.isDirectory()) copyDir(sub);
-      else copyFile(sub);
-    }
-  };
-  // lib 整目录随包（配套插件可能有 logic.js 等额外模块，按清单拷会漏文件
-  // 导致 dsh web 启动时 ERR_MODULE_NOT_FOUND）。
-  for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
-  // 社区插件（soul-md / tool-vision 等）入口在包根目录而非 lib/，
-  // vendor/ 是其内置依赖，同样必须随包分发。
-  for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
-  copyDir('lib');
-  copyDir('preview');
-  copyDir('vendor');
-  // 内置插件自带的嵌套 node_modules（vendored 运行时依赖）：放在包内部，
-  // pnpm 重写 profile node_modules 顶层时不会波及，插件保持自包含。
-  copyDir('node_modules');
-  // dsh-unified-market 的离线目录快照（官网不可达时的兜底数据）。
-  copyDir('data');
-  // dsh-pet / dsh-dafeiyu 等带运行时静态资源的插件（宠物动画 webp/png 帧、
-  // PyInstaller helper 等）。
-  copyDir('assets');
-  copyDir('runtime');
-  // dsh-dafeiyu 的入口在 src/（lib/ 只有 client 半边）；dsh-offpeak 的
-  // client 半边在 client/（包 exports 映射）。
-  copyDir('src');
-  copyDir('client');
-  if (want) {
-    try {
-      fs.mkdirSync(destRoot, { recursive: true });
-      fs.writeFileSync(stampFile, want);
-    } catch { /* 戳记写失败不影响功能 */ }
-  }
-}
+export {
+  COPY_STAMP,
+  EXTRA_PACKAGE_FILES,
+  pluginCopyEntries,
+  pluginStampOf,
+  pluginCopyIsComplete,
+  copyPluginPackage,
+} from '../plugin-copy.js';
 
 // pnpm（dsh plugin add / 插件市场）hoist 进 profile node_modules 的
 // @deepseek-ai 核心包真实拷贝，会遮蔽 <home>/profiles/node_modules 里指向
@@ -780,8 +682,8 @@ function ensurePluginHostDeps(profileDirP: string): void {
       const cleaned = lines.filter((line, idx) => {
         if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
         let k = idx + 1;
-        while (k < lines.length && lines[k].trim() === '') k += 1;
-        return k < lines.length && /^[ \t]+- /.test(lines[k]);
+        while (k < lines.length && lines[k]!.trim() === '') k += 1;
+        return k < lines.length && /^[ \t]+- /.test(lines[k]!);
       }).join('\n');
       if (cleaned !== patch) {
         patch = cleaned;

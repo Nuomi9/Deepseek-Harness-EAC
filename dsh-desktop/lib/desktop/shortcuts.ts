@@ -282,14 +282,14 @@ export function migrateFromSharedWebProfile(): void {
     {
       const lines = oldPatch.split(/\r?\n/);
       for (let i = 0; i < lines.length; i++) {
-        const m = /^- id: (ui-skin-[\w-]+)\s*$/.exec(lines[i]);
+        const m = /^- id: (ui-skin-[\w-]+)\s*$/.exec(lines[i]!);
         if (!m) continue;
         let disabled = false;
         for (let j = i + 1; j < lines.length; j++) {
-          if (/^- /.test(lines[j])) break;
-          if (/^\s+disabled:\s*true/.test(lines[j])) disabled = true;
+          if (/^- /.test(lines[j]!)) break;
+          if (/^\s+disabled:\s*true/.test(lines[j]!)) disabled = true;
         }
-        if (!disabled) enabledSkin = m[1];
+        if (!disabled) enabledSkin = m[1]!;
       }
     }
 
@@ -324,7 +324,7 @@ export function extractPatchRowIds(patch: unknown): string[] {
   const ids: string[] = [];
   const re = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(String(patch || ''))) !== null) ids.push(m[1]);
+  while ((m = re.exec(String(patch || ''))) !== null) ids.push(m[1]!);
   return ids;
 }
 
@@ -336,13 +336,13 @@ export function removePatchRowsById(patch: unknown, ids: Set<string>): { patch: 
   const lines = patch.split(/\r?\n/);
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i]!;
     if (/^-\s*insert:/.test(line)) {
       const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
-      if (mid && ids.has(mid[1])) {
-        removed.push(mid[1]);
+      if (mid && ids.has(mid[1]!)) {
+        removed.push(mid[1]!);
         let j = i + 1;
-        while (j < lines.length && !/^-\s*insert:/.test(lines[j]) && /^#/.test(lines[j]) === false && /^\s+\S/.test(lines[j])) j++;
+        while (j < lines.length && !/^-\s*insert:/.test(lines[j]!) && /^#/.test(lines[j]!) === false && /^\s+\S/.test(lines[j]!)) j++;
         i = j - 1;
         continue;
       }

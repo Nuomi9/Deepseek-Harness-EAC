@@ -94,6 +94,9 @@ jobs:
           restore-keys: |
             dsh-electron-builder-win-x64-
 
+      - name: 安装 Rust 工具链（stable）
+        uses: dtolnay/rust-toolchain@stable
+
       - name: 缓存 Rust 构建产物（cargo registry + 各原生模块 target）
         uses: actions/cache@v4
         with:
@@ -124,6 +127,18 @@ jobs:
 
       - name: 获取内置运行时（node.exe + npm CLI）
         run: npm run fetch-runtime
+
+      - name: 类型检查（tsc --noEmit 零错误）
+        run: npm run typecheck
+
+      - name: Rust clippy（-D warnings 零告警）
+        run: npm run clippy:native
+
+      - name: Rust 原生模块测试（cargo test --release）
+        run: npm run test:native
+
+      - name: 构建 Rust 原生模块（supervisor + snapshot）
+        run: npm run build:native && npm run build:native -- snapshot
 
       - name: 运行测试
         run: npm test

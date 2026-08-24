@@ -106,6 +106,9 @@ files:
   # （predist 经 scripts/build-native.js copy 强制校验存在）。
   - host-bootstrap.js
   - native/supervisor/index.node
+  # dsh-compact 托管 preset 的安装/升级迁移器（lib/desktop/companion-sync.ts
+  # 启动时 require；漏装会让老安装的 preset 停在压缩前形态）。
+  - compact-preset-migrate.js
   - updater.js
   - client-updater.js
   - logger.js

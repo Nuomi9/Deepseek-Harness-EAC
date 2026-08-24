@@ -24,10 +24,12 @@ export const CORE_PLUGIN_IDS = new Set([
   'file-changes',
   'client-file-changes',
   'terminal',
-  'dsh-market-plugin',
   'plugin-manager',
   'plugin-shield',
   'plugin-wizard',
+  // EAC 内置 agent preset 直接引用 dsh-compact/engine；允许移除会让这些
+  // preset 在创建会话时因 MODULE_NOT_FOUND 失效（main 侧 e171abc 前置修复）。
+  'compact',
 ]);
 
 // 向导默认勾选（推荐）：核心之外保留常用增强；重/冷门项（桌宠、第二市场、

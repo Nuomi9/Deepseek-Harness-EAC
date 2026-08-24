@@ -27,7 +27,7 @@ const ROOT_FILES = [
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
   'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
-  'wsl-backend.js',
+  'wsl-backend.js', 'host-bootstrap.js',
 ];
 const LIB_DESKTOP = [
   'file-roots.js', 'proc.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',
@@ -39,6 +39,18 @@ const SCRIPTS = [
   'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
   'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
 ];
+
+// vnext 隔离体系（vnext-absorb Phase 2）：sidecar require 的 lib/{state,log,
+// supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
+const LIB_VNEXT = [
+  'state.js', 'log.js', 'plugin-copy.js',
+  'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
+  'supervisor/permissions.js', 'supervisor/incidents.js',
+  'extension-host/manager.js', 'extension-host/bridge-server.js',
+  'extension-host/job-fence.js', 'extension-host/rpc.js', 'extension-host/sdk/index.js',
+  'recovery-center/register.js',
+];
+const NATIVE_MODULES = ['supervisor/index.node', 'snapshot/index.node'];
 
 function requireFile(file, label) {
   if (!existsSync(file) || !statSync(file).isFile()) {
@@ -88,8 +100,20 @@ function validatePluginTree(dir, label) {
   }
 }
 
-console.log('[stage] 清理旧装配目录');
-rmSync(staged, { recursive: true, force: true });
+console.log('[stage] 清理旧装配目录' + (skipNpm ? '（--skip-npm：保留上次的生产 node_modules）' : ''));
+// 注意：node_modules 必须在整树清空前判定并豁免，否则 --skip-npm 永远不生效
+// （先 rm 全目录再 existsSync 检查，检查对象必不存在）。
+const stagedNm = path.join(staged, 'dsh-desktop', 'node_modules');
+const keepStagedNm = skipNpm && existsSync(stagedNm);
+rmSync(path.join(staged, 'sidecar'), { recursive: true, force: true });
+if (keepStagedNm) {
+  for (const entry of readdirSync(path.join(staged, 'dsh-desktop'))) {
+    if (entry === 'node_modules') continue;
+    rmSync(path.join(staged, 'dsh-desktop', entry), { recursive: true, force: true });
+  }
+} else {
+  rmSync(staged, { recursive: true, force: true });
+}
 mkdirSync(path.join(staged, 'sidecar'), { recursive: true });
 mkdirSync(path.join(staged, 'dsh-desktop'), { recursive: true });
 
@@ -109,6 +133,17 @@ for (const f of ROOT_FILES) {
 mkdirSync(path.join(staged, 'dsh-desktop', 'lib', 'desktop'), { recursive: true });
 for (const f of LIB_DESKTOP) {
   copyRequired(path.join(dd, 'lib', 'desktop', f), path.join(staged, 'dsh-desktop', 'lib', 'desktop', f), '桌面库');
+}
+console.log('[stage] vnext 隔离体系（lib 模块 + shared 协议 + 原生 .node）');
+for (const f of LIB_VNEXT) {
+  copyRequired(path.join(dd, 'lib', f), path.join(staged, 'dsh-desktop', 'lib', f), 'vnext 库');
+}
+// shared/protocol.js：隔离体系单点协议源，extension-host/rpc.js 运行时 require
+// （../../shared/protocol.js）——漏装配会让 sidecar 启动即 MODULE_NOT_FOUND。
+copyRequired(path.join(dd, 'shared', 'protocol.js'), path.join(staged, 'dsh-desktop', 'shared', 'protocol.js'), '共享协议');
+mkdirSync(path.join(staged, 'dsh-desktop', 'native'), { recursive: true });
+for (const f of NATIVE_MODULES) {
+  copyRequired(path.join(dd, 'native', f), path.join(staged, 'dsh-desktop', 'native', f), '原生模块');
 }
 mkdirSync(path.join(staged, 'dsh-desktop', 'scripts'), { recursive: true });
 for (const f of SCRIPTS) {
@@ -135,7 +170,7 @@ if (existsSync(path.join(dd, 'vendor', 'npm'))) {
 
 console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
-if (!skipNpm || !existsSync(nmDest)) {
+if (!keepStagedNm) {
   execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
 }
 

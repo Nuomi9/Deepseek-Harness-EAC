@@ -68,7 +68,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     ws.onmessage = function (ev: MessageEvent) {
       var msg: any; try { msg = JSON.parse(ev.data); } catch (e) { return; }
       if (msg.id != null && pending[msg.id]) {
-        var r = pending[msg.id]; delete pending[msg.id];
+        var r = pending[msg.id]!; delete pending[msg.id];
         if (msg.error) r.reject(new Error(msg.error.message || 'rpc error'));
         else r.resolve(msg.result);
       } else if (msg.method) {
