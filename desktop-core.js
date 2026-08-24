@@ -47,7 +47,11 @@ const COPY_STAMP = '.eac-copy-stamp.json';
 const PLUGIN_UPDATE_SOURCES = {
   'better-sidebar': { npm: 'dsh-better-sidebar' },
   'dsh-market-plugin': { npm: '@sanqi-normal/dsh-webui-market-plugin' },
+  // dsh-market 自身也持续发版（stable/dev 渠道由其设置卡管理）。
+  'dsh-market': { npm: 'dshmarket' },
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
+  // vision router 走 GitHub 分发（npm 未发布）。
+  'vision-router': { github: 'ysr666/dsh-vision-router' },
 };
 
 // 插件市场排队任务标记。
@@ -110,6 +114,9 @@ function createDesktopCore(ctx) {
     { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
     // 社区插件市场 dsh-market（与 main.js COMPANION_PLUGINS 保持同构）。
     { id: 'dsh-market', name: 'dshmarket', dir: 'dsh-market' },
+    // vision router（github.com/ysr666/dsh-vision-router，MIT）：自包含
+    // vendored node_modules（undici/potrace/puppeteer-core），随包分发。
+    { id: 'vision-router', name: 'dsh-vision-router', dir: 'dsh-vision-router' },
   ];
 
   // ------------------------------------------------------ 保护中心（guard）--
@@ -176,9 +183,9 @@ function createDesktopCore(ctx) {
       }
     };
     for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
-    for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
-    for (const d of ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client']) copyDir(d);
-    return out;
+    for (const f of ['entry.js', 'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
+  for (const d of ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client', 'presets', 'docs']) copyDir(d);
+  return out;
   }
 
   function pluginStampOf(src) {
@@ -225,7 +232,7 @@ function createDesktopCore(ctx) {
     // lib 整目录随包（配套插件可能有 logic.js 等额外模块，按清单拷会漏文件
     // 导致 dsh web 启动时 ERR_MODULE_NOT_FOUND）。
     for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
-    for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
+    for (const f of ['entry.js', 'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
     copyDir('lib');
     copyDir('preview');
     copyDir('vendor');
@@ -238,8 +245,11 @@ function createDesktopCore(ctx) {
     copyDir('assets');
     copyDir('runtime');
     // 入口不在 lib/ 的插件（src/ 或 client/ 半边 + 包 exports 映射）。
-    copyDir('src');
-    copyDir('client');
+  copyDir('src');
+  copyDir('client');
+  // 带 provider 预设 yaml 与文档的插件（vision router 等）：随包拷贝。
+  copyDir('presets');
+  copyDir('docs');
     if (want) {
       try {
         fs.mkdirSync(destRoot, { recursive: true });

@@ -1787,6 +1787,10 @@ const COMPANION_PLUGINS = [
   // 更新与自更新渠道。要求 dsh ≥ 0.1.0-rc.6（当前内核 0.1.1-rc.2 满足）。
   // 与既有 dsh-webui-market / dsh-plugin-marketplace 并存，互不接管。
   { id: 'dsh-market', name: 'dshmarket', dir: 'dsh-market' },
+  // vision router（github.com/ysr666/dsh-vision-router，MIT）：纯文本代理的
+  // 眼睛 —— 免密钥内置视觉链路 + 像素级视觉工具（Q&A/OCR/截图等）。自包含
+  // vendored node_modules（undici/potrace/puppeteer-core 全家桶），随包分发。
+  { id: 'vision-router', name: 'dsh-vision-router', dir: 'dsh-vision-router' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1805,6 +1809,8 @@ const PLUGIN_UPDATE_SOURCES = {
   'dsh-market': { npm: 'dshmarket' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
+  // GitHub 分发（npm 未发布）：vision router。
+  'vision-router': { github: 'ysr666/dsh-vision-router' },
 };
 
 /** 把内置插件表 + 更新源注册表合并成 plugin-updater 的 sources 输入。 */
@@ -1873,8 +1879,8 @@ function pluginCopyEntries(src) {
     }
   };
   for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
-  for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
-  for (const d of ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client']) copyDir(d);
+  for (const f of ['entry.js', 'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
+  for (const d of ['lib', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client', 'presets', 'docs']) copyDir(d);
   return out;
 }
 
@@ -1922,7 +1928,7 @@ function copyPluginPackage(profileDirP, src, name) {
   // lib 整目录随包（配套插件可能有 logic.js 等额外模块，按清单拷会漏文件
   // 导致 dsh web 启动时 ERR_MODULE_NOT_FOUND）。
   for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
-  for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
+  for (const f of ['entry.js', 'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
   copyDir('lib');
   copyDir('preview');
   copyDir('vendor');
@@ -1937,6 +1943,9 @@ function copyPluginPackage(profileDirP, src, name) {
   // 入口不在 lib/ 的插件（src/ 或 client/ 半边 + 包 exports 映射）。
   copyDir('src');
   copyDir('client');
+  // 带 provider 预设 yaml 与文档的插件（vision router 等）：随包拷贝。
+  copyDir('presets');
+  copyDir('docs');
   if (want) {
     try {
       fs.mkdirSync(destRoot, { recursive: true });

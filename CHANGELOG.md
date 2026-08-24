@@ -14,7 +14,41 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 影响治理 + 内置接管同名市场包）→
 4.3.0（本版：内置插件更新 + 插件市场「更新」标签 + 市场插件更新）→
 4.4.0（修复设置页「Skills 与 MCP → 打开目录」失效）→
-4.5.0（本版：内核升级 0.1.1-rc.2 + 内置 dsh-market 社区插件市场）。
+4.5.0（内核升级 0.1.1-rc.2 + 内置 dsh-market 社区插件市场）→
+4.6.0（本版：修复 Tauri 版漏登记 dsh-market 导致没有插件市场 + 内置 vision router）。
+
+## [4.6.0] — 2026-08-24
+
+### 修复：Tauri 发布轨漏登记 dsh-market → 真机安装后没有插件市场
+- **根因**：4.5.0 把 dsh-market 只登记进了 Electron 侧的 `main.js` /
+  `desktop-core.js`，Tauri 发布轨实际随包分发的 `sidecar/src/desktop-core.ts`
+  （及其编译产物 `sidecar/dist`）漏掉该条目 —— 启动时配套插件同步不会把
+  dsh-market 装进 profile，设置页自然没有插件市场。
+- **修复**：sidecar TS 源码补登 `dsh-market` 配套条目 + 上游更新源
+  （npm `dshmarket`），重新编译 `sidecar/dist`；测试新增 sidecar 源码与编译
+  产物的双向断言，堵住「只查 Electron 文件」的覆盖缺口。
+- **连带**：`desktop-core.js` 补登 dsh-market 的 npm 更新源（此前只有配套
+  条目没有更新源）。
+- **真机二次事故（4.6.0 验证中发现）**：dshmarket 服务端 `lib/net.js` 顶层
+  import `undici`，但内置包未 vendor、内核闭包也不含 undici（js-yaml 在闭包）
+  → 全新装机插件树加载失败、dsh web 退出 code=1、窗口 ERR_CONNECTION_REFUSED。
+  **修复**：`assets/plugins/dsh-market` 内 vendor `undici@7.29.0`（满足其
+  `^7.29.0` 声明），随包拷贝；测试钉死 vendored 依赖存在。
+
+### 新增：内置 vision router（dsh-vision-router v1.7.7）
+- 随包内置 `assets/plugins/dsh-vision-router`（GitHub 官方 Release tarball，
+  SHA-256 校验通过）：纯文本代理的视觉链路 + 像素级视觉工具
+  （Q&A / grounding / crop / OCR / SVG trace / 截图等），无需 API Key。
+- **自包含**：插件自身依赖（undici / potrace / puppeteer-core 及
+  puppeteer 全家桶）全部 vendored 进包内 `node_modules`，新装机离线可用；
+  内核闭包（`@deepseek-ai/*` / react / schemastery 等）由 dsh 共享
+  `profiles/node_modules` 提供，不重复打包。
+- 注册为第 12 个配套插件（id `vision-router`，GitHub 更新源
+  `ysr666/dsh-vision-router`）；已装同名市场包的机器，内置版自动接管。
+- **拷贝清单增强**：`copyPluginPackage` / `pluginCopyEntries` 支持根级
+  `entry.js` 入口与 `presets` / `docs` 目录（vision router 的 main 是根级
+  entry.js，旧清单会漏拷导致 ERR_MODULE_NOT_FOUND）；main.js /
+  desktop-core.js / sidecar 三处实现同步。
 
 ## [4.5.0] — 2026-08-23
 
