@@ -113,13 +113,21 @@ interface Replacement {
   insert: string;
 }
 
+// 多候选：同一处补丁在不同内核版本构建产物上的锚点差异（main 2dd37bd 系修复，
+// rc.7/rc.2 构建产物锚点不同）；依序取第一个命中，全部未命中判定失配。
+interface ReplacementGroup {
+  anyOf: Replacement[];
+}
+
+type ReplacementEntry = Replacement | ReplacementGroup;
+
 interface PatchTarget {
   file: string;
-  replacements: Replacement[];
+  replacements: ReplacementEntry[];
   upgradeRules?: Replacement[];
 }
 
-function applyReplacements(file: string, replacements: Replacement[], upgradeRules: Replacement[], log: (msg: string) => void): boolean {
+function applyReplacements(file: string, replacements: ReplacementEntry[], upgradeRules: Replacement[], log: (msg: string) => void): boolean {
   let src: string;
   try {
     src = fs.readFileSync(file, 'utf8');
@@ -153,10 +161,10 @@ function applyReplacements(file: string, replacements: Replacement[], upgradeRul
   for (const r of replacements) {
     // 多候选（anyOf）：同一处补丁在不同内核版本构建产物上的锚点差异，
     // 依序取第一个命中的候选；全部未命中才判定失配跳过整文件。
-    const candidates = r.anyOf || [r];
+    const candidates: Replacement[] = 'anyOf' in r ? r.anyOf : [r];
     const hit = candidates.find((c) => src.includes(c.anchor));
     if (!hit) {
-      log('session-manage 补丁: 锚点未匹配（dsh 版本可能已变化），跳过 ' + file + ' :: ' + candidates[0].anchor.slice(0, 60));
+      log('session-manage 补丁: 锚点未匹配（dsh 版本可能已变化），跳过 ' + file + ' :: ' + (candidates[0]?.anchor ?? '').slice(0, 60));
       return false;
     }
     src = src.replace(hit.anchor, hit.insert);

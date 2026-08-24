@@ -19,5 +19,16 @@
     "noEmit": false
   },
   "include": ["lib/**/*.ts", "shared/**/*.ts", "preload/**/*.ts", "scripts/**/*.ts", "*.ts", "types-*.d.ts"],
-  "exclude": ["node_modules", "vendor", "dist", "out", "assets", "docs"]
+  "exclude": [
+    "node_modules",
+    "vendor",
+    "dist",
+    "out",
+    "assets",
+    "docs",
+    "lib/desktop",
+    "compact-preset-migrate.ts",
+    "shortcut-maintenance.ts",
+    "stream-write-guard.ts"
+  ]
 }

@@ -1,8 +1,9 @@
-// Tests for the dsh-file-drop companion plugin's pure core.
+// Tests for the dsh-file-drop-eac companion plugin's pure core.
 // The plugin lets users drag files into the conversation input:
 //   · text files → content injected into the composer (size-clamped)
-//   · images / binaries / oversized files → path hint text for the agent
-// The pure logic lives inside lib/client.js as `window.__dshFileDropCore`
+//   · binaries / oversized files → path hint text for the agent
+//   · images → skipped (handled by the vision bridge, not injected)
+// The pure logic lives inside lib/client.js as `window.__dshFileDropEacCore`
 // (classic-script bundle, no ESM imports allowed by the dsh module loader),
 // so this test evaluates the real bundle with a stubbed window.
 
@@ -11,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const BUNDLE = new URL('../assets/plugins/dsh-file-drop/lib/client.js', import.meta.url);
+const BUNDLE = new URL('../assets/plugins/dsh-file-drop-eac/lib/client.js', import.meta.url);
 
 /** Evaluate the real client bundle with a stub loader; returns the exposed core. */
 function loadCore() {
@@ -22,14 +23,14 @@ function loadCore() {
   };
   vm.runInNewContext(src, { window: win, console, setTimeout, clearTimeout, FileReader: class {}, DataTransfer: class {}, InputEvent: class {}, Event: class {} });
   assert.ok(captured.handoff, 'bundle must register via __ModuleLoader__.load');
-  assert.equal(captured.handoff.id, 'dsh-file-drop', 'handoff must carry the plugin id');
-  assert.ok(win.__dshFileDropCore, 'bundle must expose the pure core');
-  return win.__dshFileDropCore;
+  assert.equal(captured.handoff.id, 'dsh-file-drop-eac', 'handoff must carry the plugin id');
+  assert.ok(win.__dshFileDropEacCore, 'bundle must expose the pure core');
+  return win.__dshFileDropEacCore;
 }
 
 const core = loadCore();
 
-test('bundle registers as dsh-file-drop with a web client', () => {
+test('bundle registers as dsh-file-drop-eac with a web client', () => {
   // the handoff factory shape is exercised when the loader materializes it;
   // here we only verify registration metadata reached the stub.
 });

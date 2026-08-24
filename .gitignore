@@ -5,6 +5,9 @@
 
 # ---- 依赖 ----
 node_modules/
+# 微信桥接插件（本地目录，未入库）
+openclaw-dsh-bridge/node_modules/
+openclaw-dsh-bridge/dist/
 
 # ---- 构建产物 ----
 # tsc 编译输出（原地 .js 产物由 dsh-desktop/.gitignore 忽略）
@@ -23,10 +26,15 @@ dsh-desktop/vendor/
 dsh-desktop/.dsh-test-home/
 dsh-desktop/.dsh-packaged-test/
 dsh-desktop/test/.dsh-home-repro/
+dsh-desktop/.dsh-test-runtime/
+# 源码树外的独立测试运行时（权限允许时 smoke 脚本使用）
+.test-runtime/
 # 桌面壳运行数据目录
 dsh-desktop/data/
 # 更新器待装目录（下载的安装包与 .part 断点分片）
 updates/
+# 一次性调试目录
+/tmp-p2boot/
 
 # ---- 日志与临时文件 ----
 *.log

@@ -15,13 +15,14 @@
   - [x] 0.5 `git status` 零未解决 + 全树零冲突标记核验通过 → merge commit `d64d7f5`
   - 执行偏差记录：① wsl-backend.js/.ts 按 refactor 删除（核实 main 侧无代码消费、refactor 升级契约测试断言其属 legacy 已删清单）；② 旧插件 webui-market/zat-dsh-engine/file-drop/auto-compact/plugin-marketplace/tool-vision/tdai-memory 由合并自动删除（main 侧删除胜出），**Task 2.2 大半已完成**；③ `dsh-eac-core-bridge` 改为**保留**（refactor 新增且被 `plugin-registry-data.ts` + `extension-host/bridge-server.ts` 活跃引用，非退役插件）；④ 已知遗留：`plugin-registry-data.ts` 残留 4 条已删插件引用（webui-market/zat-market/auto-compact/file-drop）→ Task 2.3 清理
 
-- [ ] Task 1: 配置与文档冲突解决（§6-A/B 组）
-  - [ ] 1.1 `.github/workflows/ci.yml`：refactor 版基底（Node26+cargo+native）并入 main paths 过滤（`.agents/skills/**`）
-  - [ ] 1.2 `.github/workflows/release.yml`：取 main 禁用占位版（Task 10 删除）
-  - [ ] 1.3 根 `.gitignore` + `dsh-desktop/.gitignore`：refactor 版 + main 条目并集
-  - [ ] 1.4 `README.md`/`README.en.md`：main 版基底，下载链接占位待 Task 11 更新为 Tauri 双平台产物
-  - [ ] 1.5 `dsh-desktop/package.json`：deps 全取 main（0.1.1-rc.2 全家桶）+ refactor devDeps 并入（napi/cargo 工具链）；scripts 取 refactor；version 6.0.0；`electron-builder.yml`/`tsconfig.json`/`CHANGELOG.md`/`dsh-desktop/README.md` 按解决表
-  - [ ] 1.6 tsconfig include 并入 `../tauri-shell/sidecar/**`；门禁全绿 → commit
+- [x] Task 1: 配置与文档冲突解决（§6-A/B 组）
+  - [x] 1.1 `.github/workflows/ci.yml`：refactor 版基底（Node26+cargo+native）并入 main paths 过滤（`.agents/skills/**`）+ `merge/vnext-tauri` 分支触发 + validate-skill 双 PowerShell 步骤恢复
+  - [x] 1.2 `.github/workflows/release.yml`：取 main 禁用占位版（Task 10 删除）
+  - [x] 1.3 根 `.gitignore` + `dsh-desktop/.gitignore`：refactor 版 + main 条目并集（desktop 侧 refactor 通配符 `/*.js`+`/lib/**/*.js` ⊇ main 枚举清单；main 的 `tauri-shell/sidecar/server.js` 条目为无效相对路径，由 `tauri-shell/.gitignore` 正确覆盖）
+  - [x] 1.4 `README.md`/`README.en.md`：main 版基底，下载链接占位待 Task 11 更新为 Tauri 双平台产物
+  - [x] 1.5 `dsh-desktop/package.json`：deps 全取 main（0.1.1-rc.2 全家桶）+ refactor devDeps 并入；scripts 取 refactor；version 6.0.0；package-lock 重建（`npm install --package-lock-only`）；`CHANGELOG.md` 按 6.0.0 双主线版本史改写；`tsconfig.json` 见 1.6；`electron-builder.yml` 无冲突（main 冻结态保留）；`dsh-desktop/README.md` 无冲突
+  - [x] 1.6 门禁全绿 → commit。**决策修正**：tsconfig **不并入** `../tauri-shell/sidecar/**`——sidecar/server.ts 仍 mount main 侧 `lib/desktop/*` 布局（`mount('proc')` 等 13 处），与 refactor `lib/*` 37 模块不匹配，并入即 typecheck 崩；sidecar include 与 `lib/desktop` 排除项一并随 **Task 3.5**（sidecar 依赖签名核对/重写）落地。附带修复：`test/file-drop-core.test.ts` 适配 `dsh-file-drop-eac`（旧 `dsh-file-drop` 插件已随合并删除，测试原指向旧路径加载失败；核心 API 同构：classifyFile/buildTextInsertion/buildPathHint/looksBinary/TEXT_MAX_BYTES，仅 id 与暴露名 `__dshFileDropEacCore` 不同）
+  - 执行偏差记录：① `node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js`（git 跟踪的补丁文件）曾被 npm install 重装 rc.2 覆盖丢失补丁，已从 HEAD 恢复（该文件 rc.7/rc.2 内容除补丁外一致，且补丁不受 patch-deps.js 管理）；② 本地首次 `npm test` 挂起系 6 个遗留 `electron/install.js` 进程（旧 npm install 下载卡死）阻塞 worker，清理后 dist 已完整无需重下；③ 测试基线 558/558 全绿（refactor 侧 499 → 合并后 558，增量来自 main 侧 client-update 系列等已并入测试）
 
 - [ ] Task 2: 插件资产冲突与旧插件清理（§6-C 组）
   - [ ] 2.1 确认 picturereader 树已取 main 3.1.0（Task 0.3 已完成，238 文件）；`node_modules` 210 文件无冲突残留
