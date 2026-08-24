@@ -34,6 +34,8 @@ files:
   - lib/run-state.js
   - lib/watchdog-boot.js
   - lib/server.js
+  # 7f7fa05：跨实例 dsh web 进程锁（lib/server.js 启动/退出路径 require）。
+  - lib/server-lock.js
   - lib/terminal.js
   - lib/preview.js
   - lib/market-modules.js
@@ -112,6 +114,8 @@ files:
   - updater.js
   - client-updater.js
   - logger.js
+  # 2dd37bd（#137）：流写入守卫（lib/server.js / lib/boot.js 日志流 require）。
+  - stream-write-guard.js
   - plugin-updater.js
   - balance.js
   - session-watcher.js

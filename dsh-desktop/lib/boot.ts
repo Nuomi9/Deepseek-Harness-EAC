@@ -19,6 +19,7 @@ import * as bundleIntegrity from '../bundle-integrity.js';
 import type { BundleManifest } from '../bundle-integrity.js';
 import { SessionWatcher } from '../session-watcher.js';
 import { buildErrorDetail } from '../error-detail.js';
+import { createStreamWriteGuard } from '../stream-write-guard.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { updCtx, dshVersion, dshVersionSource } from './proc.js';
@@ -319,7 +320,12 @@ export async function boot(): Promise<void> {
       /* console 不可用则静默 */
     }
   }
-  state.desktopLog = fs.createWriteStream(path.join(state.logsDir, 'desktop.log'), { flags: 'a' });
+  // 2dd37bd（#137）：desktop.log 同样经统一生命周期守卫——write-after-end
+  // 等 Writable 异步错误圈进静默回调，日志故障不影响业务路径。
+  state.desktopLog = createStreamWriteGuard(
+    fs.createWriteStream(path.join(state.logsDir, 'desktop.log'), { flags: 'a' }),
+    { onError: () => { /* 静默降级：日志通道故障不影响业务 */ } },
+  );
   log('boot', `Deepseek Harness EAC（封装 ${app.getVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。

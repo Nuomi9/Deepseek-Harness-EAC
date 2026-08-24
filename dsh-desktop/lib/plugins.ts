@@ -111,6 +111,60 @@ export function syncBundledSkills(): void {
   }
 }
 
+/**
+ * 配套插件的宿主依赖兜底（a1569b3 自 main 侧 companion-sync 移植，真实目录
+ * 非链接）。rc.2 起 dsh-app-boot 首启会 pnpm 重建 <home>/profiles/node_modules
+ * 共享层：dev 时代指向宿主工程的符号链接与历史手工副本会被清掉，而 web-app
+ * 闭包不传递依赖 schemastery —— better-sidebar / dsh-side-session 等 require
+ * 它会 ERR_MODULE_NOT_FOUND 拖垮整个插件树（dsh web 退出码 1，「DSH 服务已
+ * 停止」）。共享层归内核管理随时可能重建；插件层 <profile>/node_modules 不会
+ * 被重建，在这里落真实副本（版本戳幂等，升级版本变化才重拷）。
+ */
+export function ensurePluginHostDeps(profileDirP: string): void {
+  const appRoot = path.join(__dirname, '..');
+  const copied = new Set<string>();
+  const ensureCopy = (rel: string, depth: number): void => {
+    if (depth > 4 || copied.has(rel)) return;
+    const src = path.join(appRoot, 'node_modules', rel);
+    const srcPkg = readJsonFile(path.join(src, 'package.json'));
+    const version = srcPkg && typeof srcPkg.version === 'string' ? srcPkg.version : '';
+    if (!version) return;
+    copied.add(rel);
+    const dest = path.join(profileDirP, 'node_modules', rel);
+    const stamp = path.join(dest, '.eac-host-dep.json');
+    const prev = readJsonFile(stamp);
+    const fresh = prev && prev.version === version && fs.existsSync(path.join(dest, 'package.json'));
+    if (!fresh) {
+      try {
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.cpSync(src, dest, { recursive: true });
+        fs.writeFileSync(stamp, JSON.stringify({ version, at: new Date().toISOString() }, null, 2) + '\n');
+        log('boot', `已落位插件宿主依赖 ${rel}@${version}（真实目录，重建免疫）`);
+      } catch (err) {
+        log('boot', `宿主依赖落位失败 ${rel}: ` + String(((err as Error).message) || err));
+        return;
+      }
+    }
+    // 递归落位该包的 dependencies（应用树已提升的同名包；共享层若另有供应，
+    // 插件层的副本同版本族不冲突，以插件树自洽优先）。
+    const deps = (srcPkg && srcPkg.dependencies) as Record<string, string> | undefined;
+    if (deps && typeof deps === 'object') {
+      for (const dep of Object.keys(deps)) {
+        if (fs.existsSync(path.join(appRoot, 'node_modules', dep, 'package.json'))) {
+          ensureCopy(dep, depth + 1);
+        }
+      }
+    }
+  };
+  ensureCopy('schemastery', 0);
+  // cosmokit 只在共享层没有时兜底（避免遮蔽内核闭包内的配套版本）。
+  const sharedCosmo = path.join(state.dshHome || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules', '@deepseek-ai', 'cosmokit');
+  if (!fs.existsSync(sharedCosmo)) {
+    ensureCopy(path.join('@deepseek-ai', 'cosmokit'), 0);
+  }
+}
+
 /** 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。 */
 export function retireRemovedBuiltinPlugins(profileDirP: string): void {
   for (const p of RETIRED_BUILTIN_PLUGINS) {
@@ -182,6 +236,8 @@ export function syncCompanionPlugins(): void {
     if (defaultResult === 'set') log('boot', '已设置默认 agent preset: anchored-standard');
     else if (defaultResult === 'kept') log('boot', '用户已设置默认 agent preset，保持不变');
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
+    // 插件宿主依赖兜底（a1569b3）：真实目录副本落插件层，共享层 pnpm 重建免疫。
+    ensurePluginHostDeps(profileDirP);
     const pending: { id: string; name: string; disabled: boolean; config: Record<string, unknown> | undefined }[] = [];
     const removedIds = removedPluginIds();
     // V4.2：市场同名包残留先迁移（package.json 依赖/bundles + patch 行），

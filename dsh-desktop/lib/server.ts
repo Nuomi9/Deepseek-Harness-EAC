@@ -27,8 +27,15 @@ import {
   isEncodingMismatch,
   healSessionEncodingConflicts,
 } from '../session-encoding-heal.js';
+import { createStreamWriteGuard } from '../stream-write-guard.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import {
+  dshWebLockPath,
+  isAnotherDshWebRunning,
+  createDshWebLock,
+  removeDshWebLock,
+} from './server-lock.js';
 import { killTree, waitForProcExit, nodeExe, updCtx, dshBin } from './proc.js';
 import { desktopProfile, desktopProfileDir } from './paths.js';
 import { bridge } from './bridge.js';
@@ -82,6 +89,19 @@ export async function startServer(
     killTree(state.serverProc);
     state.serverProc = null;
   }
+  // 跨实例并发 dsh web 检测（7f7fa05，fix #22）：他人活锁时拒绝启动——
+  // 两个 web 进程并发写同一 DSH_HOME 会损坏会话日志。死锁自动清理、
+  // 自身锁放行（重入/受限端口重启交接），详见 lib/server-lock.ts。
+  if (isAnotherDshWebRunning()) {
+    const lockPath = dshWebLockPath();
+    log('dsh', '检测到另一个 dsh web 进程正在运行（锁文件：' + lockPath + '）');
+    throw new Error(
+      '检测到另一个 dsh web 进程正在运行（锁文件：' +
+        lockPath +
+        '）。请先关闭其他 dsh web 实例后重试；若确认没有其他实例在运行，可手动删除该锁文件。',
+    );
+  }
+  const lockToken = createDshWebLock(); // exit handler 凭 token 代次释放
   // 稳定端口（stable-port.js）：复用 settings.webPort，避免每次 --port 0
   // 换 origin 导致 localStorage 偏好丢失；同时避开 Chromium 受限端口。
   const webPort = await chooseStableWebPort(stablePortCtx());
@@ -141,6 +161,7 @@ export async function startServer(
       unsafePortRetries,
       overlays,
       firstBoot,
+      lockToken,
     }).then(resolve, reject);
   });
 }
@@ -151,6 +172,8 @@ export interface WatchOpts {
   unsafePortRetries?: number;
   overlays?: string[];
   firstBoot?: boolean;
+  /** 本次 startServer 的持锁代次（exit handler 凭它释放，见 lib/server-lock.ts）。 */
+  lockToken?: number;
 }
 
 // 等待 dsh web 子进程 stdout 出现就绪 URL 行；进程提前退出 / 启动超时则拒绝。
@@ -166,6 +189,12 @@ export function watchServerProc(
     let settled = false;
     let handedOff = false; // 受限端口重启：本实例的退出不再影响外层 Promise/弹窗
     let bootTimer: NodeJS.Timeout | null = null;
+    // 2dd37bd（#137）：exit 事件可能早于 stdio 管道排空，立即 end() 会触发
+    // ERR_STREAM_WRITE_AFTER_END——所有写入经统一生命周期守卫（迟到写入安全
+    // 拒绝），流结束延后到 stdio 全部关闭后的 close 事件（见下方 proc.on('close')）。
+    const output = createStreamWriteGuard(out, {
+      onError: (err) => log('warn', 'dsh web 日志流异常: ' + String((err as Error)?.message || err)),
+    });
     const finish = (fn: (v: never) => void, value: unknown): void => {
       if (!settled) {
         settled = true;
@@ -177,7 +206,7 @@ export function watchServerProc(
       }
     };
     const onData = (chunk: Buffer): void => {
-      out.write(chunk);
+      output.write(chunk);
       const text = chunk.toString();
       for (const line of text.split(/\r?\n/)) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
@@ -228,7 +257,7 @@ export function watchServerProc(
       }
     };
     proc.stdout?.on('data', onData);
-    proc.stderr?.on('data', (c: Buffer) => out.write(c));
+    proc.stderr?.on('data', (c: Buffer) => output.write(c));
     proc.on('error', (err) => finish(reject, err));
     // V4：HTTP 就绪探测与 stdout 就绪行并行竞争 —— 就绪行被管道缓冲吞掉
     // 或格式变化时不再白白等满 bootTimer（「启动 60 秒超时」的主要假阳性
@@ -259,7 +288,10 @@ export function watchServerProc(
       })();
     }
     proc.on('exit', (code, signal) => {
-      out.end();
+      // 释放跨实例 dsh web 锁（7f7fa05）：按持锁代次释放——受限端口重启交接
+      // （handedOff）时锁由递归 startServer 重新持得；M1 重入后旧 proc 的
+      // exit 因 token 过期不删新锁。
+      removeDshWebLock(opts.lockToken ?? 0);
       log('dsh', `进程退出 code=${code} signal=${signal}`);
       // 原地重启（插件市场）或已替换为新进程时，不打扰用户、也不清掉新进程的句柄。
       const intentional = state.restartingServer || state.serverProc !== proc;
@@ -304,6 +336,9 @@ export function watchServerProc(
           });
       }
     });
+    // 2dd37bd（#137）：日志流结束延后到 stdio 全部关闭——close 在 exit 之后、
+    // 管道排空后才触发，exit 后残余的尾部 data 仍经守卫安全写入。
+    proc.on('close', () => output.end());
     // Safety net in case neither the URL line nor the HTTP probe lands in time.
     // V4：profile 首次引导（node_modules 尚不存在）需要 pnpm 从网络装齐
     // dsh-base + dsh-web-app，慢网络下 60 秒不够 —— 首启放宽到 180 秒，

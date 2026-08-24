@@ -48,15 +48,15 @@
   - [x] 3.5 sidecar 依赖签名核对：`resolveRepos`/balance API/updater API/plugin-updater API 逐一对齐（refactor 导出面 ⊇ main 消费面）→ 门禁全绿 → commit
     - 完成记录：`client-updater.ts` 门面已含 `resolveRepos`（lib/client-update/index.ts:21）；balance 7 成员/updater 6 成员/onboarding 6 成员/plugin-updater 全量消费逐一核对覆盖。**吸收 main 侧 plugin-copy.ts 4 项增量**（平行版本重叠，main vnext-absorb Phase 3 语义）：`COPY_STAMP` 导出 + `pluginCopyEntries`（旧 companion-sync 导出面兼容）+ `pluginCopyIsComplete`/`invalidatePluginCompleteCache`（companion-copy-integrity 契约：源戳记一致但目标文件缺失必须重拷，判定按 dest+mtime+stamp 进程内缓存）+ `copyPluginPackage` 跳过判定升级为「内容未变且目标完整」。sidecar `onboardingLogic` 类型断言精确化（CORE/RECOMMENDED_PLUGIN_IDS 为 Set 非 string[]，main 侧本就是 Set，运行时无碍）。过渡链路落地：`lib/state.ts`+`initVNextState`、`lib/log.ts`+`setLogSink`、`lib/recovery-center/register-sidecar.ts`（sidecar 恢复中心动作分发，剥离 Electron 依赖）、`tsconfig.transition.json`（erasableSyntaxOnly:false 编译 lib/desktop 过渡层）、stage-resources.mjs 清单同步。门禁：typecheck 主配置+过渡配置零错误，npm test 661/661（上游 main 合并后 558→661）。
 
-- [ ] Task 4: main 修复移植（11 项，§7 清单；每项先写失败测试再移植——见 tdd.md T1-T11）
-  - [ ] 4.1 `lib/server.ts` ← 7f7fa05 并发 dsh web 检测（fix #22，main.js +81 行语义）
-  - [ ] 4.2 `lib/plugin-copy.ts` ← 4bc3ac1 安全模式守卫（safeModeActive + patch 行停摆）
-  - [ ] 4.3 `lib/plugin-copy.ts` ← a1569b3 schemastery 首启依赖
-  - [ ] 4.4 `lib/plugin-copy.ts` ← d268fe9 profile 完整性（tauri 侧 stage-resources 随 main 树自动保留）
-  - [ ] 4.5 `plugin-updater.ts` + `scripts/patch-deps.ts` ← 9d068c2/406914e/3f12d05 可选升级字段三连
-  - [ ] 4.6 `lib/client-update/*` ← 0d69c79 停滞超时 300s（核对 refactor 现值）
-  - [ ] 4.7 核对项：2dd37bd 流写入保护（refactor stream-write-guard 已含）、16b8ff4 splash（资产取 main 自动获得）、18b0fd4 escalation 豁免（定位落点后移植）
-  - [ ] 4.8 11be738 托盘完全重启 → 记入 Task 8 清单；每项移植带独立测试 → 门禁全绿 → commit
+- [x] Task 4: main 修复移植（11 项，§7 清单；每项先写失败测试再移植——见 tdd.md T1-T11）
+  - [x] 4.1 `lib/server.ts` ← 7f7fa05 并发 dsh web 检测（fix #22，main.js +81 行语义）（`lib/server-lock.ts` + `test/server-lock.test.ts` 8 用例）
+  - [x] 4.2 `lib/plugin-copy.ts` ← 4bc3ac1 安全模式守卫（safeModeActive + patch 行停摆）
+  - [x] 4.3 `lib/plugin-copy.ts` ← a1569b3 schemastery 首启依赖（`test/plugin-host-deps.test.ts`）
+  - [x] 4.4 `lib/plugin-copy.ts` ← d268fe9 profile 完整性（tauri 侧 stage-resources 随 main 树自动保留）
+  - [x] 4.5 `plugin-updater.ts` + `scripts/patch-deps.ts` ← 9d068c2/406914e/3f12d05 可选升级字段三连
+  - [x] 4.6 `lib/client-update/*` ← 0d69c79 停滞超时 300s（核对 refactor 现值）
+  - [x] 4.7 核对项：2dd37bd 流写入保护（server.ts dsh-web.log + boot.ts desktop.log 均经 `createStreamWriteGuard`；guard 改具名导出 + 打包清单补录）、16b8ff4 splash（assets/loading.html prefers-color-scheme 已随 main 树并入）、18b0fd4 escalation 豁免（已在 4.5 完成）
+  - [x] 4.8 11be738 托盘完全重启 → 已移植 `lib/tray.ts`（`test/tray-menu.test.ts` 3 用例）+ 记入 Task 8.1 清单 → 门禁全绿（typecheck 0 错 + 672 测试全过）→ commit
 
 - [ ] Task 5: 模块统一批次一——sidecar 消费面 ctx 化（12 模块）
   - [ ] 5.1 以 `lib/desktop/guard-box.ts` 的 `XxxCtx` 注入模式为模板建立 `lib/host-ctx.ts`（宿主接口：isPackaged/resourcesPath/log/exitProcess/notify）
@@ -79,6 +79,7 @@
 
 - [ ] Task 8: Tauri 壳能力补齐（tauri-shell/）
   - [ ] 8.1 `src/main.rs` 托盘菜单：重启 Web 服务 / 完全重启 / 退出（对齐 11be738 + refactor 托盘项）
+    - 现状 delta（Task 4.8 核对）：`main.rs` 托盘现为 show/recovery/restart(重启 Web 服务)/feedback/quit 五项，**缺「完全重启」**；实现可直接用 `app.restart()`（同文件 recovery.restart handler 已有先例），位置对齐 Electron 版：紧随「重启 Web 服务」下方
   - [ ] 8.2 导航围栏：仅放行 localhost dsh web + 白名单（承接 `lib/window.ts` isAllowedWebUrl 语义）
   - [ ] 8.3 快照备份树面板入口（⋯ 菜单位置对齐 refactor：重启 Web 服务与重新加载之间）；面板经 bridge 拉起
   - [ ] 8.4 splash 主题跟随系统（16b8ff4 语义）；恢复中心三入口在 Tauri 壳可达性核对

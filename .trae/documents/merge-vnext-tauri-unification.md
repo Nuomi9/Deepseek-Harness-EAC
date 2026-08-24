@@ -245,7 +245,7 @@ Tauri Shell (Rust + WebView2)                    tauri-shell/src/main.rs
 | 4 | d268fe9 profile 完整性 + Tauri 资源校验 | lib/desktop/companion-sync.ts + tauri-shell/stage-resources.mjs | 前者→`lib/plugin-copy.ts`；后者随 main 树保留 |
 | 5 | 9d068c2 + 406914e + 3f12d05 可选升级字段三连 | plugin-updater / patch-deps / tauri 打包链 | `plugin-updater.ts` + `scripts/patch-deps.ts`；tauri 侧随 main 树 |
 | 6 | 0d69c79 更新停滞超时 150s→300s | updater.js | `lib/client-update/*`（核对 refactor 现值，未含则改） |
-| 7 | 11be738 托盘「完全重启」 | main.js +1 行 | Phase 3 Tauri 托盘菜单实现 |
+| 7 | 11be738 托盘「完全重启」 | main.js +1 行 | ✅ Task 4.8 已移植 `lib/tray.ts`（`test/tray-menu.test.ts` 守护：位置/三步语义/与退出两档区分）；Tauri 侧记 Task 8.1（现 `main.rs` 托盘仅 show/recovery/restart/feedback/quit，缺完全重启项；`app.restart()` 语义已有先例：recovery.restart handler） |
 | 8 | 16b8ff4 splash 主题跟随系统 | assets/loading.html | 资产取 main 自动获得；Tauri splash 核对 |
 | 9 | 2dd37bd 流写入保护（#137） | stream-write-guard | refactor 已有对应物，核对含修复 |
 | 10 | 18b0fd4 全访问时豁免必填 escalation（PR #199） | Phase 1 定位（插件 schema 或核心） | 落点核实后移植 |

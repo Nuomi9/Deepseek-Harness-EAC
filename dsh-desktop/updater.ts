@@ -29,8 +29,9 @@ const IS_WIN = process.platform === 'win32';
 // 自动切换。切换与结果都会经 onProgress 上报给更新弹窗提示。
 const NPM_MIRRORS = ['https://registry.npmmirror.com', 'https://registry.npmjs.org'];
 // 单个 npm 命令「无任何输出」的停滞上限：超过即判死并切换镜像源
-//（npm 解析依赖时可能长时间静默，阈值取 150 秒）。
-const NPM_STALL_MS = 150 * 1000;
+//（npm 解析依赖时可能长时间静默，阈值取 300 秒——0d69c79 实测 150 秒
+// 在慢网络依赖解析下误杀，升级为 300 秒）。
+const NPM_STALL_MS = 300 * 1000;
 
 let activeProc: ChildProcess | null = null;
 

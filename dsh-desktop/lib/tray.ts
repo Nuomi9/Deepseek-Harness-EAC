@@ -162,6 +162,9 @@ export function createTray(): void {
       { type: 'separator' },
       // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
       { label: '重启 Web 服务', click: () => { showMainWindow(); void restartWebServiceCore(); } },
+      // 11be738：完全重启——跳过驻留确认直接退出并 relaunch（比重启 Web 服务
+      // 更重：主进程状态/窗口全部重建，覆盖 Web 服务重启治不了的壳层故障）。
+      { label: '完全重启', click: () => { state.forceQuit = true; app.relaunch(); app.quit(); } },
       { type: 'separator' },
       { label: '反馈建议…', click: () => { showMainWindow(); void shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
       { type: 'separator' },
