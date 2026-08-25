@@ -1,31 +1,42 @@
 /**
- * lib/recovery-center/register.ts — 恢复中心（VNext Phase 0，Task 8）。
+ * lib/recovery-center/register.ts — 恢复中心（VNext Phase 0，Task 8；Task 6
+ * Wave 2 宿主中立化：本模块不再 import electron）。
  *
- * 独立 BrowserWindow（assets/recovery-center.html + 专用 preload），不依赖
+ * 独立恢复中心窗口（assets/recovery-center.html + 专用 preload），不依赖
  * dsh web 与主窗 —— 任意 plugin tree 启动失败时用户必定能进入这里关闭/
  * 卸载/回滚/隔离问题插件（架构文档 §3.4 / §9 Phase 0 交付标准）。
+ *
+ * 窗口生命周期整体委托宿主（HostWindows.openRecoveryCenter /
+ * closeRecoveryCenter；Electron 实现在 Wave 3 的顶层 host-electron/，Tauri
+ * 壳对应 main.rs 窗口）。宿主开窗时把窗口的 BridgeSession 登记进
+ * state.rcSession（窗口关闭时清空），rc:action / rc:close 的来源校验据此
+ * 比对会话 token（取代原 event.sender === rcWindow.webContents 的
+ * Electron webContents 身份比对，语义等价）。
  *
  * 三个入口：
  *   1. 托盘常驻菜单「恢复中心…」（lib/tray.ts）；
  *   2. 启动失败链（lib/boot.ts handleBootFailure/fatal 的按钮）；
- *   3. DSH_DESKTOP_RECOVERY=1 直开（main.js，跳过常规 boot）。
+ *   3. DSH_DESKTOP_RECOVERY=1 直开（main.ts，跳过常规 boot）。
  *
- * IPC 单通道 rc:action（来源校验：恢复中心窗口自身）。动作复用既有引擎：
- * pluginManagerSetEnabled/SetRemoved（启停/移除）、plugin-guard（快照/回滚/
- * 事故）、structuredLogger.buildDiagnosticsZip（诊断包）、registry（档案/
- * 隔离标记）；安全模式 = relaunch 注入 DSH_DESKTOP_SAFE_MODE=1（lib/plugins
- * 的 sync 检测该标记并把全部非核心配套插件按 disabled 写行）。
+ * IPC 单通道 rc:action（注册在宿主 IpcSurface 上；来源校验：恢复中心会话）。
+ * 动作复用既有引擎：pluginManagerSetEnabled/SetRemoved（启停/移除）、
+ * plugin-guard（快照/回滚/事故）、structuredLogger.buildDiagnosticsZip
+ * （诊断包）、registry（档案/隔离标记）；安全模式 = relaunch 注入
+ * DSH_DESKTOP_SAFE_MODE=1（lib/plugins 的 sync 检测该标记并把全部非核心
+ * 配套插件按 disabled 写行）。版本号经 hostCtx().appVersion()、文件定位经
+ * hostCtx().showItemInFolder()、重启/退出经 hostCtx().relaunch()/exitProcess()。
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, ipcMain, BrowserWindow, shell } from 'electron';
 import * as structuredLogger from '../../logger.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
 import { desktopProfile, desktopProfileDir } from '../paths.js';
 import { ensureGuard } from '../guard.js';
 import { restartWebServiceCore } from '../server.js';
+import { hostCtx } from '../host-ctx.js';
+import { defaultIpcSurface, type IpcSurface, type IpcEvent } from '../ipc/transport.js';
 import {
   pluginManagerCollect, pluginManagerSetEnabled, pluginManagerSetRemoved,
 } from '../plugin-manager-core.js';
@@ -35,69 +46,50 @@ import {
 } from '../supervisor/registry.js';
 import { COMPANION_PLUGINS } from '../plugin-registry-data.js';
 
-/** 恢复中心窗口实例（state 之外的单例 —— 无需跨模块共享可变状态）。 */
-let rcWindow: BrowserWindow | null = null;
-
-/** 打开（或聚焦既有）恢复中心窗口。 */
+/**
+ * 打开（或聚焦既有）恢复中心窗口：窗口创建/聚焦整体委托宿主窗口面（宿主
+ * 同时登记 state.rcSession）。IPC 先于开窗注册（对齐原实现的注册顺序，
+ * 渲染端首个 rc:action 不会竞态）。
+ */
 export function openRecoveryCenter(): void {
-  if (rcWindow && !rcWindow.isDestroyed()) {
-    rcWindow.focus();
+  const windows = hostCtx().windows;
+  if (!windows) {
+    // 无窗宿主（Node 测试 / sidecar 过渡期）：恢复中心窗口不可达。
+    // sidecar 宿主的恢复中心走 register-sidecar.ts 的 rc.action RPC。
+    log('recovery-center', '宿主无窗口能力，无法打开恢复中心');
     return;
   }
   registerRecoveryCenterIpc();
-  const win = new BrowserWindow({
-    width: 980,
-    height: 720,
-    minWidth: 760,
-    minHeight: 520,
-    show: false,
-    title: '恢复中心',
-    backgroundColor: '#0b1220',
-    icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
-    webPreferences: {
-      preload: path.join(__dirname, '..', '..', 'assets', 'recovery-center-preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-    },
-  });
-  rcWindow = win;
-  void win.loadFile(path.join(__dirname, '..', '..', 'assets', 'recovery-center.html'));
-  win.once('ready-to-show', () => {
-    if (!win.isDestroyed()) win.show();
-  });
-  win.on('closed', () => {
-    rcWindow = null;
-  });
+  windows.openRecoveryCenter();
   log('recovery-center', '恢复中心已打开');
 }
 
-/** 来源校验：只接受恢复中心窗口自身。 */
-function fromRecoveryWindow(event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean {
-  return !!rcWindow && !rcWindow.isDestroyed() && event.sender === rcWindow.webContents;
+/** 来源校验：只接受恢复中心会话（宿主开窗时登记 state.rcSession）。 */
+function fromRecoverySession(ev: IpcEvent): boolean {
+  return !!state.rcSession && state.rcSession.isAlive() && ev.sender.sessionToken === state.rcSession.id;
 }
 
 /** IPC 只注册一次（窗口可反复开关）。 */
 let ipcRegistered = false;
 
-function registerRecoveryCenterIpc(): void {
+function registerRecoveryCenterIpc(surface: IpcSurface = defaultIpcSurface()): void {
   if (ipcRegistered) return;
   ipcRegistered = true;
 
-  ipcMain.on('rc:close', (event) => {
-    if (fromRecoveryWindow(event) && rcWindow) rcWindow.close();
+  surface.on('rc:close', (_payload, ev) => {
+    if (fromRecoverySession(ev)) hostCtx().windows?.closeRecoveryCenter();
   });
 
-  ipcMain.handle('rc:action', async (event, { action, value } = {}) => {
-    if (!fromRecoveryWindow(event)) return { ok: false, error: 'unauthorized' };
+  surface.handle('rc:action', async (payload, ev) => {
+    if (!fromRecoverySession(ev)) return { ok: false, error: 'unauthorized' };
+    const { action, value } = (payload ?? {}) as { action?: string; value?: unknown };
     try {
       switch (action) {
         case 'status': {
           const g = ensureGuard();
           return {
             ok: true,
-            appVersion: app.getVersion(),
+            appVersion: hostCtx().appVersion(),
             profile: desktopProfile(),
             plugins: listRegistryEntries(),
             snapshots: g.listSnapshots().slice(0, 20),
@@ -142,8 +134,8 @@ function registerRecoveryCenterIpc(): void {
           state.quitting = true;
           state.forceQuit = true;
           process.env.DSH_DESKTOP_SAFE_MODE = '1';
-          app.relaunch();
-          app.exit(0);
+          hostCtx().relaunch();
+          hostCtx().exitProcess(0);
           return { ok: true };
         }
         case 'snapshot': {
@@ -186,7 +178,7 @@ function registerRecoveryCenterIpc(): void {
             userDataDir: state.userDataDir,
             dshHome: state.dshHome,
           });
-          shell.showItemInFolder(zipPath);
+          hostCtx().showItemInFolder(zipPath);
           return { ok: true, zipPath };
         }
         default:

@@ -1,37 +1,82 @@
 /**
- * lib/window.ts — 主窗/浮窗生命周期与渲染进程自恢复装配（Task 3.1 自 main.js 提取）。
+ * lib/window.ts — 主窗/浮窗生命周期与渲染进程自恢复装配（Task 3.1 自 main.js
+ * 提取；Task 6 Wave 1 宿主中立化：本模块不再 import electron）。
  *
- *   showBox / isAllowedWebUrl / attachEditContextMenu 共享工具；
- *   createWindow（导航围栏、右键菜单、快捷键、最大化同步、退出策略接线）；
- *   会话浮窗族（guardFloatWebContents / createFloatWindow / closeAllFloatWindows，
- *   独立 partition + FLOAT_MAX 上限）；reloadMainWindow；
- *   initRendererRecovery / wireWindowRecovery / startHeartbeatLoop（renderer-
- *   recovery.js 状态机装配，上游 Issue #9 根治修复）。
+ * 窗口创建与事件接线（导航围栏、右键菜单、快捷键、最大化同步、关闭策略、
+ * BridgeSession 登记、浮窗构造/复用）全部属宿主职责 —— Electron 机制由
+ * Wave 3 在顶层 host-electron/windows.ts 实现；原 attachEditContextMenu /
+ * guardFloatWebContents（WebContents 强耦合）与 createFloatWindow 主体一并
+ * 迁往彼处。此处保留宿主中立部分：
+ *   showBox（映射 hostCtx().showMessageBox）/ isAllowedWebUrl（纯函数）；
+ *   createWindow 薄委托 hostCtx().windows?.createMain；
+ *   closeAllFloatWindows（遍历 state.floatSessions 会话回收）；
+ *   initRendererRecovery / attachWindowToRecovery / startHeartbeatLoop
+ *   （renderer-recovery.js 状态机装配，上游 Issue #9 根治修复）；
+ *   reloadMainWindow（整体委托宿主，恢复页分支在宿主实现）；FLOAT_MAX 常量。
  */
 
 import * as path from 'node:path';
-import { app, BrowserWindow, Menu, shell, dialog, Notification } from 'electron';
-import type { WebContents } from 'electron';
 import { RendererRecovery } from '../renderer-recovery.js';
-import type { FailureRecord, RecoveryWindow } from '../renderer-recovery.js';
+import type { FailureRecord, RecoveryWindow, WindowKind } from '../renderer-recovery.js';
 import { state } from './state.js';
 import { log } from './log.js';
-import { IS_WIN } from './proc.js';
+import { hostCtx } from './host-ctx.js';
 import { writeRunState } from './run-state.js';
 import { waitUntilUp } from './server.js';
 import { bridge } from './bridge.js';
 
-/** 会话浮窗全局上限（防资源滥用）。 */
+/**
+ * 会话浮窗全局上限（防资源滥用）。上限判定随浮窗创建移入宿主
+ * （HostWindows.openFloatWindow），常量对宿主中立保留。
+ */
 export const FLOAT_MAX = 8;
 
-/** 消息框：有主窗时挂主窗（模态感），否则无父窗。 */
-export function showBox(opts: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
-  if (state.mainWindow && !state.mainWindow.isDestroyed())
-    return dialog.showMessageBox(state.mainWindow, opts);
-  return dialog.showMessageBox(opts);
+/** showBox 参数（Electron MessageBoxOptions 语义子集的自有宽松结构）。 */
+export interface ShowBoxOpts {
+  type?: 'error' | 'info' | 'warning' | 'none' | 'question';
+  title?: string;
+  message: string;
+  detail?: string;
+  buttons?: string[];
+  defaultId?: number;
+  cancelId?: number;
+  checkboxLabel?: string;
+  checkboxChecked?: boolean;
+  noLink?: boolean;
+  /**
+   * Electron 的 icon 参数（NativeImage/路径）：HostMessageBoxOpts 无 icon 字段，
+   * 接受但忽略 —— 图标策略由宿主决定（Wave 3 视需要扩宿主面）。
+   */
+  icon?: unknown;
 }
 
-// H1（共享给主窗/浮窗）：origin 精确比较（protocol+host+port），杜绝前缀/
+/** showBox 应答（对齐 HostMessageBoxResult；checkboxChecked 仅配 checkboxLabel 时有值）。 */
+export interface ShowBoxResult {
+  response: number;
+  checkboxChecked?: boolean;
+}
+
+/**
+ * 消息框：映射到宿主消息框（hostCtx().showMessageBox）。原「有主窗时挂主窗」
+ * 的模态语义由宿主实现自行决定（Electron 宿主可在实现内挂主窗）；无头宿主
+ * 走缺省兜底（记日志并按 cancelId 应答），不抛错。
+ */
+export function showBox(opts: ShowBoxOpts): Promise<ShowBoxResult> {
+  return hostCtx().showMessageBox({
+    type: opts.type ?? 'none',
+    title: opts.title ?? '',
+    message: opts.message,
+    ...(opts.detail !== undefined ? { detail: opts.detail } : {}),
+    buttons: opts.buttons ?? [],
+    ...(opts.defaultId !== undefined ? { defaultId: opts.defaultId } : {}),
+    ...(opts.cancelId !== undefined ? { cancelId: opts.cancelId } : {}),
+    ...(opts.checkboxLabel !== undefined ? { checkboxLabel: opts.checkboxLabel } : {}),
+    ...(opts.checkboxChecked !== undefined ? { checkboxChecked: opts.checkboxChecked } : {}),
+    ...(opts.noLink !== undefined ? { noLink: opts.noLink } : {}),
+  });
+}
+
+// H1（共享给宿主窗口装配）：origin 精确比较（protocol+host+port），杜绝前缀/
 // 异域/userinfo 逃逸；file: 一律拦截（同 webContents 下 file 页面仍持有
 // preload 桥）。
 export function isAllowedWebUrl(url: string): boolean {
@@ -48,302 +93,35 @@ export function isAllowedWebUrl(url: string): boolean {
   }
 }
 
-// V4（用户反馈）：浏览器风格的右键菜单。Electron 不展示 Chromium 的内置
-// 右键菜单，需在 webContents 的 context-menu 事件自建：
-//   · 可编辑区（输入框/编辑器）→ 撤销/重做/剪切/复制/粘贴/删除/全选
-//     （role 菜单自动路由到焦点渲染进程的编辑器，enabled 用 editFlags
-//     精确反映可操作性）；
-//   · 图片 → 复制图片 / 图片另存为…；
-//   · 选中文本 → 复制 / 全选；
-//   · 其余页面区域 → 后退/前进/重新加载（浏览器同款导航段）。
-// 页面自绘右键交互（DOM contextmenu 已处理并 preventDefault 时，
-// params 仍会派发）—— Web UI 目前未使用原生右键，无冲突。
-export function attachEditContextMenu(wc: WebContents): void {
-  wc.on('context-menu', (_e, params) => {
-    const flags = params.editFlags || {};
-    const win = BrowserWindow.fromWebContents(wc);
-    if (!win || win.isDestroyed()) return;
-    let template: Electron.MenuItemConstructorOptions[] | null = null;
-    if (params.isEditable) {
-      template = [
-        { label: '撤销', role: 'undo', accelerator: 'Ctrl+Z', enabled: flags.canUndo !== false },
-        { label: '重做', role: 'redo', accelerator: 'Ctrl+Y', enabled: flags.canRedo !== false },
-        { type: 'separator' },
-        { label: '剪切', role: 'cut', accelerator: 'Ctrl+X', enabled: flags.canCut !== false },
-        { label: '复制', role: 'copy', accelerator: 'Ctrl+C', enabled: flags.canCopy !== false },
-        { label: '粘贴', role: 'paste', accelerator: 'Ctrl+V', enabled: flags.canPaste !== false },
-        { label: '删除', role: 'delete', enabled: flags.canDelete !== false },
-        { type: 'separator' },
-        { label: '全选', role: 'selectAll', accelerator: 'Ctrl+A' },
-      ];
-    } else if (params.mediaType === 'image' && params.srcURL) {
-      template = [
-        { label: '复制图片', click: () => { try { wc.copyImageAt(params.x, params.y); } catch { /* 老版本无此 API */ } } },
-        { label: '图片另存为…', click: () => { try { wc.downloadURL(params.srcURL); } catch { /* 老版本无此 API */ } } },
-      ];
-      if (flags.canCopy) {
-        template.push({ type: 'separator' }, { label: '复制', role: 'copy', accelerator: 'Ctrl+C' });
-      }
-    } else if (flags.canCopy) {
-      template = [
-        { label: '后退', enabled: wc.navigationHistory.canGoBack?.() ?? wc.canGoBack(), click: () => { try { wc.navigationHistory.goBack?.(); } catch { wc.goBack(); } } },
-        { label: '前进', enabled: wc.navigationHistory.canGoForward?.() ?? wc.canGoForward(), click: () => { try { wc.navigationHistory.goForward?.(); } catch { wc.goForward(); } } },
-        { label: '重新加载', role: 'reload', accelerator: 'Ctrl+R' },
-        { type: 'separator' },
-        { label: '复制', role: 'copy', accelerator: 'Ctrl+C' },
-        { label: '全选', role: 'selectAll', accelerator: 'Ctrl+A' },
-      ];
-    } else {
-      template = [
-        { label: '后退', enabled: wc.navigationHistory.canGoBack?.() ?? wc.canGoBack(), click: () => { try { wc.navigationHistory.goBack?.(); } catch { wc.goBack(); } } },
-        { label: '前进', enabled: wc.navigationHistory.canGoForward?.() ?? wc.canGoForward(), click: () => { try { wc.navigationHistory.goForward?.(); } catch { wc.goForward(); } } },
-        { label: '重新加载', role: 'reload', accelerator: 'Ctrl+R' },
-      ];
-    }
-    if (template && template.length) {
-      Menu.buildFromTemplate(template).popup({ window: win, x: params.x, y: params.y });
-    }
-  });
-}
-
 /** createWindow 参数。 */
 export interface CreateWindowOpts {
-  /** true 时 ready-to-show 不主动 show（后台重建场景）。 */
+  /** true 时窗口创建后不主动显示（后台重建场景）。 */
   startHidden?: boolean;
 }
 
 /**
- * 创建主窗口并装配全部行为（见文件头清单）：加载态页 → ready-to-show 再
- * 显示；导航/开窗围栏（外部链接转系统浏览器）；页面错误采集；F11/F12/
- * Ctrl+R/Alt+F4 快捷键；最大化状态同步（自绘标题栏按钮用）；关闭按退出
- * 策略分流；末尾接线 renderer-recovery。startHidden 供恢复流程后台重建。
+ * 创建主窗口（薄委托）：窗口构造、加载态页、导航/开窗围栏、右键菜单、快捷
+ * 键、最大化同步、关闭按退出策略分流、BridgeSession 登记与恢复机挂接全部由
+ * 宿主实现（Electron：Wave 3 的 host-electron/windows.ts createMain）。无窗口
+ * 能力的宿主（Node 测试 / sidecar 过渡期）静默返回。
  */
 export function createWindow(opts: CreateWindowOpts = {}): void {
-  const { startHidden = false } = opts;
-  state.mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 960,
-    minHeight: 640,
-    show: false,
-    title: 'Deepseek Harness EAC',
-    backgroundColor: '#0b1220',
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
-    webPreferences: {
-      preload: path.join(__dirname, '..', 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-    },
-  });
-
-  state.mainWindow.loadFile(path.join(__dirname, '..', 'assets', 'loading.html'));
-  state.mainWindow.once('ready-to-show', () => {
-    if (!startHidden) state.mainWindow?.show();
-  });
-  // Keep the app brand in the OS title bar (the web UI sets its own <title>).
-  state.mainWindow.on('page-title-updated', (event) => {
-    event.preventDefault();
-    state.mainWindow?.setTitle('Deepseek Harness EAC');
-  });
-
-  // Open target=_blank / window.open in the system browser.
-  state.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-
-  // Keep the app pinned to the local web UI; send external links out.
-  // H1 修复：origin 精确比较（protocol+host+port），杜绝前缀/异域/userinfo 逃逸；
-  // file: 一律拦截（同 webContents 下 file 页面仍持有 preload 桥）；will-redirect 同规则。
-  const guardNavigation = (event: Electron.Event, url: string): void => {
-    if (isAllowedWebUrl(url)) return;
-    event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-  };
-  state.mainWindow.webContents.on('will-navigate', guardNavigation);
-  state.mainWindow.webContents.on('will-redirect', guardNavigation);
-
-  // 渲染进程错误捕获：插件/页面异常统一落到 desktop.log，便于排查空白视图。
-  // （新版 Electron 的 level 为数字，旧版为字符串——String 归一后比较，兼容两端。）
-  state.mainWindow.webContents.on(
-    'console-message',
-    (_e, level, message, line, sourceId) => {
-      const lvl = String(level);
-      if (lvl === 'error' || lvl === '3' || lvl === 'warning' || lvl === '2') {
-        log('page', `[${lvl}] ${String(message)} (${sourceId || 'unknown'}:${line})`);
-      }
-    },
-  );
-  // V4：浏览器风格右键菜单（编辑/图片/选区/导航四类场景）。
-  attachEditContextMenu(state.mainWindow.webContents);
-  state.mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    log('page', `渲染进程异常退出: ${details.reason} (exitCode=${details.exitCode})`);
-  });
-
-  // 移除菜单栏后仍保留的键盘快捷键。
-  state.mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return;
-    const key = String(input.key || '').toLowerCase();
-    const mw = state.mainWindow;
-    if (!mw) return;
-    if (input.key === 'F11') { mw.setFullScreen(!mw.isFullScreen()); event.preventDefault(); }
-    else if (input.key === 'F12') { mw.webContents.toggleDevTools(); event.preventDefault(); }
-    else if (input.control && input.shift && key === 'i') { mw.webContents.toggleDevTools(); event.preventDefault(); }
-    else if (input.control && key === 'r') { reloadMainWindow(); event.preventDefault(); }
-    else if (input.alt && key === 'f4') { mw.close(); event.preventDefault(); }
-  });
-
-  // 自绘最大化/还原按钮需要感知窗口状态。
-  const sendMaxState = (): void => {
-    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-      state.mainWindow.webContents.send('chrome:maximized', state.mainWindow.isMaximized());
-    }
-  };
-  state.mainWindow.on('maximize', sendMaxState);
-  state.mainWindow.on('unmaximize', sendMaxState);
-  state.mainWindow.on('enter-full-screen', sendMaxState);
-  state.mainWindow.on('leave-full-screen', sendMaxState);
-
-  // 关闭 → 按退出行为设置处理：ask 弹窗询问 / minimize 隐藏到托盘 / quit 退出。
-  state.mainWindow.on('close', async (event) => {
-    if (state.forceQuit || !IS_WIN || !state.tray) return;
-    event.preventDefault();
-    const action = bridge.getExitAction();
-    let choice = action;
-    if (action === 'ask') {
-      choice = await bridge.askExitAction();
-      // 弹窗期间用户可能已通过菜单真正退出（quitting/forceQuit 置位）。
-      if (state.forceQuit || state.quitting) return;
-    }
-    if (choice === 'minimize') {
-      state.mainWindow?.hide();
-      bridge.trayHintOnce();
-    } else {
-      state.forceQuit = true;
-      app.quit();
-    }
-  });
-
-  state.mainWindow.on('closed', () => {
-    state.mainWindow = null;
-  });
-
-  // 渲染进程崩溃/挂起的自恢复由 renderer-recovery.js 统一接管（保留上方
-  // render-process-gone 的日志 handler，二者互补：一个记录、一个恢复）。
-  wireWindowRecovery();
+  hostCtx().windows?.createMain(opts);
 }
 
 // ---------------------------------------------------------------------------
-// 会话浮窗（V4 多窗口，移植自上游 dsh_desktop）：把某个会话弹出到独立
-// 窗口实现分屏多任务。同一会话只保留一个浮窗，全局上限 FLOAT_MAX；浮窗
-// 与主窗使用独立 partition（localStorage 隔离，避免互相覆盖当前会话选中
-// 态）；preload 以 --dsh-float=<sessionId> 识别浮窗模式，注入更细的拖拽条。
+// 会话浮窗（V4 多窗口）：浮窗的创建/复用/围栏/右键菜单由宿主
+// HostWindows.openFloatWindow 承接（同一会话只保留一个浮窗、上限 FLOAT_MAX、
+// 独立 partition 隔离 localStorage —— 见 state.floatSessions 注释）；
+// lib 侧只保留会话登记的统一回收入口。
 // ---------------------------------------------------------------------------
 
-/** 浮窗 webContents 围栏：与主窗同规则的导航/开窗拦截 + 浮窗专属错误采集。 */
-export function guardFloatWebContents(wc: WebContents): void {
-  wc.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  const guardNavigation = (event: Electron.Event, url: string): void => {
-    if (isAllowedWebUrl(url)) return;
-    event.preventDefault();
-    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
-  };
-  wc.on('will-navigate', guardNavigation);
-  wc.on('will-redirect', guardNavigation);
-  wc.on('console-message', (details, level, message, line, sourceId) => {
-    const text = String((details && details.message) || message || '');
-    const lvl = String((details && details.level) || level);
-    const src = (details && details.sourceId) || sourceId || 'unknown';
-    const lineNo = (details && details.lineNumber) ?? line;
-    if (lvl === 'error' || lvl === '3' || lvl === 'warning' || lvl === '2' || /\[dsh-float-window\]/.test(text)) {
-      log('float-page', `[${lvl}] ${text} (${String(src)}:${String(lineNo)})`);
-    }
-  });
-}
-
-/** createFloatWindow 参数。 */
-export interface CreateFloatOpts {
-  title?: string;
-}
-
-// 创建并登记一个会话浮窗。返回 BrowserWindow；失败返回 null。
-export function createFloatWindow(
-  sessionId: string,
-  opts: CreateFloatOpts = {},
-): BrowserWindow | null {
-  const { title } = opts;
-  if (!state.webUrl || state.floatWindows.size >= FLOAT_MAX) return null;
-  const win = new BrowserWindow({
-    width: 900,
-    height: 640,
-    minWidth: 480,
-    minHeight: 360,
-    show: false,
-    title: title || 'DSH 会话',
-    backgroundColor: '#0b1220',
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    // 与主窗一致的无边框；浮窗 preload 注入一条更细的纯拖拽条。
-    ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
-    webPreferences: {
-      preload: path.join(__dirname, '..', 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: false,
-      // 独立分区：浮窗与主窗隔离 localStorage，避免互相覆盖 dsh.sessions.current。
-      // 会话数据在服务端（~/.dsh），localStorage 仅存 UI 选中态，无 cookie 认证。
-      partition: 'persist:dsh-float',
-      // 用 additionalArguments 而非 URL 参数，避免污染 Web UI 见到的地址；
-      // preload 从 process.argv 读取 --dsh-float=<sessionId>。
-      additionalArguments: ['--dsh-float=' + sessionId],
-    },
-  });
-  state.floatWindows.add(win);
-  state.floatBySession.set(sessionId, win);
-  win.loadURL(state.webUrl).catch((err) => log('float', '浮窗加载失败: ' + String((err && (err as Error).message) || err)));
-
-  // 窗口标题跟随会话（去掉通用前缀，保留会话相关标题）。
-  win.on('page-title-updated', (event) => {
-    event.preventDefault();
-    // Electron 类型未标 title 字段（运行时存在）——宽化读取。
-    const evTitle = (event as Electron.Event & { title?: string }).title;
-    const raw = String(evTitle || win.getTitle() || '');
-    const cleaned = raw.replace(/^(DSH|Deepseek Harness EAC)[·\-—\s:]*/i, '').trim();
-    win.setTitle(cleaned || 'DSH 会话');
-  });
-
-  win.once('ready-to-show', () => {
-    if (!win.isDestroyed()) win.show();
-  });
-  win.on('closed', () => {
-    state.floatWindows.delete(win);
-    for (const [sid, w] of state.floatBySession) {
-      if (w === win) {
-        state.floatBySession.delete(sid);
-        break;
-      }
-    }
-  });
-  guardFloatWebContents(win.webContents);
-  attachEditContextMenu(win.webContents);
-  if (state.recovery) state.recovery.attach(win, 'float');
-  log('float', '已创建会话浮窗 sessionId=' + sessionId);
-  return win;
-}
-
-// 关闭全部浮窗（应用退出时调用）。
+// 关闭全部浮窗（应用退出时调用）：逐个关闭宿主登记的浮窗会话并清空登记。
 export function closeAllFloatWindows(): void {
-  for (const win of state.floatWindows) {
-    if (!win.isDestroyed()) win.destroy();
+  for (const session of state.floatSessions) {
+    session.close();
   }
-  state.floatWindows.clear();
+  state.floatSessions.clear();
   state.floatBySession.clear();
 }
 
@@ -354,7 +132,7 @@ export function closeAllFloatWindows(): void {
 /**
  * 构建渲染进程自恢复状态机（renderer-recovery.ts，上游 Issue #9 根治）：
  * 把日志/退出态/服务存活/窗口重建/服务就绪等待等宿主能力适配进恢复机，
- * 幂等（已构建直接复用）。挂载主窗由 wireWindowRecovery 单独接线。
+ * 幂等（已构建直接复用）。窗口挂接由 attachWindowToRecovery 供宿主接线。
  */
 export function initRendererRecovery(): unknown {
   if (state.recovery) return state.recovery;
@@ -367,11 +145,10 @@ export function initRendererRecovery(): unknown {
       state.webUrl ? { kind: 'url', url: state.webUrl } : null,
     loadingPage: path.join(__dirname, '..', 'assets', 'loading.html'),
     recoveryPage: path.join(__dirname, '..', 'assets', 'recovery.html'),
-    rebuildMainWindow: ({ startHidden }: { startHidden?: boolean } = {}): RecoveryWindow | null => {
-      if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.destroy();
-      createWindow({ startHidden: !!startHidden });
-      return state.mainWindow;
-    },
+    // 窗口重建整体委托宿主（销毁旧窗 + createMain + 登记新桥会话并挂恢复机）；
+    // 无窗宿主缺省 → 恢复机按重建失败计数。
+    rebuildMainWindow: ({ startHidden }: { startHidden?: boolean } = {}): RecoveryWindow | null =>
+      hostCtx().windows?.rebuildMainWindowForRecovery?.({ startHidden: !!startHidden }) ?? null,
     waitServerUp: (maxMs: number): Promise<string> => {
       if (!state.webUrl) return Promise.reject(new Error('webUrl 未知'));
       return waitUntilUp(state.webUrl, maxMs);
@@ -388,28 +165,29 @@ export function initRendererRecovery(): unknown {
     onStable: (): void => {
       writeRunState({ renderer: { state: 'healthy', at: new Date().toISOString() } });
     },
+    // 系统通知经宿主上下文（Electron Notification / sidecar 静默）：
+    // 图标沿 assets/icon.png 绝对路径，点击唤回主窗（bridge 注入）。
     notify: (title: string, body: string): void => {
-      try {
-        const n = new Notification({
-          title,
-          body,
-          icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-        });
-        n.on('click', () => bridge.showMainWindow());
-        n.show();
-      } catch (err) {
-        log('recovery', '通知发送失败: ' + String((err as Error).message));
-      }
+      hostCtx().notify({
+        title,
+        body,
+        icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+        onClick: () => bridge.showMainWindow(),
+      });
     },
   };
   state.recovery = new RendererRecovery(opts);
   return state.recovery;
 }
 
-/** 把当前主窗挂到已构建的恢复状态机（createWindow 末尾与恢复流程重建后调用）。 */
-export function wireWindowRecovery(): void {
-  if (state.recovery && state.mainWindow && !state.mainWindow.isDestroyed())
-    state.recovery.attach(state.mainWindow, 'main');
+/**
+ * 把窗口挂到已构建的恢复状态机：宿主（host-electron/windows.ts）在
+ * createMain / openFloatWindow 末尾调用（主窗 kind='main'、浮窗 'float'）；
+ * state.recovery 未构建时静默跳过（boot 链保证 createWindow 前先
+ * initRendererRecovery）。
+ */
+export function attachWindowToRecovery(win: RecoveryWindow, kind: WindowKind): void {
+  if (state.recovery) state.recovery.attach(win, kind);
 }
 
 /** 每 15s 轮询一次恢复状态机的心跳判定（可见窗口失联才触发恢复流程）。 */
@@ -421,18 +199,9 @@ export function startHeartbeatLoop(): void {
   }, 15000).unref();
 }
 
-// 统一的「重新加载」入口：处于恢复页（已放弃自动恢复）时走恢复流程，
-// 否则普通 reload。菜单与 Ctrl+R 共用。
+// 统一的「重新加载」入口：整体委托宿主（windows.reloadMain）——恢复页分支
+// （已放弃自动恢复时改走恢复流程 retryNow）需要窗口对象，属宿主实现内部
+// 职责。菜单与 Ctrl+R 共用。
 export function reloadMainWindow(): void {
-  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-  // stateOf 的宽化类型见 lib/state.ts 的 RendererRecoveryLike（返回 unknown）。
-  const st = state.recovery
-    ? (state.recovery.stateOf(state.mainWindow) as { gaveUp?: boolean } | null)
-    : null;
-  if (st && st.gaveUp) {
-    log('recovery', '用户在恢复页触发重新加载');
-    state.recovery?.retryNow(state.mainWindow);
-    return;
-  }
-  state.mainWindow.reload();
+  hostCtx().windows?.reloadMain();
 }

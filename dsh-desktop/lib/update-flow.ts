@@ -1,20 +1,24 @@
 /**
- * lib/update-flow.ts — 双更新流（Task 5b 自 main.js 提取）。
+ * lib/update-flow.ts — 双更新流（Task 5b 自 main.js 提取；Task 6 Wave 2
+ * 宿主中立化：本模块不再 import electron）。
  *
  * agent 更新流（官方 @deepseek-ai/dsh releases，用户确认）：
  *   runUpdateFlow + 内置插件更新检查（runPluginUpdateCheck，24h 节流）。
  * client 更新流（更新 DSH Desktop 封装本身）：
  *   runClientUpdateFlow + offerPendingClientUpdate + scheduleClientUpdateRescue。
- * 共用：showUpdateWindow（updating.html 进度窗）/ makeUpdateProgressPusher
- * （字节进度 + 速度 + ETA / npm 阶段文案，300ms 节流注入）。
+ * 共用：showUpdateWindow（进度窗＝宿主 openUpdateProgress，null 时无头降级）/
+ * makeUpdateProgressPusher（字节进度 + 速度 + ETA / npm 阶段文案，300ms 节流
+ * 经 UpdateProgressHandle.setProgress 注入）。
  *
  * 更新保障（V4.1）：任何更新前强制 plugin-guard 快照，失败即中止
  * （宁可不动，不可让用户失去回滚点）。
+ *
+ * 版本号经 hostCtx().appVersion()、系统通知经 hostCtx().notify、重启/退出经
+ * hostCtx().relaunch()/exitProcess()、进度窗经 HostWindows.openUpdateProgress。
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, BrowserWindow, Notification } from 'electron';
 import * as updater from '../updater.js';
 import type { AgentProgressEvent } from '../updater.js';
 import * as clientUpdater from '../client-updater.js';
@@ -28,6 +32,8 @@ import { restartWebServiceCore } from './server.js';
 import { showBox } from './window.js';
 import { showMainWindow } from './tray.js';
 import { ensureGuard } from './guard.js';
+import { hostCtx } from './host-ctx.js';
+import type { UpdateProgressHandle } from './host-ctx.js';
 import { pluginUpdateSources } from './plugin-registry-data.js';
 import { copyPluginPackage } from './plugin-copy.js';
 import { removedPluginIds } from './plugin-manager-core.js';
@@ -36,28 +42,13 @@ import { removedPluginIds } from './plugin-manager-core.js';
 // 进度窗与进度推送（agent / client 共用）
 // ---------------------------------------------------------------------------
 
-/** 更新进度窗（模态 updating.html）。 */
-function showUpdateWindow(version: string, kind: 'agent' | 'client' = 'agent'): BrowserWindow {
-  const parent = state.mainWindow && !state.mainWindow.isDestroyed() ? state.mainWindow : null;
-  const win = new BrowserWindow({
-    width: 460,
-    height: 300,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    ...(parent ? { parent } : {}),
-    modal: true,
-    title: '正在更新',
-    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
-  });
-  void win.loadFile(path.join(__dirname, '..', 'assets', 'updating.html')).then(() => {
-    void win.webContents
-      .executeJavaScript(`window.__init && window.__init(${JSON.stringify({ version, kind })})`)
-      .catch(() => {});
-  });
-  win.once('ready-to-show', () => win.show());
-  return win;
+/**
+ * 更新进度窗（模态 updating.html）：整体委托宿主 openUpdateProgress（父窗/
+ * 模态语义由宿主实现决定）；null＝宿主不支持或无窗口能力 → 无头降级
+ * （推送器静默丢弃进度，更新流程照常执行）。
+ */
+function showUpdateWindow(version: string, kind: 'agent' | 'client' = 'agent'): UpdateProgressHandle | null {
+  return hostCtx().windows?.openUpdateProgress({ version, kind }) ?? null;
 }
 
 /** 进度元信息：stage 文案时进度条走不定态（-1）。 */
@@ -75,9 +66,10 @@ interface PushPayload {
   force?: boolean;
 }
 
-// 更新弹窗进度推送：把结构化进度渲染成文案，节流后注入 updating.html 的
-// __setProgress(pct, receivedMB, totalMB, meta)。
-function makeUpdateProgressPusher(win: BrowserWindow): {
+// 更新弹窗进度推送：把结构化进度节流后经 UpdateProgressHandle.setProgress
+// 注入（宿主负责渲染成 updating.html 的 __setProgress(pct, receivedMB,
+// totalMB, meta)；无进度窗时静默丢弃）。
+function makeUpdateProgressPusher(win: UpdateProgressHandle | null): {
   client(received: number, total: number, meta?: ProgressMeta): void;
   force(meta: ProgressMeta): void;
   agent(ev: AgentProgressEvent): void;
@@ -93,15 +85,16 @@ function makeUpdateProgressPusher(win: BrowserWindow): {
     }
   };
   const push = (payload: PushPayload): void => {
-    if (!win || win.isDestroyed()) return;
+    if (!win) return;
     const now = Date.now();
     if (now - last < 300 && !payload.force) return;
     last = now;
-    void win.webContents
-      .executeJavaScript(
-        `window.__setProgress && window.__setProgress(${payload.pct}, ${payload.receivedMB ?? 0}, ${payload.totalMB ?? 0}, ${JSON.stringify(payload.meta)})`,
-      )
-      .catch(() => {});
+    win.setProgress({
+      pct: payload.pct,
+      receivedMB: payload.receivedMB ?? 0,
+      totalMB: payload.totalMB ?? 0,
+      meta: payload.meta,
+    });
   };
   return {
     // 客户端更新：真实字节进度 + 速度 + 剩余时间（meta 可选追加）。
@@ -227,8 +220,8 @@ export async function runUpdateFlow(manual: boolean): Promise<void> {
       state.quitting = true;
       markCleanExit();
       killTree(state.serverProc);
-      app.relaunch();
-      app.exit(0);
+      hostCtx().relaunch();
+      hostCtx().exitProcess(0);
     }
   } catch (err) {
     log('update', '更新失败: ' + String((err as Error).message));
@@ -241,7 +234,7 @@ export async function runUpdateFlow(manual: boolean): Promise<void> {
     });
   } finally {
     state.updateBusy = false;
-    if (progressWin && !progressWin.isDestroyed()) progressWin.destroy();
+    progressWin?.close();
   }
 }
 
@@ -261,13 +254,13 @@ interface PluginUpdateItem {
 function notifyPluginUpdates(updatable: PluginUpdateItem[]): void {
   try {
     const names = updatable.slice(0, 5).map((x) => x.name).join('、');
-    const n = new Notification({
+    // 系统通知经宿主上下文（无通知通道宿主静默、不抛错）；点击聚焦主窗。
+    hostCtx().notify({
       title: '有 ' + updatable.length + ' 个内置插件可更新',
       body: names + (updatable.length > 5 ? ' 等' : '') + ' 已发布新版本。打开「设置 → 插件 → 更新」查看并更新（自动更新默认关闭，仅提示）。',
       icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+      onClick: () => showMainWindow(),
     });
-    n.on('click', () => showMainWindow());
-    n.show();
   } catch (err) {
     log('plugin-update', '更新通知发送失败: ' + String((err as Error).message));
   }
@@ -341,7 +334,7 @@ function clientUpdateOpts(newVersion: string): clientUpdater.ApplyUpdateOpts {
     dshHome: state.dshHome,
     installDir: path.dirname(process.execPath),
     profileDir: path.join(state.dshHome, 'profiles', desktopProfile()),
-    currentVersion: app.getVersion(),
+    currentVersion: hostCtx().appVersion(),
     newVersion,
     nodeExe: nodeExe(),
   };
@@ -364,7 +357,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
   const settings = updater.loadSettings(ctx);
   let release: clientUpdater.NormalizedRelease;
   try {
-    release = await clientUpdater.checkLatest(ctx, app.getVersion());
+    release = await clientUpdater.checkLatest(ctx, hostCtx().appVersion());
   } catch (err) {
     log('client-update', '检查失败: ' + String((err as Error).message));
     if (manual) {
@@ -384,7 +377,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
         type: 'info',
         title: '检查客户端更新',
         message: '当前已是最新版本。',
-        detail: `Deepseek Harness EAC（封装版本 v${app.getVersion()}）\n上游最新：${release.version}（${release.source}）`,
+        detail: `Deepseek Harness EAC（封装版本 v${hostCtx().appVersion()}）\n上游最新：${release.version}（${release.source}）`,
         buttons: ['确定'],
       });
     }
@@ -403,7 +396,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
         type: 'info',
         title: '发现新版本客户端',
         message: `Deepseek Harness EAC 封装发布了新版本：v${release.version}`,
-        detail: `当前版本：v${app.getVersion()}\n发布来源：${release.source}${notes}\n\n是否立即更新？下载后自动替换并重启应用。`,
+        detail: `当前版本：v${hostCtx().appVersion()}\n发布来源：${release.source}${notes}\n\n是否立即更新？下载后自动替换并重启应用。`,
         buttons: ['立即更新', '跳过此版本', '稍后'],
         defaultId: 0,
         cancelId: 2,
@@ -486,7 +479,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
       await killTreeAndWait(state.serverProc);
       state.serverProc = null;
       clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate as { path: string; version?: string }, clientUpdateOpts(release.version));
-      setTimeout(() => app.exit(0), 400);
+      setTimeout(() => hostCtx().exitProcess(0), 400);
     }
   } catch (err) {
     log('client-update', '更新失败: ' + String((err as Error).message));
@@ -499,7 +492,7 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
     });
   } finally {
     state.clientUpdateBusy = false;
-    if (progressWin && !progressWin.isDestroyed()) progressWin.destroy();
+    progressWin?.close();
   }
 }
 
@@ -521,7 +514,7 @@ export function offerPendingClientUpdate(): void {
     updater.saveSettings(ctx, settings);
     return;
   }
-  if (updater.compareVersions(pending.version, app.getVersion()) <= 0) {
+  if (updater.compareVersions(pending.version, hostCtx().appVersion()) <= 0) {
     settings.pendingClientUpdate = null;
     updater.saveSettings(ctx, settings);
     return;
@@ -545,7 +538,7 @@ export function offerPendingClientUpdate(): void {
     await killTreeAndWait(state.serverProc);
     state.serverProc = null;
     clientUpdater.applyUpdate(ctx, pending, clientUpdateOpts(pending.version));
-    setTimeout(() => app.exit(0), 400);
+    setTimeout(() => hostCtx().exitProcess(0), 400);
   });
 }
 

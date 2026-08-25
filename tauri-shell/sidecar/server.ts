@@ -197,6 +197,14 @@ hostCtxMod.initHostCtx({
     say('[dialog] ' + opts.title + ': ' + opts.message + (opts.detail ? ' — ' + opts.detail : ''));
     return Promise.resolve({ response: typeof opts.cancelId === 'number' ? opts.cancelId : opts.buttons.length - 1 });
   },
+  // 外链/完全重启复用壳层既有通道（main.rs shell.open-external 带 http(s)
+  // 校验；shell.relaunch＝app.restart 整壳重启）；openPath/showItemInFolder
+  // 的壳层通道随 Task 8 补齐，现阶段 stderr 无头兜底（对齐 notify/
+  // showMessageBox 过渡语义；Task 7 IPC 域挂载前无 sidecar 侧消费者）。
+  openExternal: (url) => notify('shell.open-external', { url }),
+  openPath: (p) => say('[shell] openPath: ' + p),
+  showItemInFolder: (p) => say('[shell] showItemInFolder: ' + p),
+  relaunch: () => notify('shell.relaunch', {}),
   shortcuts: {
     // PowerShell 实现返回 Record<string, unknown>（过渡 shortcutsMod 同款），
     // 结构即 HostShortcutLink 子集，收窄桥接给统一模块。

@@ -36,10 +36,13 @@ test('恢复中心页面与 preload 存在且不依赖 Web UI', () => {
   assert.ok(!preload.includes('dsh:'), 'recovery-center preload must not touch Web UI channels');
 });
 
-test('恢复中心 IPC 单通道 rc:action，来源校验为恢复中心窗口自身', () => {
+test('恢复中心 IPC 单通道 rc:action，来源校验为恢复中心会话', () => {
+  // Task 6 Wave 2：rc:action 注册从 ipcMain.handle 迁移到宿主 IpcSurface；
+  // 来源校验由 webContents 身份比对改为恢复中心会话 token 比对
+  // （state.rcSession，宿主开窗时登记 —— 语义等价）。
   const rcSrc = read('lib', 'recovery-center', 'register.ts');
-  assert.ok(rcSrc.includes("ipcMain.handle('rc:action'"), 'rc:action missing');
-  assert.ok(/fromRecoveryWindow/.test(rcSrc), 'sender check missing');
+  assert.ok(rcSrc.includes("'rc:action'"), 'rc:action missing');
+  assert.ok(/fromRecoverySession/.test(rcSrc), 'sender check missing');
 });
 
 test('扩展注册表：档案登记/失败归因/隔离标记（Phase 0 行为单元）', async () => {

@@ -309,8 +309,9 @@ export function watchServerProc(
         !intentional &&
         !handedOff &&
         state.webUrl &&
-        state.mainWindow &&
-        !state.mainWindow.isDestroyed()
+        // 主窗存在性经桥会话判定（Task 6.1：mainSession 取代 BrowserWindow 概念）。
+        state.mainSession &&
+        state.mainSession.isAlive()
       ) {
         const detail = buildErrorDetail(
           new Error(`dsh web 进程退出（code=${code} signal=${signal}）`),
@@ -396,10 +397,10 @@ export function startAndShow(overlays: string[] = []): Promise<string> {
     .then((url) => {
       state.webUrl = url;
       log('boot', 'Web UI 就绪: ' + url);
-      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-        return state.mainWindow.loadURL(url).then(() => url);
-      }
-      return url;
+      // 主窗加载新 URL 经宿主窗口面（Task 6：loadMain 无主窗时静默返回 void，
+      // 等价于原先「无主窗直接就绪」分支；有主窗时等待加载完成才算就绪）。
+      const load = hostCtx().windows?.loadMain(url);
+      return load instanceof Promise ? load.then(() => url) : url;
     });
 }
 

@@ -1,22 +1,29 @@
 /**
- * lib/onboarding.ts — 内置插件选择向导（Task 5b 自 main.js 提取）。
+ * lib/onboarding.ts — 内置插件选择向导（Task 5b 自 main.js 提取；Task 6
+ * Wave 2 宿主中立化：本模块不再 import electron）。
  *
  * 首次启动 first 模式 / 设置页二次打开 rerun 模式。启动门控：全新用户展示
  * 向导并等待提交；升级用户静默跳过并记完成标记。关闭向导（取消）= 保持全部
  * 启用，只记完成标记不再打扰。onboardingNeeded 必须在任何写盘之前由
  * computeOnboardingNeed 预计算（settings.json 会在启动早期被迁移流程无条件
  * 创建，事后无法区分新老用户）。
+ *
+ * 向导窗口由宿主提供（HostWindows.openPluginWizard；Electron 实现在 Wave 3
+ * 的顶层 host-electron/）：宿主创建窗口、把 BridgeSession 登记进
+ * state.wizardSession，并将 onboard:submit / onboard:close / 窗口 closed
+ * 事件统一转发 closeWizard() 收口。宿主无窗口能力时 openPluginWizard 返回
+ * false，本模块按用户取消收口。
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { BrowserWindow } from 'electron';
 import * as updater from '../updater.js';
 import * as onboardingLogic from '../scripts/onboarding.js';
 import { state } from './state.js';
 import { log } from './log.js';
-import { IS_WIN, updCtx } from './proc.js';
+import { updCtx } from './proc.js';
+import { hostCtx } from './host-ctx.js';
 import { desktopProfileDir } from './paths.js';
 import { COMPANION_PLUGINS } from './plugin-registry-data.js';
 import {
@@ -31,12 +38,15 @@ export interface WizardResult {
   errors?: unknown;
 }
 
-/** 关闭向导窗口并触发完成回调（onboard:submit / 用户关闭共用）。 */
+/**
+ * 关闭向导窗口并触发完成回调（onboard:submit / onboard:close / 宿主窗口
+ * closed 事件共用收口）：会话经 state.wizardSession（BridgeSession）回收。
+ */
 export function closeWizard(result: WizardResult): void {
   const cb = state.wizardDone;
   state.wizardDone = null;
-  if (state.wizardWindow && !state.wizardWindow.isDestroyed()) state.wizardWindow.destroy();
-  state.wizardWindow = null;
+  if (state.wizardSession) state.wizardSession.close();
+  state.wizardSession = null;
   if (cb) cb(result);
 }
 
@@ -89,43 +99,21 @@ export interface OpenWizardOpts {
 export function openPluginWizard(opts: OpenWizardOpts = {}): Promise<WizardResult> {
   const { mode = 'first' } = opts;
   return new Promise((resolve) => {
-    if (state.wizardWindow && !state.wizardWindow.isDestroyed()) {
-      state.wizardWindow.focus();
+    if (state.wizardSession && state.wizardSession.isAlive()) {
+      state.wizardSession.focus();
       resolve({ ok: false, cancelled: true });
       return;
     }
     state.wizardMode = mode === 'rerun' ? 'rerun' : 'first';
     // AppState 的向导回调按 unknown 结果声明（Task 1.1 最小形状），此处收窄。
     state.wizardDone = resolve as (r: unknown) => void;
-    const win = new BrowserWindow({
-      width: 920,
-      height: 700,
-      minWidth: 640,
-      minHeight: 520,
-      show: false,
-      title: '内置插件选择向导',
-      backgroundColor: '#0b1220',
-      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-      ...(IS_WIN ? { frame: false, roundedCorners: true } : {}),
-      webPreferences: {
-        preload: path.join(__dirname, '..', 'assets', 'onboarding-preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        spellcheck: false,
-      },
-    });
-    state.wizardWindow = win;
-    void win.loadFile(path.join(__dirname, '..', 'assets', 'onboarding.html'));
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) win.show();
-    });
-    win.on('closed', () => {
-      const cb = state.wizardDone;
-      state.wizardDone = null;
-      state.wizardWindow = null;
-      if (cb) cb({ ok: false, cancelled: true });
-    });
+    // 窗口创建整体委托宿主（HostWindows.openPluginWizard）：宿主负责登记
+    // state.wizardSession 并把提交/关闭/窗口 closed 转发 closeWizard 收口；
+    // 返回 false＝宿主无窗口能力，按用户取消收口。
+    if (!hostCtx().windows?.openPluginWizard(state.wizardMode)) {
+      closeWizard({ ok: false, cancelled: true });
+      return;
+    }
     log('boot', '已打开内置插件选择向导（' + state.wizardMode + ' 模式）');
   });
 }

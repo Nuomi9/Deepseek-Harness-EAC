@@ -1,15 +1,24 @@
 /**
- * lib/tray.ts — 系统托盘与退出策略（Task 3.2 自 main.js 提取）。
+ * lib/tray.ts — 系统托盘与退出策略（Task 3.2 自 main.js 提取；Task 6 Wave 2
+ * 宿主中立化：本模块不再 import electron）。
  *
  *   退出行为三档（ask/minimize/quit，含旧 closeToTray 布尔迁移）；
  *   showMainWindow（bridge 注入给各域通知回调）；
- *   createTray（常驻菜单：显示/双更新流/会话通知开关/重启服务/反馈/退出）；
+ *   buildTrayMenuSpec / executeTrayAction（菜单结构化规格 + 中立语义执行）；
+ *   createTray / trayHintOnce（托盘生命周期，整体委托 hostCtx().tray）；
  *   repoUrls / showAbout（关于对话框）。
+ *
+ * Tray/Menu 的原生实现不驻留本模块：Electron 实现由 Wave 3 在顶层
+ * host-electron/ 提供（经 hostCtx().tray 注入），Tauri Rust 壳的托盘接线在
+ * Task 8。宿主托盘实现契约：
+ *   · create()：创建托盘后置位 state.trayActive（图标缺失等静默跳过时保持
+ *     false；托盘存在性判断统一走 state.trayActive）；
+ *   · 菜单规格实时经 buildTrayMenuSpec() 拉取（checkbox 态随设置变化），
+ *     菜单项点击/勾选把 action（及 checkbox 新态）转发 executeTrayAction()；
+ *   · 托盘单击/双击行为约定（对齐原 Electron 实现）：单击＝主窗可见则隐藏、
+ *     否则 showMainWindow()；双击＝showMainWindow()。
  */
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { app, Tray, Menu, shell, clipboard } from 'electron';
 import * as updater from '../updater.js';
 import * as clientUpdater from '../client-updater.js';
 import { state } from './state.js';
@@ -19,6 +28,19 @@ import { restartWebServiceCore } from './server.js';
 import { showBox } from './window.js';
 import { openRecoveryCenter } from './recovery-center/register.js';
 import { bridge } from './bridge.js';
+import { hostCtx } from './host-ctx.js';
+
+/** 托盘菜单项规格（宿主中立：宿主据此构建原生菜单）。 */
+export interface TrayMenuItem {
+  /** 展示文案（separator 项无）。 */
+  label?: string;
+  /** 菜单项类型（normal / separator / checkbox）。 */
+  type: 'normal' | 'separator' | 'checkbox';
+  /** checkbox 项当前勾选态（拉取规格时求值）。 */
+  checked?: boolean;
+  /** 语义动作 id（executeTrayAction 入口；separator 为空串，宿主不派发）。 */
+  action: string;
+}
 
 /** 读取 closeToTray（默认 true：关闭主窗驻留托盘）。 */
 export function closeToTrayEnabled(): boolean {
@@ -89,7 +111,7 @@ export async function showAbout(): Promise<void> {
   const { response } = await showBox({
     type: 'info',
     title: '关于 Deepseek Harness EAC',
-    message: 'Deepseek Harness EAC（封装版本 ' + app.getVersion() + '）',
+    message: 'Deepseek Harness EAC（封装版本 ' + hostCtx().appVersion() + '）',
     detail:
       'DeepSeek Harness 桌面客户端\n\nagent 版本：' +
       dshVersion() +
@@ -106,19 +128,98 @@ export async function showAbout(): Promise<void> {
       '\n\n交流群：EAC 交流群（群号 523412163）\n反馈问题：⋯ 菜单 → 反馈建议',
     buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
   });
-  if (response === 0) clipboard.writeText(urls.github);
-  else if (response === 1) clipboard.writeText(urls.gitee);
+  if (response === 0) hostCtx().copyToClipboard(urls.github);
+  else if (response === 1) hostCtx().copyToClipboard(urls.gitee);
+}
+
+/**
+ * 托盘菜单结构化规格：宿主实现（Electron Wave 3 / Rust 壳 Task 8）据此构建
+ * 原生菜单；checkbox 项勾选态每次拉取时求值。项集与原 Electron 菜单一一对齐。
+ */
+export function buildTrayMenuSpec(): TrayMenuItem[] {
+  return [
+    { label: '显示 Deepseek Harness EAC', type: 'normal', action: 'show' },
+    // VNext Phase 0：恢复中心常驻入口（不依赖 Web UI，插件故障时可达）。
+    { label: '恢复中心…', type: 'normal', action: 'recovery-center' },
+    { type: 'separator', action: '' },
+    { label: '检查 dsh 更新…', type: 'normal', action: 'update-agent' },
+    { label: '检查客户端更新…', type: 'normal', action: 'update-client' },
+    {
+      label: '会话完成通知',
+      type: 'checkbox',
+      checked: state.notifyOnTurnEnd,
+      action: 'toggle-notify',
+    },
+    { type: 'separator', action: '' },
+    // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
+    { label: '重启 Web 服务', type: 'normal', action: 'restart-service' },
+    // 11be738：完全重启——跳过驻留确认直接退出并 relaunch（比重启 Web 服务
+    // 更重：主进程状态/窗口全部重建，覆盖 Web 服务重启治不了的壳层故障）。
+    { label: '完全重启', type: 'normal', action: 'full-restart' },
+    { type: 'separator', action: '' },
+    { label: '反馈建议…', type: 'normal', action: 'feedback' },
+    { type: 'separator', action: '' },
+    { label: '退出', type: 'normal', action: 'quit' },
+  ];
+}
+
+/**
+ * 托盘菜单动作的中立语义执行（宿主把菜单项点击/勾选转发到这里；action 为
+ * buildTrayMenuSpec 的语义 id）。checkbox 动作带 checked＝宿主上报的新态，
+ * 缺省时按取反处理。
+ */
+export function executeTrayAction(action: string, checked?: boolean): void {
+  switch (action) {
+    case 'show':
+      showMainWindow();
+      break;
+    case 'recovery-center':
+      openRecoveryCenter();
+      break;
+    case 'update-agent':
+      showMainWindow();
+      void bridge.runUpdateFlow(true);
+      break;
+    case 'update-client':
+      showMainWindow();
+      void bridge.runClientUpdateFlow(true);
+      break;
+    case 'toggle-notify': {
+      const v = checked !== undefined ? checked : !state.notifyOnTurnEnd;
+      state.notifyOnTurnEnd = v;
+      const s = updater.loadSettings(updCtx());
+      s.notifyOnTurnEnd = v;
+      updater.saveSettings(updCtx(), s);
+      break;
+    }
+    case 'restart-service':
+      showMainWindow();
+      void restartWebServiceCore();
+      break;
+    case 'full-restart':
+      state.forceQuit = true;
+      hostCtx().relaunch();
+      hostCtx().requestQuit();
+      break;
+    case 'feedback':
+      showMainWindow();
+      hostCtx().openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues');
+      break;
+    case 'quit':
+      state.forceQuit = true;
+      hostCtx().requestQuit();
+      break;
+  }
 }
 
 /** 首次驻留托盘时气泡提示一次。 */
 export function trayHintOnce(): void {
-  if (state.trayHintShown || !state.tray) return;
+  if (state.trayHintShown || !state.trayActive) return;
   state.trayHintShown = true;
   try {
-    state.tray.displayBalloon({
+    hostCtx().tray?.displayBalloon({
       title: 'Deepseek Harness EAC 仍在运行',
       content: '窗口已隐藏到系统托盘，点击托盘图标可重新打开。',
-      iconType: 'info',
     });
   } catch {
     /* 气球通知失败静默 */
@@ -127,56 +228,24 @@ export function trayHintOnce(): void {
 
 /** 显示/聚焦主窗口（托盘、各域通知回调共用；bridge 注入）。 */
 export function showMainWindow(): void {
-  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-  if (state.mainWindow.isMinimized()) state.mainWindow.restore();
-  state.mainWindow.show();
-  state.mainWindow.focus();
+  const w = hostCtx().windows;
+  if (!w) return;
+  if (w.isMainMinimized()) w.restoreMain();
+  w.showMain();
+  w.focusMain();
 }
 
-/** 创建系统托盘（仅 Windows；图标缺失静默跳过）。 */
+/**
+ * 创建系统托盘（仅 Windows）：整体委托宿主托盘面（图标/tooltip/菜单/点击
+ * 接线见文件头契约）。托盘存在性判断统一 state.trayActive（宿主置位）。
+ */
 export function createTray(): void {
   if (!IS_WIN) return;
+  const tray = hostCtx().tray;
+  if (!tray) return; // 无托盘宿主（Node 测试 / sidecar 过渡期）：静默降级
   try {
-    const iconPath = path.join(__dirname, '..', 'assets', 'tray-icon.png');
-    if (!fs.existsSync(iconPath)) return;
-    state.tray = new Tray(iconPath);
-    state.tray.setToolTip('Deepseek Harness EAC');
-    const menu = Menu.buildFromTemplate([
-      { label: '显示 Deepseek Harness EAC', click: () => showMainWindow() },
-      // VNext Phase 0：恢复中心常驻入口（不依赖 Web UI，插件故障时可达）。
-      { label: '恢复中心…', click: () => openRecoveryCenter() },
-      { type: 'separator' },
-      { label: '检查 dsh 更新…', click: () => { showMainWindow(); void bridge.runUpdateFlow(true); } },
-      { label: '检查客户端更新…', click: () => { showMainWindow(); void bridge.runClientUpdateFlow(true); } },
-      {
-        label: '会话完成通知',
-        type: 'checkbox',
-        checked: state.notifyOnTurnEnd,
-        click: (item) => {
-          state.notifyOnTurnEnd = item.checked;
-          const s = updater.loadSettings(updCtx());
-          s.notifyOnTurnEnd = item.checked;
-          updater.saveSettings(updCtx(), s);
-        },
-      },
-      { type: 'separator' },
-      // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
-      { label: '重启 Web 服务', click: () => { showMainWindow(); void restartWebServiceCore(); } },
-      // 11be738：完全重启——跳过驻留确认直接退出并 relaunch（比重启 Web 服务
-      // 更重：主进程状态/窗口全部重建，覆盖 Web 服务重启治不了的壳层故障）。
-      { label: '完全重启', click: () => { state.forceQuit = true; app.relaunch(); app.quit(); } },
-      { type: 'separator' },
-      { label: '反馈建议…', click: () => { showMainWindow(); void shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
-      { type: 'separator' },
-      { label: '退出', click: () => { state.forceQuit = true; app.quit(); } },
-    ]);
-    state.tray.setContextMenu(menu);
-    state.tray.on('click', () => {
-      if (state.mainWindow && state.mainWindow.isVisible()) state.mainWindow.hide();
-      else showMainWindow();
-    });
-    state.tray.on('double-click', () => showMainWindow());
-    log('boot', '系统托盘已就绪');
+    tray.create();
+    if (state.trayActive) log('boot', '系统托盘已就绪');
   } catch (err) {
     log('boot', '创建系统托盘失败: ' + String((err as Error).message));
   }

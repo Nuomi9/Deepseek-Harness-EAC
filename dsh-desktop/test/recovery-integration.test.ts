@@ -27,7 +27,9 @@ test('renderer-recovery is imported and the state machine attaches the main wind
   // Task 3：lib/window.ts 以 ESM import 引 renderer-recovery.js（编译为 require）。
   assert.ok(/from '\.\.\/renderer-recovery\.js'/.test(windowSrc), "lib/window.ts must import '../renderer-recovery.js'");
   assert.ok(/export function initRendererRecovery\(\)/.test(windowSrc), 'initRendererRecovery() missing');
-  assert.ok(/state\.recovery\.attach\(state\.mainWindow,\s*'main'\)/.test(windowSrc), 'main window attach missing');
+  // Task 6 Wave 1：窗口句柄属宿主，lib 侧改为 attachWindowToRecovery(win, kind)
+  // 供宿主在 createMain/openFloatWindow 末尾挂接（kind='main' 即主窗）。
+  assert.ok(/state\.recovery\.attach\(win, kind\)/.test(windowSrc), 'window attach wiring missing');
 });
 
 test('watchdog lifecycle: run-state write, spawn, clean-exit mark', () => {

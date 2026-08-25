@@ -1,11 +1,12 @@
 /**
- * lib/ipc/onboard.ts — 选择向导域 IPC（Task 4 自 registerChromeIpc 拆分）。
+ * lib/ipc/onboard.ts — 选择向导域 IPC（Task 4 自 registerChromeIpc 拆分；
+ * Task 6.1 传输面化）。
  *
  * onboard:list / onboard:submit / onboard:close / onboard:open。
- * 来源校验：list/submit/close 只接受向导窗口自身的 webContents。
+ * 来源校验：list/submit/close 只接受向导会话（fromWizardSession），
+ * onboard:open 只接受主窗会话（fromMainSession）。
  */
 
-import { ipcMain } from 'electron';
 import * as updater from '../../updater.js';
 import * as onboardingLogic from '../../scripts/onboarding.js';
 import { state } from '../state.js';
@@ -18,17 +19,18 @@ import { restartWebServiceCore } from '../server.js';
 import {
   buildOnboardingCatalog, pluginCurrentState, closeWizard, openPluginWizard,
 } from '../onboarding.js';
-import { fromMainWindow, fromWizardWindow } from './sender.js';
+import { fromMainSession, fromWizardSession } from './sender.js';
+import type { IpcSurface } from './transport.js';
 
 /** 注册选择向导域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
-export function registerOnboardIpc(): void {
+export function registerOnboardIpc(surface: IpcSurface): void {
   // 内置插件选择向导（assets/onboarding.html，onboarding-preload.js 桥）：
   //   list   —— 目录（核心/推荐标记 + 描述 + 体积）+ 模式 + 当前启停状态
   //   submit —— 校验选择 → 写 disabled/裸条目 → 持久化 settings → 关窗；
   //             rerun 模式随后重启 Web 服务使 host 侧插件生效
   //   close  —— 用户点「跳过」/关闭窗口（走 closed 事件的 cancelled 分支）
-  ipcMain.handle('onboard:list', async (event) => {
-    if (!fromWizardWindow(event)) return null;
+  surface.handle('onboard:list', async (_payload, ev) => {
+    if (!fromWizardSession(ev)) return null;
     return {
       mode: state.wizardMode,
       catalog: buildOnboardingCatalog(),
@@ -36,8 +38,9 @@ export function registerOnboardIpc(): void {
     };
   });
 
-  ipcMain.handle('onboard:submit', async (event, { ids } = {}) => {
-    if (!fromWizardWindow(event)) return { ok: false, error: 'unauthorized' };
+  surface.handle('onboard:submit', async (payload, ev) => {
+    if (!fromWizardSession(ev)) return { ok: false, error: 'unauthorized' };
+    const { ids } = (payload ?? {}) as { ids?: unknown };
     // 首次向导时 sync 尚未运行、profile 目录可能还不存在：先按官方模板初始化
     // （package.json / pnpm-workspace.yaml / 空 patch 层），否则写盘 ENOENT。
     ensureDesktopProfileInit();
@@ -72,16 +75,16 @@ export function registerOnboardIpc(): void {
     return { ok: true, applied: ops.length, errors };
   });
 
-  ipcMain.on('onboard:close', (event) => {
-    if (!fromWizardWindow(event)) return;
+  surface.on('onboard:close', (_payload, ev) => {
+    if (!fromWizardSession(ev)) return;
     closeWizard({ ok: false, cancelled: true });
   });
 
   // 设置页「插件 → 选择向导」（dsh-plugin-wizard 插件）二次打开入口。
-  ipcMain.handle('onboard:open', (event) => {
-    if (!fromMainWindow(event)) return { ok: false, error: 'unauthorized' };
-    if (state.wizardWindow && !state.wizardWindow.isDestroyed()) {
-      state.wizardWindow.focus();
+  surface.handle('onboard:open', (_payload, ev) => {
+    if (!fromMainSession(ev)) return { ok: false, error: 'unauthorized' };
+    if (state.wizardSession && state.wizardSession.isAlive()) {
+      state.wizardSession.focus();
       return { ok: true, reused: true };
     }
     void openPluginWizard({ mode: 'rerun' });

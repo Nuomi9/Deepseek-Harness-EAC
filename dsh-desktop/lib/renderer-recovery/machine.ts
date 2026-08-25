@@ -2,7 +2,7 @@
  * lib/renderer-recovery/machine.ts — 渲染进程崩溃/挂起自恢复状态机本体
  * （Task 14 自 renderer-recovery.ts 拆出；背景与设计约束见根门面文件头）。
  *
- * 不 require('electron')，全部副作用经注入回调完成；策略参数与纯决策
+ * 不加载 electron 模块，全部副作用经注入回调完成；策略参数与纯决策
  * 函数在 ./policy.ts，受控加载在 ./load.ts。
  */
 
@@ -26,7 +26,10 @@ export class RendererRecovery {
   private opts: RendererRecoveryDeps & RecoveryOpts;
   private _states = new Map<number, WindowState>(); // winId -> state
   private _wins = new Set<RecoveryWindow>();
-  private _heartbeats = new Map<number, number>(); // webContentsId -> lastBeatAt
+  // 心跳键＝会话 token（Task 6.1：IPC 来源 token 化；Electron 宿主下即
+  // String(webContents.id)，历史 number 入参经 String 归一保持等价）。
+  private _heartbeats = new Map<string, number>();
+  private _mainWin: RecoveryWindow | null = null;
 
   constructor(deps: RendererRecoveryDeps) {
     this.opts = { ...DEFAULT_OPTS, ...deps } as RendererRecoveryDeps & RecoveryOpts;
@@ -128,6 +131,7 @@ export class RendererRecovery {
     if (!win || win.isDestroyed()) return;
     const s = this._state(win);
     s.kind = kind;
+    if (kind === 'main') this._mainWin = win;
     const wc = win.webContents;
 
     wc.on('render-process-gone', (...args: unknown[]) => this._onGone(win, args[1] as { reason?: string; exitCode?: number } | undefined));
@@ -144,8 +148,9 @@ export class RendererRecovery {
     });
     wc.on('destroyed', () => {
       this._states.delete(win.id);
-      this._heartbeats.delete(wc.id);
+      this._heartbeats.delete(String(wc.id));
       this._wins.delete(win);
+      if (this._mainWin === win) this._mainWin = null;
     });
     // 可见性用 show/hide 事件自行追踪（而非 isVisible()）：后者在挂起、
     // RDP/服务会话等场景下会误报 false，导致挂起判定被永远跳过。
@@ -154,7 +159,7 @@ export class RendererRecovery {
       st.userHidden = false;
       // 窗口重新可见：给 renderer 一段宽限恢复心跳（后台节流会让心跳
       // 时间戳陈旧），避免「从托盘唤出」瞬间被误判为挂起。
-      this._heartbeats.set(wc.id, Date.now());
+      this._heartbeats.set(String(wc.id), Date.now());
     });
     win.on('hide', () => {
       this._state(win).userHidden = true;
@@ -163,9 +168,9 @@ export class RendererRecovery {
     this._wins.add(win);
   }
 
-  /** preload 每 5s 上报一次心跳。 */
-  noteHeartbeat(wcId: number): void {
-    this._heartbeats.set(wcId, Date.now());
+  /** preload 每 5s 上报一次心跳（键＝会话 token；number 入参归一为 string）。 */
+  noteHeartbeat(key: number | string): void {
+    this._heartbeats.set(String(key), Date.now());
   }
 
   /** 由 window.ts 的定时器周期调用；只对「可见（未被用户隐藏）且应显示
@@ -177,7 +182,7 @@ export class RendererRecovery {
       const s = this._state(win);
       if (!s.expectingWeb || s.gaveUp || s.hangGrace) continue;
       if (s.userHidden) continue;
-      const last = this._heartbeats.get(win.webContents.id) || 0;
+      const last = this._heartbeats.get(String(win.webContents.id)) || 0;
       if (last && now - last > this.opts.HEARTBEAT_MISS_MS) {
         this._log(`心跳丢失 ${now - last}ms（kind=${s.kind}），视为挂起进入恢复`);
         this._onUnresponsive(win);
@@ -194,6 +199,16 @@ export class RendererRecovery {
     this._log(`用户请求立即恢复加载（kind=${s.kind}）`);
     this._schedule(win, s);
     return true;
+  }
+
+  /** 主窗维度的状态/重试入口（Task 6.1：IPC 域不再持有窗口句柄）。 */
+  stateOfMain(): ReturnType<RendererRecovery['stateOf']> {
+    return this._mainWin ? this.stateOf(this._mainWin) : null;
+  }
+
+  /** 主窗维度的立即重试（chrome:recovery-reload）。 */
+  retryMain(): boolean {
+    return this._mainWin ? this.retryNow(this._mainWin) : false;
   }
 
   /** 错误页展示用状态。 */
@@ -272,7 +287,7 @@ export class RendererRecovery {
       if (win.isDestroyed() || this.opts.isQuitting() || s.gaveUp) return;
       // 宽限期到：若「挂起判定之后」收到过心跳说明 renderer 已恢复，
       // 取消处理；否则强制终结 renderer 触发恢复路径。
-      const last = this._heartbeats.get(win.webContents.id) || 0;
+      const last = this._heartbeats.get(String(win.webContents.id)) || 0;
       if (last && last > s.hangDetectedAt) {
         this._log('宽限期内心跳恢复，取消挂起处理');
         return;

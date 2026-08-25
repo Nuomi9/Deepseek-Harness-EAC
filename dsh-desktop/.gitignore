@@ -9,6 +9,7 @@ data/
 # （scripts/koffi-preflight.cjs 为运行时探针资产，保持入库，见下方否定规则）
 /*.js
 /lib/**/*.js
+/host-electron/**/*.js
 /shared/**/*.js
 /preload/*.js
 /preload-lib/**/*.js

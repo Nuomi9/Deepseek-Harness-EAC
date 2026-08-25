@@ -1,18 +1,21 @@
 /**
- * lib/bridge.ts — 跨域函数注入点（Task 2 引入）。
+ * lib/bridge.ts — 跨域函数注入点（Task 2 引入；Task 6 Wave 2 宿主中立化：
+ * 本模块不再 import electron）。
  *
  * 背景：模块提取后，低层模块（run-state/server/watchdog-boot）需要调用
  * 尚未提取或属于其他域的高层函数（窗口/托盘的 showMainWindow、boot 域的
  * handleBootFailure、plugins 域的 syncCompanionPlugins 等）。直接
  * require('../main.js') 会形成循环加载（部分初始化），故采用「注入点」：
- * main.js 在模块顶层装配期覆写字段，运行时全部经 bridge 转发。
+ * main.ts 在模块顶层装配期覆写字段，运行时全部经 bridge 转发。
  *
- * 约定：默认实现只记警告日志（保证未装配时也不崩溃）；main.js 装配发生在
- * 同步 require 阶段，早于任何事件回调，语义与原 main.js 闭包直调等价。
+ * 约定：默认实现只记警告日志（保证未装配时也不崩溃）；main.ts 装配发生在
+ * 同步 require 阶段，早于任何事件回调，语义与原 main.ts 闭包直调等价。
+ * showBox 默认实现路由宿主上下文的无主窗消息框（Electron 宿主＝
+ * dialog.showMessageBox；无头宿主＝日志 + cancelId 应答，见 host-ctx.ts）。
  */
 
-import { dialog } from 'electron';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 
 /** dialog.showMessageBox 的选项与返回（只声明用到字段）。 */
 export interface MessageBoxOpts {
@@ -39,8 +42,22 @@ export const bridge = {
   showMainWindow: (): void => {
     log('bridge', 'showMainWindow 未装配（装配期外的调用）');
   },
-  /** 消息框（窗口域；默认无父窗实现，main.js 覆写为带主窗版本）。 */
-  showBox: (opts: MessageBoxOpts): Promise<MessageBoxResult> => dialog.showMessageBox(opts),
+  /**
+   * 消息框（窗口域；默认实现＝宿主上下文的无主窗消息框，main.ts 覆写为
+   * 带主窗版本）。可选字段按 exactOptionalPropertyTypes 条件展开
+   * （映射风格与 lib/window.ts showBox 一致）。
+   */
+  showBox: (opts: MessageBoxOpts): Promise<MessageBoxResult> =>
+    hostCtx().showMessageBox({
+      type: opts.type ?? 'none',
+      title: opts.title ?? '',
+      message: opts.message,
+      ...(opts.detail !== undefined ? { detail: opts.detail } : {}),
+      buttons: opts.buttons ?? [],
+      ...(opts.defaultId !== undefined ? { defaultId: opts.defaultId } : {}),
+      ...(opts.cancelId !== undefined ? { cancelId: opts.cancelId } : {}),
+      ...(opts.noLink !== undefined ? { noLink: opts.noLink } : {}),
+    }),
   /** 插件保护中心实例（guard 域，延迟创建）。 */
   ensureGuard: (): GuardLike => {
     throw new Error('bridge.ensureGuard 未装配');

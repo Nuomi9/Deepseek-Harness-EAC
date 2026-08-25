@@ -1,18 +1,20 @@
 /**
- * lib/ipc/app.ts — 应用外壳域 IPC（Task 4 自 registerChromeIpc 拆分）。
+ * lib/ipc/app.ts — 应用外壳域 IPC（Task 4 自 registerChromeIpc 拆分；
+ * Task 6.1 传输面化）。
  *
  * chrome:init（preload 初始化握手）/ chrome:window（自绘标题栏按钮）/
  * chrome:menu（⋯ 菜单动作）/ chrome:restart-service（插件市场原地重启）/
  * dsh:copy-text / dsh:page-error / dsh:open-external。
- * channel 名与行为与拆分前逐一对齐。
+ * channel 名与行为与拆分前逐一对齐；注册面/宿主能力经 IpcSurface 与
+ * hostCtx() 注入（窗口操作 → windows 宿主面，shell/剪贴板/版本 → HostCtx）。
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, ipcMain, shell } from 'electron';
 import * as updater from '../../updater.js';
 import { state } from '../state.js';
 import { log } from '../log.js';
+import { hostCtx } from '../host-ctx.js';
 import { updCtx, dshVersion, dshVersionSource } from '../proc.js';
 import { restartWebServiceCore } from '../server.js';
 import { showBox } from '../window.js';
@@ -22,12 +24,13 @@ import {
 } from '../tray.js';
 import { openBuiltinTerminal } from '../terminal.js';
 import { runUpdateFlow, runClientUpdateFlow } from '../update-flow.js';
-import { fromMainWindow } from './sender.js';
+import { fromMainSession } from './sender.js';
+import type { IpcSurface } from './transport.js';
 
 /** 注册应用外壳域全部 channel（清单见文件头；boot 时经 lib/ipc/index.ts 统一调用）。 */
-export function registerAppIpc(): void {
-  ipcMain.handle('chrome:init', async (event) => {
-    if (!fromMainWindow(event)) return null;
+export function registerAppIpc(surface: IpcSurface): void {
+  surface.handle('chrome:init', async (_payload, ev) => {
+    if (!fromMainSession(ev)) return null;
     let iconDataUri = '';
     try {
       const buf = fs.readFileSync(path.join(__dirname, '..', '..', 'assets', 'icon.png'));
@@ -40,7 +43,7 @@ export function registerAppIpc(): void {
     const s = updater.loadSettings(updCtx());
     const urls = repoUrls();
     return {
-      appVersion: app.getVersion(),
+      appVersion: hostCtx().appVersion(),
       agentVersion: dshVersion(),
       agentSource: dshVersionSource(),
       notifyOnTurnEnd: state.notifyOnTurnEnd,
@@ -53,36 +56,39 @@ export function registerAppIpc(): void {
     };
   });
 
-  ipcMain.handle('chrome:window', (event, { action } = {}) => {
-    if (!fromMainWindow(event)) return null;
-    const mw = state.mainWindow;
-    if (!mw) return null;
+  surface.handle('chrome:window', (payload, ev) => {
+    if (!fromMainSession(ev)) return null;
+    const { action } = (payload ?? {}) as { action?: string };
+    const w = hostCtx().windows;
+    if (!w) return null;
     switch (action) {
-      case 'minimize': mw.minimize(); break;
-      case 'toggle-maximize': mw.isMaximized() ? mw.unmaximize() : mw.maximize(); break;
-      case 'close': mw.close(); break;
-      case 'is-maximized': return mw.isMaximized();
+      case 'minimize': w.minimizeMain(); break;
+      case 'toggle-maximize': w.isMainMaximized() ? w.unmaximizeMain() : w.maximizeMain(); break;
+      case 'close': w.closeMain(); break;
+      case 'is-maximized': return w.isMainMaximized();
     }
     return null;
   });
 
-  ipcMain.handle('chrome:menu', async (event, { action, value } = {}) => {
-    if (!fromMainWindow(event)) {
+  surface.handle('chrome:menu', async (payload, ev) => {
+    const { action, value } = (payload ?? {}) as { action?: string; value?: unknown };
+    if (!fromMainSession(ev)) {
       return {
         notifyOnTurnEnd: state.notifyOnTurnEnd,
         closeToTray: closeToTrayEnabled(),
         exitAction: getExitAction(),
       };
     }
-    const mw = state.mainWindow;
+    const host = hostCtx();
+    const w = host.windows;
     switch (action) {
-      case 'reload': mw?.reload(); break;
+      case 'reload': w?.reloadMain(); break;
       case 'open-terminal': openBuiltinTerminal(); break;
-      case 'devtools': mw?.webContents.toggleDevTools(); break;
-      case 'fullscreen': if (mw) mw.setFullScreen(!mw.isFullScreen()); break;
-      case 'open-browser': if (state.webUrl) void shell.openExternal(state.webUrl); break;
-      case 'open-logs': void shell.openPath(state.logsDir); break;
-      case 'feedback': void shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); break;
+      case 'devtools': w?.toggleDevTools(); break;
+      case 'fullscreen': if (w) w.setMainFullScreen(!w.isMainFullScreen()); break;
+      case 'open-browser': if (state.webUrl) host.openExternal(state.webUrl); break;
+      case 'open-logs': host.openPath(state.logsDir); break;
+      case 'feedback': host.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); break;
       case 'check-agent-update': void runUpdateFlow(true); break;
       case 'check-client-update': void runClientUpdateFlow(true); break;
       case 'toggle-notify': {
@@ -119,7 +125,7 @@ export function registerAppIpc(): void {
         break;
       }
       case 'about': void showAbout(); break;
-      case 'quit': state.forceQuit = true; app.quit(); break;
+      case 'quit': state.forceQuit = true; host.requestQuit(); break;
     }
     const menuState = updater.loadSettings(updCtx());
     return {
@@ -132,35 +138,36 @@ export function registerAppIpc(): void {
 
   // 插件市场：原地重启 dsh web 服务（安装/卸载插件后生效，窗口重载到新端口）。
   // 核心逻辑 restartWebServiceCore 在 server 域（⋯ 菜单与托盘共用）。
-  ipcMain.handle('chrome:restart-service', async (event, payload = {}) => {
-    if ((payload as { intent?: string })?.intent !== 'restart-service')
+  surface.handle('chrome:restart-service', async (payload, ev) => {
+    if ((payload as { intent?: string } | undefined)?.intent !== 'restart-service')
       return { ok: false, error: 'missing-intent' };
-    if (!fromMainWindow(event)) return { ok: false, error: 'unauthorized' };
+    if (!fromMainSession(ev)) return { ok: false, error: 'unauthorized' };
     return restartWebServiceCore();
   });
 
   // 复制文本到剪贴板（菜单「更新源」复制按钮 / 关于对话框）。
-  ipcMain.handle('dsh:copy-text', (event, { text } = {}) => {
-    if (!fromMainWindow(event)) return { ok: false };
+  surface.handle('dsh:copy-text', (payload, ev) => {
+    if (!fromMainSession(ev)) return { ok: false };
+    const { text } = (payload ?? {}) as { text?: unknown };
     if (typeof text !== 'string' || !text || text.length > 2048) return { ok: false };
-    const { clipboard } = require('electron') as typeof import('electron');
-    clipboard.writeText(text);
+    hostCtx().copyToClipboard(text);
     return { ok: true };
   });
 
   // preload 转发的页面异常（window.onerror / unhandledrejection）。
-  ipcMain.on('dsh:page-error', (event, payload) => {
-    if (!fromMainWindow(event)) return;
+  surface.on('dsh:page-error', (payload, ev) => {
+    if (!fromMainSession(ev)) return;
     log('page-error', String(payload));
   });
 
   // 预览面板：用系统浏览器打开 http(s) URL。
-  ipcMain.handle('dsh:open-external', async (event, { url } = {}) => {
-    if (!fromMainWindow(event)) return { ok: false, error: 'forbidden' };
+  surface.handle('dsh:open-external', async (payload, ev) => {
+    if (!fromMainSession(ev)) return { ok: false, error: 'forbidden' };
+    const { url } = (payload ?? {}) as { url?: unknown };
     if (typeof url !== 'string' || !/^https?:\/\//i.test(url))
       return { ok: false, error: 'invalid url' };
     try {
-      await shell.openExternal(url);
+      hostCtx().openExternal(url);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String((err as Error).message) };

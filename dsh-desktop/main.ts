@@ -41,11 +41,20 @@ import { syncCompanionPlugins, healProfileModules, restoreKeptArtifacts } from '
 import { processPendingMarketOps } from './lib/market-ops.js';
 import { runUpdateFlow, runClientUpdateFlow } from './lib/update-flow.js';
 import { boot, fatal, handleBootFailure } from './lib/boot.js';
-import { initHostCtx } from './lib/host-ctx.js';
+import { initHostCtx, hostCtx } from './lib/host-ctx.js';
+import { setDefaultIpcSurface } from './lib/ipc/transport.js';
 import { shutdownExtensionHosts } from './lib/extension-host/manager.js';
 import { snapshotScheduler } from './lib/snapshot/scheduler.js';
 import * as structuredLogger from './logger.js';
 import * as updaterReal from './updater.js';
+
+// ── Electron 宿主适配器（Task 6 Wave 3：组合根侧的 electron 机制落位）────
+// lib/ 已零 electron 依赖（Wave 1/2 中立化），窗口/托盘/IPC 传输的全部
+// Electron 机制在 host-electron/ 实现，经 initHostCtx / setDefaultIpcSurface
+// 注入（Tauri sidecar 的对等装配在 tauri-shell/sidecar/server.ts）。
+import { electronIpcSurface } from './host-electron/ipc.js';
+import { electronWindows, getMainWindow } from './host-electron/windows.js';
+import { electronTray } from './host-electron/tray.js';
 
 // 跨域注入点装配（lib/bridge.ts 的默认实现只是警告占位；这里在模块加载期
 // 指向真实实现 —— 装配早于任何事件回调，语义等价于原 main.js 闭包直调）。
@@ -84,12 +93,37 @@ initHostCtx({
   getPath: (name) => app.getPath(name),
   setPath: (name, value) => app.setPath(name, value),
   removeAppMenu: () => Menu.setApplicationMenu(null),
-  showMessageBox: (opts) => dialog.showMessageBox(opts),
+  // 原 showBox「有主窗时挂主窗（模态感）」语义在此恢复：宿主窗口面持有
+  // 主窗引用（host-electron/windows.ts），消息框无主窗时走无父窗重载。
+  showMessageBox: (opts) => {
+    const mw = getMainWindow();
+    return mw ? dialog.showMessageBox(mw, opts) : dialog.showMessageBox(opts);
+  },
   shortcuts: {
     readLink: (p) => shell.readShortcutLink(p),
     writeLink: (p, operation, o) => shell.writeShortcutLink(p, operation, o),
   },
+  // Task 6 Wave 2 契约演进补齐（HostCtx 扩面）：直映射 Electron shell/app。
+  openExternal: (url) => { void shell.openExternal(url); },
+  openPath: (p) => { void shell.openPath(p); },
+  showItemInFolder: (p) => shell.showItemInFolder(p),
+  // 完全重启（HostCtx 契约「安排 relaunch 后立即退出」）：relaunch + quit
+  // 对齐原托盘完全重启语义（11be738 的 app.relaunch()+app.quit()，走优雅
+  // 退出链）。update-flow/恢复中心的「退出重启装更新」场景在 relaunch 后
+  // 紧跟 exitProcess(0) 立即收口（等价原 app.exit(0) 直退）；安全模式同。
+  relaunch: () => {
+    app.relaunch();
+    app.quit();
+  },
+  // Task 6 Wave 3：窗口/托盘宿主面（lib 的 createWindow/createTray/浮窗/
+  // 恢复中心/向导/更新进度窗全部经此委托；未注入时 lib 按无窗宿主降级）。
+  windows: electronWindows(),
+  tray: electronTray(),
 });
+
+// IPC 传输面注入（Task 6.1）：boot 链 registerIpc() 取缺省注册面挂载全部
+// 42 个 channel —— 必须早于 app.whenReady → boot；来源 token＝webContents.id。
+setDefaultIpcSurface(electronIpcSurface());
 
 // ---------------------------------------------------------------------------
 // App lifecycle（唯一留在入口的职责：单实例锁 + 退出清理）
@@ -101,11 +135,9 @@ if (!gotLock) {
 } else {
   app.setAppUserModelId('com.deepseek.dsh.desktop');
   app.on('second-instance', () => {
-    if (state.mainWindow) {
-      if (state.mainWindow.isMinimized()) state.mainWindow.restore();
-      state.mainWindow.show();
-      state.mainWindow.focus();
-    }
+    // Task 6 Wave 2 契约演进：BrowserWindow 句柄已会话化（state.mainSession），
+    // 显示/聚焦主窗经 tray 域的 showMainWindow（宿主窗口面接线在 Wave 3）。
+    showMainWindow();
   });
   app.on('before-quit', (event) => {
     // V4：退出必须等 dsh web 进程树真正死透再退（见 killTreeAndWait 注释）。
@@ -143,13 +175,12 @@ if (!gotLock) {
         log('boot', '退出清理异常: ' + String((err as Error)?.message));
       } finally {
         if (state.balanceTimer) clearInterval(state.balanceTimer);
-        if (state.tray) {
-          try {
-            state.tray.destroy();
-          } catch {
-            /* 已销毁 */
-          }
-          state.tray = null;
+        // Task 6 Wave 2 契约演进：托盘句柄留在宿主层，销毁经 HostTray.destroy
+        //（未创建时静默；托盘存在性判断统一走 state.trayActive）。
+        try {
+          hostCtx().tray?.destroy();
+        } catch {
+          /* 已销毁 */
         }
         log('boot', `退出清理完成（耗时 ${Date.now() - t0}ms）`);
         // 日志系统 flush：结构化 logger 先关（flush 缓冲区+结束 rotation stream），
@@ -168,9 +199,10 @@ if (!gotLock) {
       }
     })();
   });
-  // 关闭窗口后常驻托盘；托盘不存在时才随窗口退出。
+  // 关闭窗口后常驻托盘；托盘不存在时才随窗口退出（存在性经 state.trayActive，
+  // 宿主 create() 成功后置位 —— Task 6.2 托盘契约）。
   app.on('window-all-closed', () => {
-    if (!IS_WIN || !state.tray) app.quit();
+    if (!IS_WIN || !state.trayActive) app.quit();
   });
   app
     .whenReady()

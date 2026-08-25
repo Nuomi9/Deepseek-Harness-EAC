@@ -14,9 +14,9 @@
  *     的编译产物；main.js（仍是 JS）经 `require('./lib/state.js')` 引用。
  */
 
-import type { BrowserWindow, Tray } from 'electron';
 import type { ChildProcess } from 'node:child_process';
 import type { GuardedStream } from '../stream-write-guard.js';
+import type { BridgeSession } from './host-ctx.js';
 
 /** TODO(后续 Task): session-watcher.js 迁 TS 后替换为真实类型。 */
 interface SessionWatcherLike {
@@ -51,8 +51,11 @@ type WizardDoneCallback = (result: unknown) => void;
 
 /** 主进程全局共享可变状态（字段与初值同原 main.js 顶层声明一一对应）。 */
 export interface AppState {
-  /** 主窗口。 */
-  mainWindow: BrowserWindow | null;
+  /**
+   * 主窗桥会话句柄（Task 6.1：取代 BrowserWindow 概念——Electron 宿主
+   * createMain 时登记，窗口销毁时清空；窗口操作经 hostCtx().windows）。
+   */
+  mainSession: BridgeSession | null;
   /** dsh web 服务子进程。 */
   serverProc: ChildProcess | null;
   /** dsh web 服务就绪后的 URL。 */
@@ -63,12 +66,12 @@ export interface AppState {
   updateBusy: boolean;
   /**
    * V4 多窗口（会话浮窗，摘自上游 dsh_desktop）：同一会话只保留一个浮窗，
-   * 上限 8 个（FLOAT_MAX，常量仍在 main.js）防资源滥用；主窗关闭/应用退出
+   * 上限 8 个（FLOAT_MAX，常量在 lib/window.ts）防资源滥用；主窗关闭/应用退出
    * 时统一回收。
    */
-  floatWindows: Set<BrowserWindow>;
-  /** 会话 ID → 浮窗 的映射（与会话浮窗集合配套）。 */
-  floatBySession: Map<string, BrowserWindow>;
+  floatSessions: Set<BridgeSession>;
+  /** 会话 ID → 浮窗会话 的映射（与会话浮窗集合配套）。 */
+  floatBySession: Map<string, BridgeSession>;
   /** 回合结束是否发系统通知（用户可在托盘菜单切换）。 */
   notifyOnTurnEnd: boolean;
   /** 会话文件监听器（session-watcher.js 实例）。 */
@@ -81,8 +84,8 @@ export interface AppState {
   dshHome: string;
   /** 桌面日志写入流（desktop.log；经流写入守卫，见 stream-write-guard.ts）。 */
   desktopLog: GuardedStream | null;
-  /** 系统托盘（仅 Windows）。 */
-  tray: Tray | null;
+  /** 系统托盘是否已创建（仅 Windows；Task 6.2：托盘句柄留在宿主层）。 */
+  trayActive: boolean;
   /** 强制退出标志（跳过托盘驻留等确认流程）。 */
   forceQuit: boolean;
   /** 客户端自更新流程是否进行中（防重入）。 */
@@ -110,8 +113,13 @@ export interface AppState {
   guardInstance: PluginGuardLike | null;
   /** 启动失败救援（防重入）：一次会话只主动查一次。 */
   clientUpdateRescueArmed: boolean;
-  /** 内置插件选择向导窗口。 */
-  wizardWindow: BrowserWindow | null;
+  /** 内置插件选择向导桥会话句柄。 */
+  wizardSession: BridgeSession | null;
+  /**
+   * 恢复中心窗口桥会话句柄（Task 6 Wave 2：宿主 openRecoveryCenter 时登记、
+   * 窗口关闭时清空；rc:action/rc:close 来源校验据此比对会话 token）。
+   */
+  rcSession: BridgeSession | null;
   /** 向导模式：first（首次启动）/ rerun（设置页二次打开）。 */
   wizardMode: 'first' | 'rerun';
   /** 向导完成回调（openWizard 返回的 Promise 的 resolve）。 */
@@ -134,12 +142,12 @@ export interface AppState {
 
 /** 全局共享可变状态单例：初值与原 main.js 顶层声明一一对应。 */
 export const state: AppState = {
-  mainWindow: null,
+  mainSession: null,
   serverProc: null,
   webUrl: null,
   quitting: false,
   updateBusy: false,
-  floatWindows: new Set(),
+  floatSessions: new Set(),
   floatBySession: new Map(),
   notifyOnTurnEnd: true,
   sessionWatcher: null,
@@ -147,7 +155,7 @@ export const state: AppState = {
   logsDir: '',
   dshHome: '',
   desktopLog: null,
-  tray: null,
+  trayActive: false,
   forceQuit: false,
   clientUpdateBusy: false,
   balanceCache: null,
@@ -160,7 +168,8 @@ export const state: AppState = {
   testForceUnsafeOnce: process.env.DSH_DESKTOP_TEST_FORCE_UNSAFE === '1',
   guardInstance: null,
   clientUpdateRescueArmed: false,
-  wizardWindow: null,
+  wizardSession: null,
+  rcSession: null,
   wizardMode: 'first',
   wizardDone: null,
   trayHintShown: false,

@@ -201,7 +201,8 @@ export function handleBootFailure(err: unknown): void {
 export function fatal(title: string, err: unknown): void {
   log('fatal', title + ': ' + String((err as Error)?.stack || (err as Error)?.message || err));
   const detail = buildErrorDetail(err, state.logsDir, ['dsh-web.log', 'desktop.log']);
-  if (!state.mainWindow || state.mainWindow.isDestroyed()) {
+  // 主窗存在性经桥会话判定（Task 6.1：mainSession 取代 BrowserWindow 概念）。
+  if (!state.mainSession || !state.mainSession.isAlive()) {
     // Task 5.2：无主窗消息框经宿主上下文注入（Electron dialog.showMessageBox；
     // sidecar/无头宿主走缺省兜底——记日志并按 cancelId 应答）。
     void hostCtx()

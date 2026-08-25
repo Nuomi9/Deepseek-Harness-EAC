@@ -18,7 +18,7 @@
     "types": ["node"],
     "noEmit": false
   },
-  "include": ["lib/**/*.ts", "shared/**/*.ts", "preload/**/*.ts", "scripts/**/*.ts", "*.ts", "types-*.d.ts"],
+  "include": ["lib/**/*.ts", "shared/**/*.ts", "preload/**/*.ts", "scripts/**/*.ts", "host-electron/**/*.ts", "*.ts", "types-*.d.ts"],
   "exclude": [
     "node_modules",
     "vendor",

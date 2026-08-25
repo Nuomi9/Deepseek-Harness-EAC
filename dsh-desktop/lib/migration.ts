@@ -1,16 +1,16 @@
 /**
- * lib/migration.ts — 历史迁移与一次性告警（Task 5.3 自 main.js 提取）。
+ * lib/migration.ts — 历史迁移与一次性告警（Task 5.3 自 main.js 提取；Task 6
+ * Wave 2 宿主中立化：本模块不再 import electron）。
  *
  * migrateFromSharedWebProfile：桌面端从共享 web profile 切到专属
  * web-desktop profile 的一次性迁移（三件事，全部幂等）；applyLegacySkinChoice
  * 在 syncCompanionPlugins 之后落位迁移带来的皮肤选择；warnTempRun：便携版
- * 跑在系统临时目录时的告警。
+ * 跑在系统临时目录时的告警。打包态判定经 hostCtx().isPackaged()。
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { app } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
@@ -19,10 +19,11 @@ import { DESKTOP_PROFILE, desktopProfileDir } from './paths.js';
 import { COMPANION_PLUGINS } from './plugin-registry-data.js';
 import { readJsonFile } from './plugin-copy.js';
 import { bridge } from './bridge.js';
+import { hostCtx } from './host-ctx.js';
 
 /** 便携版跑在系统临时目录时告警（文件可能被系统清理，快捷方式失效）。 */
 export function warnTempRun(): void {
-  if (!app.isPackaged || !IS_WIN || !process.env.PORTABLE_EXECUTABLE_DIR) return;
+  if (!hostCtx().isPackaged() || !IS_WIN || !process.env.PORTABLE_EXECUTABLE_DIR) return;
   // E2E（scripts/e2e-v4.js）从临时目录跑便携版：告警弹窗会卡住无头验证。
   if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
   const dir = process.env.PORTABLE_EXECUTABLE_DIR.toLowerCase();

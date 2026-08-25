@@ -59,12 +59,19 @@ files:
   - lib/update-flow.js
   - lib/ipc/index.js
   - lib/ipc/sender.js
+  # Task 6.1：IPC 传输面（IpcSurface 注册面，6 域 handler 挂载点）。
+  - lib/ipc/transport.js
   - lib/ipc/app.js
   - lib/ipc/recovery.js
   - lib/ipc/plugin.js
   - lib/ipc/onboard.js
   - lib/ipc/session.js
   - lib/boot.js
+  # Task 6 Wave 3：Electron 宿主面（窗口/托盘/IPC 传输面的组合根侧落位；
+  # main.js 顶层 require，闭包防呆见 test/bundled-files.test.ts）。
+  - host-electron/ipc.js
+  - host-electron/windows.js
+  - host-electron/tray.js
   # 门面背后的实现子目录（Task 6/14 拆分；bundled-files 闭包测试防漏）：
   - lib/logger/index.js
   - lib/logger/api.js

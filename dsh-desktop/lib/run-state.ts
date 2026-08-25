@@ -1,5 +1,6 @@
 /**
- * lib/run-state.ts — 运行状态标记与客户端更新崩溃自回退（Task 2.1 自 main.js 提取）。
+ * lib/run-state.ts — 运行状态标记与客户端更新崩溃自回退（Task 2.1 自
+ * main.js 提取；Task 6 Wave 2 宿主中立化：本模块不再 import electron）。
  *
  * 三个子域（均为启动/退出链路，逻辑逐行等价迁移）：
  *   1) run-state.json：主进程写心跳式运行状态，watchdog.js（独立进程）轮询
@@ -7,16 +8,20 @@
  *   2) 客户端更新崩溃自回退（V4.1 更新保障③）：便携版更新脚本保留上一版
  *      exe（.bak + marker），新版崩溃则下次启动自动还原；
  *   3) 更新成功后的 24h 内非阻塞备份清理确认（V4.3）。
+ *
+ * 版本号经 hostCtx().appVersion()、消息框经 showBox（宿主消息框）、系统
+ * 通知经 hostCtx().notify、主窗就绪等待经 HostWindows.onMainReady。
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, dialog, Notification } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { IS_WIN, updCtx } from './proc.js';
 import { bridge } from './bridge.js';
+import { hostCtx } from './host-ctx.js';
+import { showBox } from './window.js';
 
 /** run-state.json 路径（userData 目录）。 */
 export function runStatePath(): string {
@@ -33,7 +38,7 @@ export function writeRunState(extra: Record<string, unknown> = {}): void {
         exe: process.execPath,
         cleanExit: false,
         startedAt: new Date().toISOString(),
-        version: app.getVersion(),
+        version: hostCtx().appVersion(),
         ...extra,
       }),
     );
@@ -74,25 +79,20 @@ export function detectUncleanPreviousRun(): Record<string, unknown> | null {
   return null;
 }
 
-/** 崩溃自动恢复后的系统通知（点击聚焦主窗）。 */
+/** 崩溃自动恢复后的系统通知（点击聚焦主窗；无通知通道宿主静默）。 */
 export function notifyUncleanRestart(prev: Record<string, unknown>): void {
-  try {
-    const started =
-      typeof prev.startedAt === 'string' && prev.startedAt ? new Date(prev.startedAt) : null;
-    const when =
-      started && !Number.isNaN(started.getTime())
-        ? started.toLocaleString('zh-CN', { hour12: false })
-        : '上次';
-    const n = new Notification({
-      title: 'Deepseek Harness EAC 已自动恢复',
-      body: `检测到应用在 ${when} 前后未正常退出，看门狗已重新启动应用。`,
-      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-    });
-    n.on('click', () => bridge.showMainWindow());
-    n.show();
-  } catch (err) {
-    log('crash', '恢复通知发送失败: ' + String((err as Error).message));
-  }
+  const started =
+    typeof prev.startedAt === 'string' && prev.startedAt ? new Date(prev.startedAt) : null;
+  const when =
+    started && !Number.isNaN(started.getTime())
+      ? started.toLocaleString('zh-CN', { hour12: false })
+      : '上次';
+  hostCtx().notify({
+    title: 'Deepseek Harness EAC 已自动恢复',
+    body: `检测到应用在 ${when} 前后未正常退出，看门狗已重新启动应用。`,
+    icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+    onClick: () => bridge.showMainWindow(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -119,17 +119,12 @@ export function autoRollbackClientIfCrashed(prevUnclean: Record<string, unknown>
     fs.copyFileSync(p.bak, p.exe);
     fs.rmSync(p.marker, { force: true });
     log('client-update', '检测到客户端更新后启动失败，已自动回退到上一版本');
-    try {
-      const n = new Notification({
-        title: 'Deepseek Harness EAC 已自动回退',
-        body: '更新后的版本启动失败，已自动回退到上一版本并保留崩溃副本。',
-        icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-      });
-      n.on('click', () => bridge.showMainWindow());
-      n.show();
-    } catch (err) {
-      log('client-update', '回退通知发送失败: ' + String((err as Error).message));
-    }
+    hostCtx().notify({
+      title: 'Deepseek Harness EAC 已自动回退',
+      body: '更新后的版本启动失败，已自动回退到上一版本并保留崩溃副本。',
+      icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+      onClick: () => bridge.showMainWindow(),
+    });
     return true;
   } catch (err) {
     log('client-update', '自动回退失败: ' + String((err as Error).message));
@@ -199,16 +194,17 @@ export function offerBackupCleanupConfirm(): void {
   } catch {
     /* 忽略 */
   }
-  // 非阻塞异步（不阻塞 mainWindow 显示）；dialog.showMessageBox 返回 Promise
-  // （Electron 下主进程调用即异步，回调中处理用户选择）。
+  // 非阻塞异步（不阻塞主窗显示）：消息框经 showBox（映射宿主消息框，Electron
+  // 宿主可自行挂主窗为父窗；无头宿主按 cancelId 应答），回调中处理用户选择。
   const ageInfo =
     ageSec > 0
       ? `（已保留 ${Math.floor(ageSec / 3600)} 小时 ${Math.floor((ageSec % 3600) / 60)} 分钟）`
       : '';
-  // 等主窗口就绪后再弹，避免在启动早期抢焦点
+  // 等主窗口就绪后再弹，避免在启动早期抢焦点：onMainReady 语义＝已可见立即
+  // 回调 / 未就绪等就绪 / 无主窗不回调（对齐原 isVisible + ready-to-show 分支）。
   const fire = (): void => {
-    const opts = {
-      type: 'question' as const,
+    void showBox({
+      type: 'question',
       title: '更新成功',
       message: '客户端更新成功，是否删除更新前的备份？',
       detail: `备份包含用户目录、安装目录等 4 个目录${ageInfo}；保留可随时在「设置 - 存储管理」手动清理。`,
@@ -216,12 +212,7 @@ export function offerBackupCleanupConfirm(): void {
       defaultId: 0,
       cancelId: 0,
       noLink: true,
-    };
-    // Electron 类型重载不收 undefined；无主窗时走无父窗重载（运行时语义一致）。
-    const p = state.mainWindow
-      ? dialog.showMessageBox(state.mainWindow, opts)
-      : dialog.showMessageBox(opts);
-    p
+    })
       .then(({ response }) => {
         const backupDir = path.join(state.userDataDir, 'backups', ts);
         if (response === 1) {
@@ -239,17 +230,13 @@ export function offerBackupCleanupConfirm(): void {
             if (fs.existsSync(backupDir))
               fs.rmSync(backupDir, { recursive: true, force: true, maxRetries: 3 });
             log('client-update', `已清理备份 ${ts}（保留诊断副本）`);
-            try {
-              const n = new Notification({
-                title: '备份已清理',
-                body: '更新前的备份已删除，诊断清单保留在 backups 目录下。',
-                icon: path.join(__dirname, '..', 'assets', 'icon.png'),
-              });
-              n.on('click', () => bridge.showMainWindow());
-              n.show();
-            } catch {
-              /* 通知失败不影响清理结果 */
-            }
+            // 通知失败不影响清理结果（hostCtx().notify 契约静默）。
+            hostCtx().notify({
+              title: '备份已清理',
+              body: '更新前的备份已删除，诊断清单保留在 backups 目录下。',
+              icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+              onClick: () => bridge.showMainWindow(),
+            });
           } catch (err) {
             log('client-update', `清理备份 ${ts} 失败: ` + String((err as Error).message));
           }
@@ -270,14 +257,5 @@ export function offerBackupCleanupConfirm(): void {
         log('client-update', '备份确认对话框失败: ' + String((err as Error).message));
       });
   };
-  if (state.mainWindow && state.mainWindow.isVisible()) {
-    fire();
-  } else {
-    // 若主窗口尚未 ready，等 once('ready-to-show') 再弹
-    const onceReady = (): void => {
-      fire();
-      if (state.mainWindow) state.mainWindow.removeListener('ready-to-show', onceReady);
-    };
-    if (state.mainWindow) state.mainWindow.once('ready-to-show', onceReady);
-  }
+  hostCtx().windows?.onMainReady(fire);
 }
