@@ -26,7 +26,7 @@
  * installed for. We deliberately never rebuild them against Electron.
  */
 
-import { app } from 'electron';
+import { app, clipboard, dialog, Menu, Notification, shell } from 'electron';
 import { spawn } from 'node:child_process';
 
 // ── lib 装配表（bridge 注入需要运行期引用；保持 require 顺序稳定）──────
@@ -41,6 +41,7 @@ import { syncCompanionPlugins, healProfileModules, restoreKeptArtifacts } from '
 import { processPendingMarketOps } from './lib/market-ops.js';
 import { runUpdateFlow, runClientUpdateFlow } from './lib/update-flow.js';
 import { boot, fatal, handleBootFailure } from './lib/boot.js';
+import { initHostCtx } from './lib/host-ctx.js';
 import { shutdownExtensionHosts } from './lib/extension-host/manager.js';
 import { snapshotScheduler } from './lib/snapshot/scheduler.js';
 import * as structuredLogger from './logger.js';
@@ -61,6 +62,34 @@ bridge.askExitAction = askExitAction;
 bridge.trayHintOnce = trayHintOnce;
 bridge.runUpdateFlow = runUpdateFlow;
 bridge.runClientUpdateFlow = runClientUpdateFlow;
+
+// ── 宿主上下文注入（Task 5.3：Electron 适配器）──────────────────────────
+// lib/* 统一模块经 lib/host-ctx.ts 取宿主能力、不直接 import electron；
+// 组合根 main.ts 是 electron import 的合法装配点，这里把 Electron API 面
+// 逐项映射为 HostCtx（sidecar 侧对等实现在 tauri-shell/sidecar/server.ts）。
+initHostCtx({
+  isPackaged: () => app.isPackaged,
+  resourcesPath: () => process.resourcesPath,
+  appVersion: () => app.getVersion(),
+  log: (tag, msg) => log(tag, msg),
+  exitProcess: (code) => app.exit(code),
+  requestQuit: () => app.quit(),
+  notify: (opts) => {
+    // exactOptionalPropertyTypes：icon 仅在存在时传入（undefined 不可赋给可选属性）。
+    const n = new Notification({ title: opts.title, body: opts.body, ...(opts.icon ? { icon: opts.icon } : {}) });
+    if (opts.onClick) n.on('click', opts.onClick);
+    n.show();
+  },
+  copyToClipboard: (text) => clipboard.writeText(text),
+  getPath: (name) => app.getPath(name),
+  setPath: (name, value) => app.setPath(name, value),
+  removeAppMenu: () => Menu.setApplicationMenu(null),
+  showMessageBox: (opts) => dialog.showMessageBox(opts),
+  shortcuts: {
+    readLink: (p) => shell.readShortcutLink(p),
+    writeLink: (p, operation, o) => shell.writeShortcutLink(p, operation, o),
+  },
+});
 
 // ---------------------------------------------------------------------------
 // App lifecycle（唯一留在入口的职责：单实例锁 + 退出清理）

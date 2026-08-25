@@ -18,7 +18,6 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { app, clipboard } from 'electron';
 import * as updater from '../updater.js';
 import { restrictedPortOf, chooseStableWebPort } from '../stable-port.js';
 import type { StablePortCtx } from '../stable-port.js';
@@ -30,6 +29,7 @@ import {
 import { createStreamWriteGuard } from '../stream-write-guard.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 import {
   dshWebLockPath,
   isAnotherDshWebRunning,
@@ -114,7 +114,7 @@ export async function startServer(
           '找不到内置 Node 运行时: ' +
             nodeBin +
             '\n' +
-            (app.isPackaged ? '安装包可能不完整，请重新安装。' : '开发模式请先运行: npm run fetch-node'),
+            (hostCtx().isPackaged() ? '安装包可能不完整，请重新安装。' : '开发模式请先运行: npm run fetch-node'),
         ),
       );
       return;
@@ -329,10 +329,12 @@ export function watchServerProc(
             noLink: true,
           })
           .then(({ response }) => {
-            if (response === 0) clipboard.writeText(detail);
+            // Task 5.2：剪贴板/退出经宿主上下文注入（Electron clipboard/app；
+            // sidecar 静默降级）。
+            if (response === 0) hostCtx().copyToClipboard(detail);
             else if (response === 1)
               startAndShow().catch((err) => void bridge.handleBootFailure(err));
-            else app.quit();
+            else hostCtx().requestQuit();
           });
       }
     });

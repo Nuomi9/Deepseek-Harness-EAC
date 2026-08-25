@@ -9,7 +9,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { Notification } from 'electron';
 import { syncBundledPresets, ensureDefaultAgentPreset } from '../preset-sync.js';
 import { removeMarketDuplicate, patchHasForeignRows } from '../builtin-collision.js';
 import {
@@ -21,6 +20,7 @@ import { CORE_PLUGIN_IDS } from '../scripts/onboarding.js';
 import { healProfileModuleShadowing } from '../profile-module-heal.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 import { IS_WIN } from './proc.js';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './paths.js';
 import { COMPANION_PLUGINS, RETIRED_BUILTIN_PLUGINS, builtinPluginSourceDir } from './plugin-registry-data.js';
@@ -300,13 +300,14 @@ export function syncCompanionPlugins(): void {
     if (migratedBuiltins.length) {
       try {
         const names = migratedBuiltins.map((m) => m.name).join('、');
-        const n = new Notification({
+        // Task 5.2：系统通知经宿主上下文注入（Electron Notification / sidecar
+        // stderr / 测试 mock）；点击回调语义保持。
+        hostCtx().notify({
           title: '内置插件已接管同名市场包',
           body: `检测到市场安装的重复包，已改用内置版本（${names}）。插件树已自动整理，本次启动生效。`,
           icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+          onClick: () => bridge.showMainWindow(),
         });
-        n.on('click', () => bridge.showMainWindow());
-        n.show();
       } catch (err) {
         log('boot', '内置接管通知发送失败: ' + String((err as Error).message));
       }

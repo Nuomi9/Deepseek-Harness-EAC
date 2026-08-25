@@ -11,16 +11,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
-import { app, Notification } from 'electron';
 import { state } from './state.js';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 import { IS_WIN, nodeExe } from './proc.js';
 import { runStatePath } from './run-state.js';
 import { bridge } from './bridge.js';
 
 /** 启动看门狗（仅安装版 + Windows：开发模式重启会与调试流程互相干扰）。 */
 export function startWatchdog(): void {
-  if (!app.isPackaged || !IS_WIN) return;
+  if (!hostCtx().isPackaged() || !IS_WIN) return;
   const watchdogJs = path.join(__dirname, '..', 'watchdog.js');
   if (!fs.existsSync(watchdogJs)) return;
   try {
@@ -73,13 +73,14 @@ export function startJunctionWatchdog(): void {
       if (res.repaired.length && !notified) {
         notified = true;
         try {
-          const n = new Notification({
+          // Task 5.2：系统通知经宿主上下文注入（Electron Notification /
+          // sidecar stderr / 测试 mock）；点击回调语义保持。
+          hostCtx().notify({
             title: '已自动修复共享模块指向',
             body: '检测到原生 dsh 改写了共享模块目录，桌面端已恢复指向自身版本。原生 CLI 如有异常，重启它即可。',
             icon: path.join(__dirname, '..', 'assets', 'icon.png'),
+            onClick: () => bridge.showMainWindow(),
           });
-          n.on('click', () => bridge.showMainWindow());
-          n.show();
         } catch {
           /* 通知失败不影响修复 */
         }

@@ -43,8 +43,9 @@ const SCRIPTS = [
 
 // vnext 隔离体系（vnext-absorb Phase 2）：sidecar require 的 lib/{state,log,
 // supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
+// host-ctx.js（Task 5.3）：sidecar 装配段 initHostCtx 的统一模块宿主上下文。
 const LIB_VNEXT = [
-  'state.js', 'log.js', 'plugin-copy.js',
+  'state.js', 'log.js', 'plugin-copy.js', 'host-ctx.js',
   'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
   'supervisor/permissions.js', 'supervisor/incidents.js',
   'extension-host/manager.js', 'extension-host/bridge-server.js',

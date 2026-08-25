@@ -58,11 +58,11 @@
   - [x] 4.7 核对项：2dd37bd 流写入保护（server.ts dsh-web.log + boot.ts desktop.log 均经 `createStreamWriteGuard`；guard 改具名导出 + 打包清单补录）、16b8ff4 splash（assets/loading.html prefers-color-scheme 已随 main 树并入）、18b0fd4 escalation 豁免（已在 4.5 完成）
   - [x] 4.8 11be738 托盘完全重启 → 已移植 `lib/tray.ts`（`test/tray-menu.test.ts` 3 用例）+ 记入 Task 8.1 清单 → 门禁全绿（typecheck 0 错 + 672 测试全过）→ commit
 
-- [ ] Task 5: 模块统一批次一——sidecar 消费面 ctx 化（12 模块）
-  - [ ] 5.1 以 `lib/desktop/guard-box.ts` 的 `XxxCtx` 注入模式为模板建立 `lib/host-ctx.ts`（宿主接口：isPackaged/resourcesPath/log/exitProcess/notify）
-  - [ ] 5.2 改造：`lib/proc.ts`（nodeExe/npmCli/updCtx 平台化）、`lib/paths.ts`（fileRoots/desktopProfile）、`lib/server.ts`（spawn 守护）、`lib/boot.ts`、`lib/watchdog-boot.ts`、`lib/plugin-copy.ts`、`lib/plugins.ts`、`lib/plugin-manager-core.ts`、`lib/market-modules.ts`、`lib/market-ops.ts`、`lib/preview.ts`、`lib/shortcuts.ts`
-  - [ ] 5.3 Electron main.ts 与 sidecar 双宿主注入适配（过渡期双入口都可用）
-  - [ ] 5.4 对应测试夹具改造为 ctx 注入 mock（数量不减）→ 门禁全绿 → commit
+- [x] Task 5: 模块统一批次一——sidecar 消费面 ctx 化（12 模块）
+  - [x] 5.1 建立 `lib/host-ctx.ts`（模板＝guard-box XxxCtx 单例注入 + runtime-paths 防御性缺省）：HostCtx 接口 isPackaged/resourcesPath/appVersion/log/exitProcess/requestQuit/notify/copyToClipboard/getPath/setPath/removeAppMenu/showMessageBox/shortcuts（.lnk 能力，缺省 undefined→调用方跳过维护）；未注入＝开发态缺省（GUI 能力静默/无头兜底按 cancelId 应答，绝不抛错）
+  - [x] 5.2 改造 12 模块：原 electron 面 6 模块全部去 electron 依赖——`proc.ts`（nodeExe/npmCli 资源根）、`server.ts`（isPackaged 判定/剪贴板/requestQuit）、`boot.ts`（getPath/setPath/appVersion/removeAppMenu/fatal 无主窗消息框/exitProcess）、`watchdog-boot.ts`+`plugins.ts`（Notification→notify，onClick 语义保持）、`shortcuts.ts`（getPath + shell.read/writeShortcutLink→shortcuts 注入，宿主无能力整体跳过）；已中立 6 模块（paths/plugin-copy/plugin-manager-core/market-modules/market-ops/preview）核对确认本就零 electron 引用
+  - [x] 5.3 双宿主注入适配：`main.ts` 装配段 initHostCtx（Electron 面：app/Notification/clipboard/dialog/Menu/shell 直映射；组合根是 electron import 的合法装配点）；`tauri-shell/sidecar/server.ts` 装配段 initHostCtx（打包态＝DSH_RESOURCE_ROOT 或 sidecar 旁 dsh-desktop 布局判定；消息框/通知 stderr 无头兜底；剪贴板/.lnk 复用既有 PowerShell 实现；requestQuit→`shell.quit-for-update` 壳层 ExitRequested 有界收口，不在 sidecar 直接 process.exit）
+  - [x] 5.4 测试与打包面：`test/host-ctx.test.ts` 11 用例（缺省语义×5/注入生效/reset 清理/12 模块零 electron 门禁/原 electron 面 6 模块 hostCtx 化断言/双宿主接线/打包清单）；既有夹具（plugin-host-deps 等）经 require 链自动兼容无需改造；electron-builder.yml files 与 stage-resources.mjs LIB_VNEXT 各补录 `lib/host-ctx.js`（bundled-files 闭包防呆 + 手工清单双覆盖）→ 门禁：typecheck 主配置+过渡配置零错误、npm test 686/686（基线 675 +11；watchdog-behavior 一次 `null!==0` 为测试内注释记载的既有竞态，隔离与重跑均全过）→ commit
 
 - [ ] Task 6: 模块统一批次二——Electron 专属面 ctx 化（其余模块）
   - [ ] 6.1 `lib/state.ts`：mainWindow 概念移除 → bridge 会话句柄；`lib/ipc/sender.ts` 来源校验改 bridge 会话 token

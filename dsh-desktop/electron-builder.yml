@@ -28,6 +28,8 @@ files:
   # Task 1.x/2.x：lib/ 为 tsc 原地编译产物（prepack 时生成），bundled-files 防呆覆盖。
   - lib/state.js
   - lib/log.js
+  # Task 5：统一模块宿主上下文（proc/server/boot/shortcuts/plugins 等注入点）。
+  - lib/host-ctx.js
   - lib/proc.js
   - lib/paths.js
   - lib/bridge.js

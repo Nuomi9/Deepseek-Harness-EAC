@@ -10,10 +10,10 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app, shell } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 import { IS_WIN, updCtx } from './proc.js';
 import {
   STANDARD_SHORTCUT_NAME,
@@ -66,10 +66,12 @@ function listLnkFiles(dir: string): string[] {
   }
 }
 
-/** 安全读 .lnk（损坏返回 null）。 */
+/** 安全读 .lnk（损坏/宿主无 .lnk 能力返回 null）。 */
 function readLnkSafe(p: string): LnkLike | null {
   try {
-    return shell.readShortcutLink(p) as LnkLike;
+    // Task 5.2：.lnk 读写经宿主上下文注入（Electron shell / sidecar PowerShell
+    // WScript.Shell 实现，见 sidecar/server.ts）；无能力宿主返回 null。
+    return (hostCtx().shortcuts?.readLink(p) ?? null) as LnkLike | null;
   } catch {
     return null;
   }
@@ -105,7 +107,12 @@ function collectDesktopShortcutEntries(
  * 跳过。
  */
 export function maintainShortcuts(): void {
-  if (!app.isPackaged || !IS_WIN) return;
+  const host = hostCtx();
+  if (!host.isPackaged() || !IS_WIN) return;
+  // Task 5.2：.lnk 能力由宿主注入（Electron shell / sidecar PowerShell）；
+  // 宿主不提供（如 Linux壳）时整体静默跳过维护。
+  const lnk = host.shortcuts;
+  if (!lnk) return;
   // E2E / 自动化：跳过快捷方式维护（临时 exe 不得改写真实开始菜单/桌面
   // 快捷方式的指向）。与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同一约定。
   if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
@@ -113,9 +120,9 @@ export function maintainShortcuts(): void {
     const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
     const settings = updater.loadSettings(updCtx());
     const policy = settings.shortcutPolicy === 'never' ? 'never' : 'auto';
-    const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+    const linksDir = path.join(host.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const APP_TITLE = 'Deepseek Harness EAC';
-    const userDesktopDir = app.getPath('desktop');
+    const userDesktopDir = host.getPath('desktop');
     const desktopDirs = desktopShortcutDirs(userDesktopDir, process.env.PUBLIC);
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
     const desktop = path.join(userDesktopDir, STANDARD_SHORTCUT_NAME);
@@ -154,7 +161,7 @@ export function maintainShortcuts(): void {
         && shortcutTargetsApp(readLnkSafe(startMenu), target, targetMoved ? prevTarget : null);
       if (startMenuOwn && (targetMoved || lnkUsesManagedIcon(startMenu, ico))) {
         try {
-          shell.writeShortcutLink(startMenu, 'replace', opts);
+          lnk.writeLink(startMenu, 'replace', opts);
           changed = true;
         } catch {
           /* 单链接写失败继续 */
@@ -170,7 +177,7 @@ export function maintainShortcuts(): void {
           });
           if (kind !== 'runtime') continue;
           try {
-            shell.writeShortcutLink(entry.filePath, 'replace', opts);
+            lnk.writeLink(entry.filePath, 'replace', opts);
             changed = true;
             desktopRefreshed = true;
           } catch {
@@ -185,7 +192,7 @@ export function maintainShortcuts(): void {
       && shortcutTargetsApp(readLnkSafe(startMenu), target);
     if (!startMenuOk) {
       try {
-        shell.writeShortcutLink(startMenu, 'create', opts);
+        lnk.writeLink(startMenu, 'create', opts);
         changed = true;
       } catch {
         /* 创建失败不阻塞启动 */
@@ -215,7 +222,7 @@ export function maintainShortcuts(): void {
     }
     if (desktopPlan.create) {
       try {
-        shell.writeShortcutLink(desktop, 'create', opts);
+        lnk.writeLink(desktop, 'create', opts);
         changed = true;
       } catch {
         /* 创建失败不阻塞启动 */

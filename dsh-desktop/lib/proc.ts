@@ -15,23 +15,27 @@ import { spawn, execSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { app } from 'electron';
 import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 
 /** 是否运行在 Windows（进程回收策略分支依据）。 */
 export const IS_WIN = process.platform === 'win32';
 
 /** 内置 node.exe：打包后在 resources/node/，开发态在 vendor/node/。 */
 export function nodeExe(): string {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'node', 'node.exe');
+  // Task 5.2：打包态/资源根经宿主上下文注入（Electron app / Tauri sidecar /
+  // Node 测试各按宿主语义提供；缺省＝开发态 vendor 布局）。
+  const host = hostCtx();
+  if (host.isPackaged()) return path.join(host.resourcesPath(), 'node', 'node.exe');
   return path.resolve(__dirname, '..', 'vendor', 'node', 'node.exe');
 }
 
 /** 内置 npm CLI 入口：与 node.exe 同源的 vendor npm 分发。 */
 export function npmCli(): string {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'npm', 'bin', 'npm-cli.js');
+  const host = hostCtx();
+  if (host.isPackaged()) return path.join(host.resourcesPath(), 'npm', 'bin', 'npm-cli.js');
   return path.resolve(__dirname, '..', 'vendor', 'npm', 'bin', 'npm-cli.js');
 }
 

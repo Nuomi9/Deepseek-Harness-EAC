@@ -13,6 +13,7 @@ import os = require('node:os');
 import fs = require('node:fs');
 import cp = require('node:child_process');
 import readline = require('node:readline');
+import type { HostCtx, HostShortcutLink } from '../../dsh-desktop/lib/host-ctx.js';
 
 // 资源根：开发态 tauri-shell/sidecar → 仓库根/dsh-desktop；
 // 打包态 resources/sidecar → resources/dsh-desktop（少一级）。
@@ -159,6 +160,50 @@ try {
     throw new Error('lnk ' + String(op) + ' failed (' + String(st && st.status) + '): ' + p);
   }
 }
+
+// ---- Task 5.3：统一模块宿主上下文注入（lib/host-ctx.js 的 sidecar 适配） ----
+// lib/* 统一模块经 host-ctx 取宿主能力（Task 7 全量挂载后本注入即其在 Tauri
+// 宿主下的唯一宿主面；现阶段传递加载的 state/log/recovery-center 等尚未消费
+// host-ctx，提前装配保证双入口过渡期语义就位）。取值对齐上方过渡模块 init：
+//   · 打包态判定＝DSH_RESOURCE_ROOT 显式指定，或 sidecar 旁 dsh-desktop 布局
+//     （打包态 resources/sidecar + resources/dsh-desktop；开发态仓库根/dsh-desktop）
+//   · GUI 类能力（消息框/通知）走 stderr 无头兜底；剪贴板/.lnk 复用 PowerShell 实现
+const hostCtxMod = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'host-ctx.js')) as {
+  initHostCtx(d: HostCtx): void;
+};
+const HOST_IS_PACKAGED = !!process.env.DSH_RESOURCE_ROOT
+  || !fs.existsSync(path.join(path.resolve(__dirname, '..', '..', 'dsh-desktop'), 'package.json'));
+const HOST_RESOURCES_PATH = process.env.DSH_RESOURCE_ROOT
+  || (HOST_IS_PACKAGED ? path.resolve(__dirname, '..') : '');
+const hostPathOverrides: Record<string, string> = {};
+hostCtxMod.initHostCtx({
+  isPackaged: () => HOST_IS_PACKAGED,
+  resourcesPath: () => HOST_RESOURCES_PATH,
+  appVersion: () => pkgVersion,
+  log,
+  exitProcess: (code) => process.exit(code),
+  // 优雅退出＝请壳走 ExitRequested 有界收口（同 client-update 交接通道，
+  // 壳会同步有界关停 sidecar/dsh web，不在 sidecar 里直接 process.exit）。
+  requestQuit: () => notify('shell.quit-for-update', {}),
+  notify: (o) => say('[notify] ' + o.title + ': ' + o.body),
+  copyToClipboard: (text) => { void writeClipboardText(text); },
+  getPath: (name) => hostPathOverrides[name]
+    || (name === 'appData' ? appDataDir : name === 'desktop' ? path.join(os.homedir(), 'Desktop') : userDataDir),
+  setPath: (name, value) => { hostPathOverrides[name] = value; },
+  removeAppMenu: () => { /* 无原生菜单概念：no-op */ },
+  showMessageBox: (opts) => {
+    // 无头兜底（对齐 host-ctx NODE_DEFAULT 语义）：内容走 stderr 可追溯，
+    // 应答取 cancelId（＝用户取消/关闭的保守选择）。
+    say('[dialog] ' + opts.title + ': ' + opts.message + (opts.detail ? ' — ' + opts.detail : ''));
+    return Promise.resolve({ response: typeof opts.cancelId === 'number' ? opts.cancelId : opts.buttons.length - 1 });
+  },
+  shortcuts: {
+    // PowerShell 实现返回 Record<string, unknown>（过渡 shortcutsMod 同款），
+    // 结构即 HostShortcutLink 子集，收窄桥接给统一模块。
+    readLink: (p) => psLnkRead(p) as HostShortcutLink,
+    writeLink: (p, operation, o) => psLnkWrite(p, operation, o as unknown as Record<string, unknown>),
+  },
+});
 
 procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfileFn });
 pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => false, resourcesPath: () => '' });

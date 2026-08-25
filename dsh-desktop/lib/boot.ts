@@ -12,7 +12,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { app, dialog, clipboard, Menu } from 'electron';
 import * as updater from '../updater.js';
 import * as structuredLogger from '../logger.js';
 import * as bundleIntegrity from '../bundle-integrity.js';
@@ -22,6 +21,7 @@ import { buildErrorDetail } from '../error-detail.js';
 import { createStreamWriteGuard } from '../stream-write-guard.js';
 import { state } from './state.js';
 import { log } from './log.js';
+import { hostCtx } from './host-ctx.js';
 import { updCtx, dshVersion, dshVersionSource } from './proc.js';
 import { desktopProfile } from './paths.js';
 import {
@@ -180,7 +180,7 @@ export function handleBootFailure(err: unknown): void {
       } else if ((prev && response === take()) || (!prev && response === take())) {
         void startAndShow().catch((e2) => handleBootFailure(e2));
       } else {
-        app.quit();
+        hostCtx().requestQuit();
       }
     });
   } else {
@@ -202,7 +202,9 @@ export function fatal(title: string, err: unknown): void {
   log('fatal', title + ': ' + String((err as Error)?.stack || (err as Error)?.message || err));
   const detail = buildErrorDetail(err, state.logsDir, ['dsh-web.log', 'desktop.log']);
   if (!state.mainWindow || state.mainWindow.isDestroyed()) {
-    void dialog
+    // Task 5.2：无主窗消息框经宿主上下文注入（Electron dialog.showMessageBox；
+    // sidecar/无头宿主走缺省兜底——记日志并按 cancelId 应答）。
+    void hostCtx()
       .showMessageBox({
         type: 'error',
         title,
@@ -211,7 +213,6 @@ export function fatal(title: string, err: unknown): void {
         buttons: ['打开恢复中心', '复制日志', '退出'],
         defaultId: 0,
         cancelId: 2,
-        noLink: true,
       })
       .then(({ response }) => {
         if (response === 0) {
@@ -219,9 +220,9 @@ export function fatal(title: string, err: unknown): void {
           openRecoveryCenter();
           return;
         }
-        if (response === 1) clipboard.writeText(detail);
+        if (response === 1) hostCtx().copyToClipboard(detail);
         markCleanExit(); // 启动失败属已知退出：避免看门狗反复拉起反复失败
-        app.exit(1);
+        hostCtx().exitProcess(1);
       });
     return;
   }
@@ -239,9 +240,9 @@ export function fatal(title: string, err: unknown): void {
       openRecoveryCenter();
       return;
     }
-    if (response === 1) clipboard.writeText(detail);
+    if (response === 1) hostCtx().copyToClipboard(detail);
     else if (response === 2) void startAndShow().catch((err2) => handleBootFailure(err2));
-    else app.quit();
+    else hostCtx().requestQuit();
   });
 }
 
@@ -250,8 +251,9 @@ export function fatal(title: string, err: unknown): void {
 // Node then dies with ERR_MODULE_NOT_FOUND in a loop. Tell the user to
 // reinstall instead (with an escape hatch to continue anyway).
 export function verifyBundledModules(): Promise<void> {
-  if (!app.isPackaged) return Promise.resolve();
-  const appDir = path.join(process.resourcesPath, 'app');
+  const host = hostCtx();
+  if (!host.isPackaged()) return Promise.resolve();
+  const appDir = path.join(host.resourcesPath(), 'app');
   const manifestPath = path.join(appDir, 'bundle-manifest.json');
   let manifest: BundleManifest | null = null;
   try {
@@ -275,7 +277,7 @@ export function verifyBundledModules(): Promise<void> {
     if (response !== 0) {
       state.forceQuit = true;
       markCleanExit(); // 用户选择退出：不让看门狗拉起一个已知损坏的安装
-      app.exit(1);
+      hostCtx().exitProcess(1);
     }
   });
 }
@@ -291,13 +293,16 @@ export function verifyBundledModules(): Promise<void> {
  */
 export async function boot(): Promise<void> {
   // Portable builds keep all data next to the exe.
-  if (!app.isPackaged && process.env.DSH_DESKTOP_USERDATA) {
-    app.setPath('userData', process.env.DSH_DESKTOP_USERDATA);
+  // Task 5.2：userData 解析/重定向经宿主上下文注入（Electron app.getPath/
+  // setPath；sidecar/Node 缺省按 OS 惯例并记忆覆盖）。
+  const host = hostCtx();
+  if (!host.isPackaged() && process.env.DSH_DESKTOP_USERDATA) {
+    host.setPath?.('userData', process.env.DSH_DESKTOP_USERDATA);
   } else if (process.env.PORTABLE_EXECUTABLE_DIR) {
-    app.setPath('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data'));
+    host.setPath?.('userData', path.join(process.env.PORTABLE_EXECUTABLE_DIR, 'data'));
   }
 
-  state.userDataDir = app.getPath('userData');
+  state.userDataDir = host.getPath('userData');
   state.logsDir = path.join(state.userDataDir, 'logs');
   // DSH_HOME: respect an explicit override; otherwise let dsh use its own
   // default (~/.dsh), so the desktop app shares config/sessions with the CLI.
@@ -308,9 +313,9 @@ export async function boot(): Promise<void> {
   try {
     structuredLogger.init({
       logsDir: state.logsDir,
-      level: process.env.DSH_LOG_LEVEL || (app.isPackaged ? 'info' : 'debug'),
-      appVersion: app.getVersion(),
-      env: app.isPackaged ? 'production' : 'development',
+      level: process.env.DSH_LOG_LEVEL || (host.isPackaged() ? 'info' : 'debug'),
+      appVersion: host.appVersion(),
+      env: host.isPackaged() ? 'production' : 'development',
     });
   } catch (e) {
     // 日志系统初始化失败不影响启动（仍然写 desktop.log）。
@@ -326,10 +331,11 @@ export async function boot(): Promise<void> {
     fs.createWriteStream(path.join(state.logsDir, 'desktop.log'), { flags: 'a' }),
     { onError: () => { /* 静默降级：日志通道故障不影响业务 */ } },
   );
-  log('boot', `Deepseek Harness EAC（封装 ${app.getVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
+  log('boot', `Deepseek Harness EAC（封装 ${host.appVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
-  Menu.setApplicationMenu(null);
+  // （Electron 专属能力经宿主上下文；无原生菜单概念宿主 no-op。）
+  host.removeAppMenu?.();
   startPreviewStaticServer();
   registerIpc();
   createTray();
