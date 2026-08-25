@@ -1,0 +1,6 @@
+# VS Code 扩展构建产物与本地环境（不入库）
+node_modules/
+out/
+*.vsix
+.vscode-test/
+*.log

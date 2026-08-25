@@ -1,0 +1,220 @@
+{
+  "name": "dsh-eac-vscode",
+  "displayName": "DeepSeek Harness EAC",
+  "description": "在 VS Code 侧边栏中使用 DeepSeek Harness EAC（v4Lite）Web UI：复用仓库内置的 dsh 内核与插件生态，开箱即用、万物皆插件。",
+  "version": "4.6.0",
+  "publisher": "zouyuxuan122",
+  "icon": "assets/icon.png",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "uninstall": "node ./out/uninstall.js",
+  "activationEvents": [
+    "onView:dshEac.panel",
+    "onView:dshEac.panel.secondary",
+    "onCommand:dshEac.openPanel",
+    "onCommand:dshEac.openSecondary",
+    "onCommand:dshEac.openExternal",
+    "onCommand:dshEac.restart",
+    "onCommand:dshEac.stop",
+    "onCommand:dshEac.copyUrl",
+    "onCommand:dshEac.showLogs",
+    "onCommand:dshEac.syncPlugins",
+    "onCommand:dshEac.openProfile",
+    "onCommand:dshEac.openDshHome"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dshEac",
+          "title": "%dshEac.container.title%",
+          "icon": "assets/whale-icon.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "dshEac-secondary",
+          "title": "%dshEac.container.title%",
+          "icon": "assets/whale-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "dshEac": [
+        {
+          "id": "dshEac.panel",
+          "name": "%dshEac.view.panel.name%",
+          "type": "webview"
+        }
+      ],
+      "dshEac-secondary": [
+        {
+          "id": "dshEac.panel.secondary",
+          "name": "%dshEac.view.panel.name%",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dshEac.openPanel",
+        "title": "%dshEac.cmd.openPanel%"
+      },
+      {
+        "command": "dshEac.openSecondary",
+        "title": "%dshEac.cmd.openSecondary%"
+      },
+      {
+        "command": "dshEac.openExternal",
+        "title": "%dshEac.cmd.openExternal%"
+      },
+      {
+        "command": "dshEac.restart",
+        "title": "%dshEac.cmd.restart%"
+      },
+      {
+        "command": "dshEac.stop",
+        "title": "%dshEac.cmd.stop%"
+      },
+      {
+        "command": "dshEac.copyUrl",
+        "title": "%dshEac.cmd.copyUrl%"
+      },
+      {
+        "command": "dshEac.showLogs",
+        "title": "%dshEac.cmd.showLogs%"
+      },
+      {
+        "command": "dshEac.syncPlugins",
+        "title": "%dshEac.cmd.syncPlugins%"
+      },
+      {
+        "command": "dshEac.openProfile",
+        "title": "%dshEac.cmd.openProfile%"
+      },
+      {
+        "command": "dshEac.openDshHome",
+        "title": "%dshEac.cmd.openDshHome%"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dshEac.openExternal",
+          "when": "view == dshEac.panel || view == dshEac.panel.secondary",
+          "group": "navigation"
+        },
+        {
+          "command": "dshEac.restart",
+          "when": "view == dshEac.panel || view == dshEac.panel.secondary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dshEac.stop",
+          "when": "view == dshEac.panel || view == dshEac.panel.secondary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "dshEac.copyUrl",
+          "when": "view == dshEac.panel || view == dshEac.panel.secondary",
+          "group": "navigation@3"
+        },
+        {
+          "command": "dshEac.showLogs",
+          "when": "view == dshEac.panel || view == dshEac.panel.secondary",
+          "group": "navigation@4"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "%dshEac.config.title%",
+      "properties": {
+        "dshEac.port": {
+          "type": "number",
+          "default": 0,
+          "description": "%dshEac.config.port%"
+        },
+        "dshEac.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "%dshEac.config.autoStart%"
+        },
+        "dshEac.stopOnExit": {
+          "type": "boolean",
+          "default": true,
+          "description": "%dshEac.config.stopOnExit%"
+        },
+        "dshEac.profile": {
+          "type": "string",
+          "enum": [
+            "web-desktop",
+            "web"
+          ],
+          "default": "web-desktop",
+          "description": "%dshEac.config.profile%"
+        },
+        "dshEac.dshHome": {
+          "type": "string",
+          "default": "",
+          "description": "%dshEac.config.dshHome%"
+        },
+        "dshEac.syncBuiltinPlugins": {
+          "type": "boolean",
+          "default": true,
+          "description": "%dshEac.config.syncBuiltinPlugins%"
+        },
+        "dshEac.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%dshEac.config.extraArgs%"
+        },
+        "dshEac.patchOverlays": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "%dshEac.config.patchOverlays%"
+        },
+        "dshEac.openInBrowser": {
+          "type": "boolean",
+          "default": false,
+          "description": "%dshEac.config.openInBrowser%"
+        },
+        "dshEac.workspaceRootIndex": {
+          "type": "number",
+          "default": 0,
+          "description": "%dshEac.config.workspaceRootIndex%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node scripts/build.mjs --test && node --test \"out/test/**/*.test.js\"",
+    "package": "npm run compile && vsce package -o dsh-eac-vscode.vsix",
+    "integration": "node scripts/build.mjs && node scripts/run-integration.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  }
+}

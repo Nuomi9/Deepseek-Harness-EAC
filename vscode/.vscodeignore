@@ -1,0 +1,14 @@
+.vscode/**
+.github/**
+test/**
+scripts/**
+src/**
+out/test/**
+node_modules/**
+**/*.map
+tsconfig.json
+.vscodeignore
+package-lock.json
+# 扩展运行所需的仓库资产不在 vsix 内：本扩展作为 Deepseek-Harness-EAC 仓库的
+# 子目录使用（复用仓库根的 desktop-core.js / assets / node_modules / vendor）。
+README.zh.md

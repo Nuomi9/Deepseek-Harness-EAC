@@ -129,9 +129,15 @@ test('壳层：被移除的模块/脚本/调试文件不存在', () => {
 
 test('壳层：内置 skills 目录为空（eac-desktop-tips 已移除）', () => {
   const dir = join(root, 'assets', 'skills');
-  assert.ok(existsSync(dir), 'assets/skills 目录应保留');
+  // git 不追踪空目录：干净 clone 后 assets/skills 不存在（由构建/运行按需创建）。
+  // 目录存在时除 .gitkeep 占位外不允许任何残留内容（检出 eac-desktop-tips 即失败）。
+  if (!existsSync(dir)) return;
   const entries = readdirSync(dir, { withFileTypes: true });
-  assert.deepEqual(entries.map((e) => e.name), []);
+  assert.deepEqual(
+    entries.filter((e) => e.name !== '.gitkeep').map((e) => e.name),
+    [],
+    'assets/skills 不应包含任何 skills 内容（eac-desktop-tips 已移除）',
+  );
 });
 
 test('测试：已移除功能的测试文件不存在', () => {

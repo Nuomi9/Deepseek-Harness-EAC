@@ -63,7 +63,22 @@ function stripPatchRows(patch, targetName, targetId) {
     }
     out.push(lines[i]);
   }
-  let text = out.join('\n');
+  // 清理删除后残留的空 `- insert:` 壳：子项行已被删空时，壳本身不再有意义
+  // （否则每次 sync 会在 patch 里累积孤立空壳）。
+  const cleaned = [];
+  for (let i = 0; i < out.length; i++) {
+    const line = out[i];
+    if (/^-\s*insert:\s*$/.test(line.trim())) {
+      let j = i + 1;
+      while (j < out.length && out[j].trim() === '') j++;
+      const next = out[j];
+      if (next === undefined || !/^\s+/.test(next)) {
+        continue; // 空壳（后无缩进子项），丢弃
+      }
+    }
+    cleaned.push(line);
+  }
+  let text = cleaned.join('\n');
   if (!/^[\s\S]*\n$/.test(text)) text += '\n';
   text = text.replace(/\n{3,}/g, '\n\n');
   return { patch: text, removed };
