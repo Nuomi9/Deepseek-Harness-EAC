@@ -26,7 +26,7 @@
 
 ## Electron parity
 
-虽然 Electron 壳已冻结，`bridge-preload-parity.test.mjs` 仍锁定 Tauri bridge 与 Electron preload 的公开方法树。
+虽然 Electron 壳已冻结，`bridge-preload-parity.test.ts` 仍锁定 Tauri bridge 与 Electron preload 的公开方法树。
 
 新增 `window.dshDesktop` API 时必须二选一并明确记录：
 
@@ -74,7 +74,7 @@ boot-server
 
 ```powershell
 cd dsh-desktop
-node --test test/bridge-preload-parity.test.mjs
+node --test test/bridge-preload-parity.test.ts
 
 cd ..\tauri-shell
 cargo run -- --bridge-test

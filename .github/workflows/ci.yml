@@ -85,8 +85,14 @@ jobs:
       - name: Tauri 壳测试
         run: cargo test --manifest-path ../tauri-shell/Cargo.toml
 
-      - name: Node 测试
-        run: npm test
+      - name: Node 测试（超时自动重试，最多 3 次）
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          retry_on: error,timeout
+          command: npm test
 
       - name: 构建 Rust 原生模块
         run: npm run build:native

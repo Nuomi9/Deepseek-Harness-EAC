@@ -104,71 +104,16 @@
 # publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
 # the criterion for host-plane ownership — injection resolves before any session
 # exists, so there is no agent to key by. Behind a preset realm those variables
-# never reached the model's shell at all. Both shell tools consume the host
-# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
-# host-plane too.
-- id: tool-bash
-  name: '@deepseek-ai/dsh-tool-bash'
-  # Disabled on EVERY platform, not just Windows: `dsh-tool-bash-persistent`
-  # below registers the same `bash` tool name into this same preset layer, and
-  # the tools registry rejects duplicates within one layer. The persistent
-  # shell (the Minimal preset's own shell) is the preset's bash; it consumes
-  # the host sandbox policy through the terminals realm.
-  disabled: true
-
+# never reached the model's shell at all. The PowerShell and Git Bash tools
+# consume the host registry from here; their executors are host-plane too.
 - id: tool-pwsh
   name: '@deepseek-ai/dsh-tool-pwsh'
-  disabled: !!js process.platform !== 'win32'
 
-# The Minimal preset's shell: a PTY-backed persistent bash, byte-identical in
-# configuration to the official `minimal` preset's `persistent-shell` group so
-# the first request exposes exactly Minimal's real `bash` schema. The PTY
-# registry is an agent-owned service, so it lives in an entry-local realm; the
-# backend still consumes the host sandbox policy and subprocess implementation,
-# while the tool registers into this agent's scoped catalog.
-#
-# DISABLED ON WINDOWS: DSH's PTY backend is linux/darwin-only, so the
-# persistent shell cannot serve win32. The `custom-bash` row below registers
-# the same `bash` tool name there instead (platform-exclusive).
-- id: persistent-shell
-  name: cordis:group
-  group: true
-  disabled: !!js process.platform === 'win32'
-  isolate:
-    terminals: true
-  config:
-    - id: pty
-      name: '@deepseek-ai/dsh-terminal'
-
-    - id: terminal-bash
-      name: '@deepseek-ai/dsh-terminal-bash'
-      config:
-        timeoutMs: 300000
-
-    - id: persistent-bash
-      name: '@deepseek-ai/dsh-tool-bash-persistent'
-      config:
-        timeoutMs: 300000
-        description: |-
-          Run commands in a bash shell
-          * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
-          * You don't have access to the internet via this tool.
-          * You do have access to a mirror of common linux and python packages via apt and pip.
-          * State is persistent across command calls and discussions with the user.
-          * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
-          * Please avoid commands that may produce a very large amount of output.
-          * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.
-
-# Windows-only `bash` tool (see preset/custom-bash.mjs): registers the SAME
-# tool name as the persistent shell with a Minimal-compatible description, but
-# executes through the ordinary cross-platform subprocess seam (`bash -c`)
-# instead of a PTY. `bashPath` defaults to `bash` on PATH; point it at Git
-# Bash explicitly when the WSL shim would otherwise be picked up. No OS
-# sandbox confinement on Windows (landlock is linux-only); the tool
-# description says so.
+# Windows `bash` tool (see preset/custom-bash.mjs): registers the same tool name
+# with a Minimal-compatible description and executes Git Bash through the
+# ordinary subprocess service (`bash -c`).
 - id: custom-bash
   name: ./custom-bash.mjs
-  disabled: !!js process.platform !== 'win32'
   config:
     bashPath: 'C:\Program Files\Git\bin\bash.exe'
 

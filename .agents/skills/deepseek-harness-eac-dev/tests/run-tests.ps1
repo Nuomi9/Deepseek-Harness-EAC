@@ -115,6 +115,32 @@ Assert-Fixture -Name 'dependency-patch-chain' -Condition (
     @($dependencyPatch.data.unmatchedCodeFiles).Count -eq 0
 ) -Failure ($dependencyPatch.raw)
 
+$projectTypeScript = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64',
+    (ConvertTo-FilesJsonBase64 '["dsh-desktop/scripts/fetch-npm.ts"]')
+)
+Assert-Fixture -Name 'project-typescript-script' -Condition (
+    $projectTypeScript.exitCode -eq 0 -and
+    $projectTypeScript.data.status -eq 'ready' -and
+    $projectTypeScript.data.minimumValidation -eq 'full' -and
+    'project-scripts' -in @($projectTypeScript.data.matchedRules) -and
+    @($projectTypeScript.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($projectTypeScript.raw)
+
+$tauriPackaging = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64',
+    (ConvertTo-FilesJsonBase64 '["tauri-shell/audit-linux-bundle.mjs","tauri-shell/stage-platform-cache.mjs","tauri-shell/tauri.linux.conf.json","tauri-shell/gen/schemas/linux-schema.json"]')
+)
+Assert-Fixture -Name 'tauri-packaging-root-files' -Condition (
+    $tauriPackaging.exitCode -eq 0 -and
+    $tauriPackaging.data.status -eq 'ready' -and
+    $tauriPackaging.data.minimumValidation -eq 'package' -and
+    'packaging' -in @($tauriPackaging.data.matchedRules) -and
+    @($tauriPackaging.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($tauriPackaging.raw)
+
 $unknownCode = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["experimental/unknown-maintenance.ts"]')
@@ -134,6 +160,17 @@ Assert-Fixture -Name 'documentation-rule' -Condition (
     $documentation.data.status -eq 'ready' -and
     'documentation' -in @($documentation.data.matchedRules)
 ) -Failure ($documentation.raw)
+
+$typescriptTest = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/test/preset-sync.test.ts"]')
+)
+Assert-Fixture -Name 'typescript-test-path' -Condition (
+    $typescriptTest.exitCode -eq 0 -and
+    $typescriptTest.data.status -eq 'ready' -and
+    'test/preset-sync.test.ts' -in @($typescriptTest.data.suggestedTests) -and
+    @($typescriptTest.data.missingSuggestedTests).Count -eq 0
+) -Failure ($typescriptTest.raw)
 
 $skillReference = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,

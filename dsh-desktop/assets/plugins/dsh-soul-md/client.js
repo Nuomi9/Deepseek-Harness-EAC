@@ -100,7 +100,6 @@ window.__ModuleLoader__.load({
       var [error, setError] = react.useState(null);
 
       react.useEffect(function () {
-        scope.load();
         var alive = true;
         var sync = function () { if (alive) setSnapshot(scope.getSnapshot()); };
         var un = typeof scope.subscribe === "function" ? scope.subscribe(sync) : null;
@@ -145,23 +144,12 @@ window.__ModuleLoader__.load({
           return String(d).trim() === "" ? scope.unset(f.key) : scope.set(f.key, f.type === "number" ? Number(d) : d);
         })).then(function () {
           setBusy(false); setNotice(t("saved"));
-          if (scope.load) scope.load();
         }).catch(function (e) {
           setBusy(false); setError(t("error") + ": " + String(e && e.message || e));
         });
       }
 
       function reseedDraft() {
-        if (typeof scope.load === "function") {
-          var p = scope.load();
-          if (p && typeof p.then === "function") {
-            p.then(function () {
-              var fresh = scope.getSnapshot();
-              if (fresh.status === "ready" && fresh.value !== void 0) setDraft(Object.assign({}, valueToDraft(fresh.value)));
-            }).catch(function () {});
-            return;
-          }
-        }
         setTimeout(function () {
           var fresh = scope.getSnapshot();
           if (fresh.status === "ready" && fresh.value !== void 0) setDraft(Object.assign({}, valueToDraft(fresh.value)));

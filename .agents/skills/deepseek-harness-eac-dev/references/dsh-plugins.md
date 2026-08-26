@@ -58,13 +58,13 @@
 
 基础回归：
 
-- `companion-plugins-registry.test.mjs`
-- `companion-copy-integrity.test.mjs`
-- `plugin-slot-registration.test.mjs`
-- `plugin-manager-state.test.mjs`
-- `plugin-manager-toggle.test.mjs`
-- `plugin-conflict-scan.test.mjs`
-- `plugin-updater.test.mjs`
+- `companion-plugins-registry.test.ts`
+- `companion-copy-integrity.test.ts`
+- `plugin-slot-registration.test.ts`
+- `plugin-manager-state.test.ts`
+- `plugin-manager-toggle.test.ts`
+- `plugin-conflict-scan.test.ts`
+- `plugin-updater.test.ts`
 
 ## Host 状态接口
 

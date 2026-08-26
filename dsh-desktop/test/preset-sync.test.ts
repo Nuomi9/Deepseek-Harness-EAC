@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { syncBundledPresets, ensureDefaultAgentPreset } = require(join(root, 'preset-sync.js'));
+const { parsePreset } = require(join(root, 'compact-preset-migrate.js'));
 
 function tmp() {
   return mkdtempSync(join(tmpdir(), 'dsh-preset-sync-'));
@@ -218,4 +219,29 @@ test('上游新增 preset 完整：目录自包含或引用的 ../_preset 共享
 test('Tauri 资源装配包含 preset-sync.js（否则新模块不进安装包）', () => {
   const stage = readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
   assert.match(stage, /'preset-sync\.js'/);
+});
+
+// 上游 main 增量（absorb #219 资产面）：内置 preset 仅携带 Windows shell 配置，
+// 不含跨平台 shell 分支；并验证 cordis 可解析。
+test('内置 preset 仅携带 Windows shell 配置', () => {
+  const assetsRoot = join(root, 'assets', 'agent-presets');
+  const expectedShells: Record<string, string[]> = {
+    'anchored-standard': ["name: '@deepseek-ai/dsh-tool-pwsh'", 'name: ./custom-bash.mjs'],
+    'minimal-gitbash': ['name: ./gitbash-executor.mjs', "name: '@deepseek-ai/dsh-tool-bash'"],
+    'router-standard': ["name: '@deepseek-ai/dsh-tool-pwsh'"],
+    'v4-flash-godmode-opencode-go': ["name: '@deepseek-ai/dsh-tool-pwsh'"],
+    warmupbetter: ["name: '@deepseek-ai/dsh-tool-pwsh'"],
+    'warmupbetter-replay': ["name: '@deepseek-ai/dsh-tool-pwsh'"],
+    'whoami-standard': ["name: '@deepseek-ai/dsh-tool-pwsh'", 'name: ../_preset/custom-bash.mjs'],
+    'zero-anchored-standard': ["name: '@deepseek-ai/dsh-tool-pwsh'", 'name: ../_preset/custom-bash.mjs'],
+  };
+  for (const [name, expected] of Object.entries(expectedShells)) {
+    const text = readFileSync(join(assetsRoot, name, 'agent.cordis.yml'), 'utf8');
+    assert.doesNotMatch(text, /process\.platform|persistent-shell|dsh-terminal-bash/, name);
+    for (const shell of expected) assert.ok(text.includes(shell), `${name} 缺 Windows shell: ${shell}`);
+    if (name !== 'minimal-gitbash') {
+      assert.doesNotMatch(text, /name:\s*['"]@deepseek-ai\/dsh-tool-bash['"]/, name);
+    }
+    assert.doesNotThrow(() => parsePreset(text), name + ' 无法解析');
+  }
 });

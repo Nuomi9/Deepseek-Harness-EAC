@@ -165,6 +165,10 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     imagePaste: {
       save: function (payload: Record<string, unknown>) { return call('dsh:image-paste-save', payload || {}); },
     },
+    // 拖入文件（zip/二进制等）：dataUrl → 临时目录 → 真实路径，供 agent 按路径读取。
+    fileDrop: {
+      save: function (payload: Record<string, unknown>) { return call('file-drop.save', payload || {}); },
+    },
     // Token 价格自定义：读取/保存/恢复（¥/百万 token）。
     balancePrices: {
       get: function (model: string) { return call('dsh:balance-prices-get', { model: model }); },
@@ -568,4 +572,41 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
       if (document.visibilityState === 'visible') beat();
     });
   })();
+})();
+
+// __DSH_MODULES_COMPAT_SHIM__ ---------------------------------------------------
+// rc.2 内核兼容垫片：补发 globalThis.__DSH_MODULES__。
+// 内核 0.1.1-rc.2 起客户端模块系统不再发布到该全局量（改为经
+// window.__ModuleLoader__.create() 产物 + cordis ctx.modules 注入），而
+// dsh-better-sidebar 等第三方插件的懒加载 chunk 仍按旧契约消费它，缺失即
+// 在打开文件时报 'chunk "editor": client module system unavailable'。
+// 本初始化脚本先于页面任何脚本执行（每次导航都注入）：在此拦截
+// __ModuleLoader__ 赋值并包装 create()，把返回的 ClientModuleSystem 按旧
+// 契约补发到全局（对齐旧内核 dsh-client-web AppWebEntry 的
+// globalThis.__DSH_MODULES__ = this.modules）。任何一步异常都只空转，不阻断页面引导。
+(function () {
+  try {
+    var w = window as any;
+    var loader: any;
+    Object.defineProperty(window, '__ModuleLoader__', {
+      configurable: true,
+      get: function () { return loader; },
+      set: function (v: any) {
+        loader = v;
+        if (v && typeof v.create === 'function' && !v.__dshModulesShim) {
+          v.__dshModulesShim = true;
+          var origCreate = v.create;
+          v.create = function (this: any, options: any) {
+            var mods = origCreate.call(this, options);
+            try {
+              if (mods && typeof mods.import === 'function' && !w.__DSH_MODULES__) {
+                w.__DSH_MODULES__ = mods;
+              }
+            } catch (e) { /* 垫片不阻断引导 */ }
+            return mods;
+          };
+        }
+      }
+    });
+  } catch (e) { /* 已存在不可重定义的同名属性时放弃垫片 */ }
 })();

@@ -141,7 +141,6 @@ window.__ModuleLoader__.load({
       var [error, setError] = react.useState(null);
 
       react.useEffect(function () {
-        scope.load();
         var alive = true;
         var sync = function () { if (alive) setSnapshot(scope.getSnapshot()); };
         var un = typeof scope.subscribe === "function" ? scope.subscribe(sync) : null;
@@ -187,7 +186,6 @@ window.__ModuleLoader__.load({
           return o.op === "set" ? scope.set(o.key, o.value) : scope.unset(o.key);
         })).then(function () {
           setBusy(false); setNotice(t("saved"));
-          if (scope.load) scope.load();
         }).catch(function (e) {
           setBusy(false); setError(t("error") + ": " + String(e && e.message || e));
         });

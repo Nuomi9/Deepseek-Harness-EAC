@@ -144,7 +144,7 @@ function Invoke-JsonScript {
     )
 
     $global:LASTEXITCODE = 0
-    $raw = @(& $pwsh -NoLogo -NoProfile -File $ScriptPath @Arguments)
+    $raw = @(& $pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @Arguments)
     $exitCode = $LASTEXITCODE
     $text = $raw -join "`n"
     $data = $null

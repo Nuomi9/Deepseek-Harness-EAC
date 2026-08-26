@@ -66,14 +66,14 @@
 
 ## 测试组
 
-- `client-updater-*.test.mjs`
-- `client-update-platform.test.mjs`
-- `updater-*.test.mjs`
-- `update-mirror-chain.test.mjs`
-- `plugin-updater.test.mjs`
-- `bundle-integrity.test.mjs`
-- `bundled-files.test.mjs`
-- `installer-*.test.mjs`
-- `verify-dist-fresh.test.mjs`
+- `client-updater-*.test.ts`
+- `client-update-platform.test.ts`
+- `updater-*.test.ts`
+- `update-mirror-chain.test.ts`
+- `plugin-updater.test.ts`
+- `bundle-integrity.test.ts`
+- `bundled-files.test.ts`
+- `installer-*.test.ts`
+- `verify-dist-fresh.test.ts`
 
 便携更新不能只测成功路径。还要覆盖逐步骤失败、文件锁、进程残留、helper 中断、健康检查失败、重复恢复和用户数据哈希不变。

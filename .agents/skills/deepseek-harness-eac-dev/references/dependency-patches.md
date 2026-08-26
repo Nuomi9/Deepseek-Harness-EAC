@@ -26,9 +26,9 @@
 至少完成：
 
 - TypeScript build 和完整 Node 测试。
-- `bundle-integrity.test.mjs`
-- `bundled-files.test.mjs`
-- `verify-dist-fresh.test.mjs`
+- `bundle-integrity.test.ts`
+- `bundled-files.test.ts`
+- `verify-dist-fresh.test.ts`
 - 在干净 staging 上运行 `stage-resources.mjs`
 - 重复执行补丁，确认第二次不产生额外变化。
 - 比较 staging 中目标文件包含补丁标记且与预期 vendored 覆盖一致。

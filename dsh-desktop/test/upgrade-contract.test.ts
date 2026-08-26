@@ -109,9 +109,13 @@ test('Tauri 安装钩子的删除动作不触碰用户数据目录', () => {
   assert.doesNotMatch(hooks, /(?:Delete|RMDir)[^\n]*(?:\.dsh|APPDATA)/i);
 });
 
-test('Tauri 发布上传 Windows 与 Linux x64 资产', () => {
+test('Tauri 发布上传 Windows 与 Linux x64 资产（dist 汇总 + SHA256）', () => {
+  assert.match(release, /mkdir -p dist/);
   assert.match(release, /bundle\/nsis\/\*\.exe/);
+  assert.match(release, /portable\/\*\.zip/);
   assert.match(release, /bundle\/deb\/\*\.deb/);
   assert.match(release, /bundle\/appimage\/\*\.AppImage/);
-  assert.match(release, /portable\/Deepseek-Harness-EAC-\*-portable\.zip/);
+  assert.match(release, /node scripts\/make-release-hashes\.js dist/);
+  assert.match(release, /dsh-desktop\/dist\/\*/);
+  assert.match(release, /artifacts\/\*/);
 });

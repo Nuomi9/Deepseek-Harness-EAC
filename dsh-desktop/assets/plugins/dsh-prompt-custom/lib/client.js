@@ -13,9 +13,61 @@ window.__ModuleLoader__.load({
 
 		const react = require("react");
 		const { jsx, jsxs } = require("react/jsx-runtime");
-		const { useSyncExternalStoreWithSelector } = require("@deepseek-ai/dsh-client-ui-renderer");
-		// dsh-client-web-react 0.1.1-rc.2 起停发：ui-renderer 导出同源 uSES-with-selector，
-		// 在此以相同语义重建 bindSnapshotSelector（旧包 bind.ts 的逐行等价实现）。
+		const { useSyncExternalStore, useRef, useMemo, useEffect, useDebugValue } = react;
+		// rc.2 内核 dsh-client-ui-renderer 的 client 包未导出 useSyncExternalStoreWithSelector
+		// （仅导出 apply/inject），故在此内联 use-sync-external-store 1.2.0 的 with-selector
+		// shim（React 官方实现，MIT），bindSnapshotSelector 语义与旧包 bind.ts 逐行等价。
+		const objectIs = (a, b) => (a === b && (a !== 0 || 1 / a === 1 / b)) || (a !== a && b !== b);
+		const defaultIsEqual = typeof Object.is === "function" ? Object.is : objectIs;
+		function useSyncExternalStoreWithSelector(subscribe, getSnapshot, getServerSnapshot, selector, isEqual) {
+			const instRef = useRef(null);
+			let inst;
+			if (instRef.current === null) {
+				inst = { hasValue: false, value: null };
+				instRef.current = inst;
+			} else {
+				inst = instRef.current;
+			}
+			const [getSelection, getServerSelection] = useMemo(() => {
+				let hasMemo = false;
+				let memoizedSnapshot;
+				let memoizedSelection;
+				const memoizedSelector = (nextSnapshot) => {
+					if (!hasMemo) {
+						hasMemo = true;
+						memoizedSnapshot = nextSnapshot;
+						const nextSelection = selector(nextSnapshot);
+						if (isEqual !== undefined && inst.hasValue) {
+							const currentSelection = inst.value;
+							if (isEqual(currentSelection, nextSelection)) {
+								memoizedSelection = currentSelection;
+								return currentSelection;
+							}
+						}
+						memoizedSelection = nextSelection;
+						return nextSelection;
+					}
+					const prevSnapshot = memoizedSnapshot;
+					const prevSelection = memoizedSelection;
+					if (defaultIsEqual(prevSnapshot, nextSnapshot)) return prevSelection;
+					const nextSelection = selector(nextSnapshot);
+					if (isEqual !== undefined && isEqual(prevSelection, nextSelection)) return prevSelection;
+					memoizedSnapshot = nextSnapshot;
+					memoizedSelection = nextSelection;
+					return nextSelection;
+				};
+				const getSnapshotWithSelector = () => memoizedSelector(getSnapshot());
+				const getServerSnapshotWithSelector = getServerSnapshot === undefined ? undefined : () => memoizedSelector(getServerSnapshot());
+				return [getSnapshotWithSelector, getServerSnapshotWithSelector];
+			}, [getSnapshot, getServerSnapshot, selector, isEqual]);
+			const value = useSyncExternalStore(subscribe, getSelection, getServerSelection);
+			useEffect(() => {
+				inst.hasValue = true;
+				inst.value = value;
+			}, [value]);
+			useDebugValue(value);
+			return value;
+		}
 		const bindSnapshotSelector = (w) => {
 			const subscribe = (fn) => w.subscribe(fn);
 			const getSnapshot = () => w.getSnapshot();

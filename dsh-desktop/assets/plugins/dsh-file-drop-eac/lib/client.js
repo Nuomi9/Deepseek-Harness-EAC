@@ -214,6 +214,33 @@
     return true;
   }
 
+  /** 二进制/超大文件：经 fileDrop.save 落盘到临时目录拿真实路径（HTML5 拖拽在
+   * 页面拿不到磁盘路径），失败则降级为无路径提示。 */
+  function injectHintWithPath(rec) {
+    var fallback = function () {
+      injectIntoComposer(findComposer(), buildPathHint({ name: rec.name, path: '', size: rec.size }));
+    };
+    var b = typeof window !== 'undefined' && window.dshDesktop && window.dshDesktop.fileDrop;
+    if (!b || typeof b.save !== 'function' || !rec.file || rec.size > 64 * 1024 * 1024) {
+      fallback();
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      b.save({ dataUrl: String(reader.result || ''), name: rec.name || '拖入文件' })
+        .then(function (res) {
+          if (res && res.ok) {
+            injectIntoComposer(findComposer(), buildPathHint({ name: rec.name, path: res.path, size: res.size != null ? res.size : rec.size }));
+          } else {
+            fallback();
+          }
+        })
+        .catch(fallback);
+    };
+    reader.onerror = fallback;
+    reader.readAsDataURL(rec.file);
+  }
+
   /** 按计划执行：先文件夹降级提示，再文本内容注入，再路径提示。 */
   function handlePlan(plan) {
     if (plan.folders && plan.folders.length) {
@@ -231,7 +258,7 @@
       reader.readAsText(rec.file);
     });
     plan.hints.forEach(function (rec) {
-      injectIntoComposer(findComposer(), buildPathHint({ name: rec.name, path: rec.path, size: rec.size }));
+      injectHintWithPath(rec);
     });
   }
 

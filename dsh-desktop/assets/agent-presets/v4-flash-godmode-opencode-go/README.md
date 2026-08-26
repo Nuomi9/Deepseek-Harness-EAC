@@ -22,15 +22,7 @@
 
 ## 跨平台支持
 
-本 preset **三平台通用**，dsh 会自动选择 shell 工具：
-
-| 系统 | shell | 状态 |
-|---|---|---|
-| Linux | bash | ✅ 实测 |
-| macOS | bash | ✅ 自动适配 |
-| Windows | pwsh（PowerShell） | ✅ 自动适配 |
-
-> 说明：`agent.cordis.yml` 内已有 `process.platform === 'win32'` 判断，Windows 自动禁用 bash、启用 pwsh。核心路由逻辑（persona / 引导 / 模型识别）与操作系统无关。
+本 preset 面向 Windows，使用 pwsh（PowerShell）作为 shell 工具。核心路由逻辑（persona / 引导 / 模型识别）与操作系统无关。
 
 ## 依赖
 

@@ -52,7 +52,7 @@ const ENV_OVERRIDES = {
  * through unchanged.
  */
 export function toWindowsPath(value) {
-  if (process.platform !== 'win32' || typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string' || value.length === 0) {
     return value
   }
   const match = /^\/\s*([A-Za-z])(?:$|\/(.*))$/.exec(value)
@@ -86,15 +86,11 @@ function shellPathCandidates(env) {
 }
 
 /**
- * Resolve the shell executable to spawn. An explicit configuration wins; a
- * POSIX host always gets `bash`. On Windows the first existing candidate is
- * used (GIT_BASH → install roots → PATH), falling back to the bare `bash`
- * name when nothing exists so spawn reports a resolution error.
+ * Resolve the shell executable to spawn. An explicit configuration wins;
+ * otherwise the first existing Git Bash candidate is used, falling back to
+ * the bare `bash` name so spawn reports a resolution error.
  */
 export function detectShellPath(explicit, env = process.env) {
-  if (process.platform !== 'win32') {
-    return typeof explicit === 'string' && explicit.length > 0 ? explicit : 'bash'
-  }
   if (typeof explicit === 'string' && explicit.length > 0) return toWindowsPath(explicit)
   for (const candidate of shellPathCandidates(env)) {
     if (typeof candidate !== 'string' || candidate.length === 0) continue

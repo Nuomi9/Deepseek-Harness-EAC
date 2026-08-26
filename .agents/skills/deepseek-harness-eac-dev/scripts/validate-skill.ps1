@@ -363,7 +363,7 @@ if (Test-Path -LiteralPath $classifierPath -PathType Leaf) {
     )
     $global:LASTEXITCODE = 0
     $classifierRaw = @(
-        & $currentPowerShellPath -NoLogo -NoProfile -File $classifierPath `
+        & $currentPowerShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File $classifierPath `
             -RepoPath $skillRoot `
             -FilesJsonBase64 $classifierFixtureFilesJsonBase64
     ) -join "`n"
@@ -416,7 +416,7 @@ if ($repoRoot -and (Test-Path -LiteralPath $verifyPath -PathType Leaf)) {
     )
     $global:LASTEXITCODE = 0
     $verifyRaw = @(
-        & $currentPowerShellPath -NoLogo -NoProfile -File $verifyPath `
+        & $currentPowerShellPath -NoLogo -NoProfile -ExecutionPolicy Bypass -File $verifyPath `
             -RepoPath $repoRoot `
             -Level targeted `
             -FilesJsonBase64 $verifyFixtureFilesJsonBase64

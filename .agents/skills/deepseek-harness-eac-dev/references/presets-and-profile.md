@@ -44,13 +44,13 @@
 
 ## 基础回归
 
-- `preset-sync.test.mjs`
-- `patch-row-heal.test.mjs`
-- `resolve-profile.test.mjs`
-- `retired-market-migration.test.mjs`
-- `onboarding-selection.test.mjs`
-- `profile-module-heal.test.mjs`
-- `session-encoding-heal.test.mjs`
+- `preset-sync.test.ts`
+- `patch-row-heal.test.ts`
+- `resolve-profile.test.ts`
+- `retired-market-migration.test.ts`
+- `onboarding-selection.test.ts`
+- `profile-module-heal.test.ts`
+- `session-encoding-heal.test.ts`
 
 ## 内置 Skill 分发
 

@@ -7,7 +7,7 @@
 | 修改点 | 关键符号 | 必查联动 | 最低验证 |
 | --- | --- | --- | --- |
 | `tauri-shell/src/main.rs` | `handle_shell_method`、`handle_sidecar_notify`、`apply_exit_policy`、`Sidecar::spawn` | `sidecar/server.ts`、`bridge.ts`、`tauri.conf.json` | V3；窗口行为用 V4 |
-| 窗口公开 API | `win.*`、`float.*`、`menu.action` | `bridge.ts`、`preload.js`、`bridge-preload-parity.test.mjs` | V3 + GUI smoke |
+| 窗口公开 API | `win.*`、`float.*`、`menu.action` | `bridge.ts`、`preload.js`、`bridge-preload-parity.test.ts` | V3 + GUI smoke |
 | 壳页面 | `loading_page`、`exit_page`、`died_page`、`update_page`、`about_page`、`wizard_page` | sidecar 通知名称、导航回跳参数 | V4 |
 | 资源定位 | `resource_root`、`resolve_node`、`sidecar_script` | `stage-resources.mjs`、`tauri.conf.json`、`make-portable.mjs` | V5 |
 | 退出与重启 | `apply_exit_policy`、`ExitRequested`、`shell.quit-for-update` | sidecar `shutdown`、`boot.stop`、更新器 handoff | V4/V5 |
@@ -63,7 +63,7 @@
 | --- | --- | --- |
 | `client-updater.js` | `client-updater-*`、`client-update-platform` | `update-smoke.js` |
 | `updater.js` | `updater-*`、`update-mirror-chain` | Agent 更新 mock/回退 |
-| `plugin-updater.js` | `plugin-updater.test.mjs` | 插件 staging 与 profile 同步 |
+| `plugin-updater.js` | `plugin-updater.test.ts` | 插件 staging 与 profile 同步 |
 | `installer-hooks.nsh` | installer takeover 系列 | 真实静默升级 |
 | `patch-deps.js` 或受控 `node_modules/@deepseek-ai/**` | 补丁幂等、规则分类、目标标记 | staging 重放、vendored 回填和安装树核对 |
 | `stage-resources.mjs` | bundle integrity、bundled files | 安装树和便携树 |

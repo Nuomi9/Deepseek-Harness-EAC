@@ -82,7 +82,6 @@ impl Platform for CurrentPlatform {
         std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")))
     }
-
     fn configure_command(command: &mut Command) {
         #[cfg(windows)]
         {
@@ -96,6 +95,7 @@ impl Platform for CurrentPlatform {
 
 fn resource_root() -> std::path::PathBuf {
     CurrentPlatform::resource_root()
+}
 }
 
 fn sidecar_script() -> std::path::PathBuf {
@@ -468,12 +468,16 @@ async fn handle_shell_method(
                 }
                 "open-browser" => {
                     if let Some(url) = current_web_url() {
-                        open_external(&url);
+                        if let Err(error) = open_external(&url).await {
+                            eprintln!("[shell] open browser failed: {}", error);
+                        }
                     }
                     Ok(Some(reply(Value::Null)))
                 }
                 "feedback" => {
-                    open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
+                    if let Err(error) = open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues").await {
+                        eprintln!("[shell] open feedback failed: {}", error);
+                    }
                     Ok(Some(reply(Value::Null)))
                 }
                 _ => Err(()), // 其余菜单动作（更新/开关/导出/关于…）→ sidecar
@@ -481,11 +485,45 @@ async fn handle_shell_method(
         }
         "shell.open-external" => {
             let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            let ok = is_safe_external_url(url);
-            if ok {
-                open_external(url);
+            let result = open_external(url).await;
+            Ok(Some(reply(match result {
+                Ok(()) => serde_json::json!({"ok":true}),
+                Err(error) => serde_json::json!({"ok":false,"error":error}),
+            })))
+        }
+        "clipboard.write-text" => {
+            let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            if text.is_empty() || text.len() > 2048 {
+                return Ok(Some(reply(serde_json::json!({"ok":false,"error":"invalid clipboard text"}))));
             }
-            Ok(Some(reply(serde_json::json!({"ok":ok}))))
+            let result = write_clipboard_text(text).await;
+            Ok(Some(reply(match result {
+                Ok(()) => serde_json::json!({"ok":true}),
+                Err(error) => serde_json::json!({"ok":false,"error":error}),
+            })))
+        }
+        "files.open" => {
+            let state = BRIDGE.get_or_init(|| BridgeState {
+                sidecar: Arc::new(AMutex::new(None)),
+            });
+            let sidecar = state.sidecar.lock().await.clone();
+            let Some(sidecar) = sidecar else {
+                return Ok(Some(reply(serde_json::json!({"ok":false,"error":"sidecar not running"}))));
+            };
+            let authorized = match sidecar.call("files.authorize-open", params.clone()).await {
+                Ok(value) => value,
+                Err(error) => return Ok(Some(reply(serde_json::json!({"ok":false,"error":error})))),
+            };
+            if authorized.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+                return Ok(Some(reply(authorized)));
+            }
+            let Some(target) = authorized.get("path").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply(serde_json::json!({"ok":false,"error":"authorized path missing"}))));
+            };
+            Ok(Some(reply(match open_native_target(target).await {
+                Ok(()) => serde_json::json!({"ok":true}),
+                Err(error) => serde_json::json!({"ok":false,"error":error}),
+            })))
         }
         "log.renderer-heartbeat" => Ok(None), // P3 恢复状态机消费；P2 吞掉不转发
         "log.page-error" => {
@@ -518,27 +556,173 @@ async fn handle_shell_method(
 
 /// 仅放行 http(s)（对齐 legacy-shell 侧 will-navigate/openExternal 的外链纪律）。
 fn is_safe_external_url(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
+    !url.contains('"')
+        && tauri::Url::parse(url)
+            .map(|parsed| matches!(parsed.scheme(), "http" | "https"))
+            .unwrap_or(false)
 }
 
-fn open_external(url: &str) {
+async fn open_external(url: &str) -> Result<(), String> {
     if !is_safe_external_url(url) {
-        return;
+        return Err("unsafe external URL".into());
     }
-    #[cfg(windows)]
-    let mut command = {
+    open_native_target(url).await
+}
+
+async fn run_bounded_command(mut command: Command, label: &str) -> Result<(), String> {
+    command
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn().map_err(|error| format!("{} spawn failed: {}", label, error))?;
+    match tokio::time::timeout(std::time::Duration::from_secs(10), child.wait()).await {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!("{} exited with {}", label, status)),
+        Ok(Err(error)) => Err(format!("{} wait failed: {}", label, error)),
+        Err(_) => {
+            let _ = child.kill().await;
+            Err(format!("{} timed out after 10s", label))
+        }
+    }
+}
+
+async fn open_native_target(target: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
         use std::os::windows::process::CommandExt;
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/c", "start", "", url]).creation_flags(0x0800_0000);
+        let mut command = Command::new("cmd");
+        // start 是 cmd 内建命令；目标由 URL 校验或 L2 文件授权产生，Windows
+        // 文件名本身也不允许双引号。整段置于引号内，避免 URL 查询串的 `&`
+        // 被 cmd 当作命令分隔符。
+        let command_line = format!("start \"\" \"{}\"", target);
+        command.args(["/d", "/s", "/c", &command_line]);
+        command.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        return run_bounded_command(command, "cmd start").await;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut command = Command::new("xdg-open");
+        command.arg(target);
+        return run_bounded_command(command, "xdg-open").await;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = target;
+        Err("native open is unsupported on this platform".into())
+    }
+}
+
+async fn show_system_notification(title: &str, body: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let script = r#"
+$ErrorActionPreference='Stop'
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$safeTitle = [Security.SecurityElement]::Escape($env:DSH_NOTIFY_TITLE)
+$safeBody = [Security.SecurityElement]::Escape($env:DSH_NOTIFY_BODY)
+$xml.LoadXml("<toast><visual><binding template='ToastGeneric'><text>$safeTitle</text><text>$safeBody</text></binding></visual></toast>")
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Deepseek Harness EAC').Show($toast)
+"#;
+        let mut command = Command::new("powershell");
         command
-    };
-    #[cfg(unix)]
-    let mut command = {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(url);
-        command
-    };
-    let _ = command.spawn();
+            .args(["-NoProfile", "-Command", script])
+            .env("DSH_NOTIFY_TITLE", title)
+            .env("DSH_NOTIFY_BODY", body);
+        command.as_std_mut().creation_flags(0x0800_0000);
+        return run_bounded_command(command, "PowerShell toast").await;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut command = Command::new("notify-send");
+        command.args(["--app-name", "Deepseek Harness EAC", title, body]);
+        return run_bounded_command(command, "notify-send").await;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = (title, body);
+        Err("system notification is unsupported on this platform".into())
+    }
+}
+
+async fn run_clipboard_command(program: &str, args: &[&str], text: &str) -> Result<(), String> {
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.as_std_mut().creation_flags(0x0800_0000);
+    }
+    let mut child = command.spawn().map_err(|error| format!("{} spawn failed: {}", program, error))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(text.as_bytes())
+            .await
+            .map_err(|error| format!("{} stdin failed: {}", program, error))?;
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!("{} exited with {}", program, status)),
+        Ok(Err(error)) => Err(format!("{} wait failed: {}", program, error)),
+        Err(_) => {
+            let _ = child.kill().await;
+            Err(format!("{} timed out after 5s", program))
+        }
+    }
+}
+
+async fn write_clipboard_text(text: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let mut last_error = String::new();
+        for attempt in 0..3 {
+            match run_clipboard_command(
+                "powershell",
+                &["-NoProfile", "-Command", "$input | Set-Clipboard"],
+                text,
+            ).await {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = error,
+            }
+            if attempt < 2 {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
+        }
+        return Err(last_error);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut backends: Vec<(&str, &[&str])> = Vec::new();
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            backends.push(("wl-copy", &[]));
+        }
+        backends.push(("xclip", &["-selection", "clipboard"]));
+        backends.push(("xsel", &["--clipboard", "--input"]));
+        let mut failures = Vec::new();
+        for (program, args) in backends {
+            match run_clipboard_command(program, args, text).await {
+                Ok(()) => return Ok(()),
+                Err(error) => failures.push(error),
+            }
+        }
+        return Err(format!(
+            "Linux clipboard requires wl-copy, xclip, or xsel ({})",
+            failures.join("; ")
+        ));
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = text;
+        Err("clipboard is unsupported on this platform".into())
+    }
 }
 
 /// 窗口标签字符集（tauri 限制：字母数字与 - / : _）。
@@ -593,6 +777,9 @@ fn open_float_window(app: &tauri::AppHandle, session_id: &str) -> Result<bool, S
         .min_inner_size(480.0, 360.0)
         .decorations(false)
         .data_directory(data_dir)
+        // 关闭 Tauri 窗口级 drag&drop handler：否则 Windows 上页面收不到
+        // HTML5 拖拽（dragover/drop），图片/文件拖不进输入框。
+        .disable_drag_drop_handler()
         .initialization_script(&init);
     // 独立 data_directory = 独立 WebView2 环境（独立浏览器进程），不继承主窗
     // 的调试参数 —— 显式透传（保持 Tauri 默认禁用项不变；无该环境变量时零差异）。
@@ -638,6 +825,7 @@ fn open_recovery_center_window(app: &tauri::AppHandle) -> bool {
         .inner_size(980.0, 720.0)
         .min_inner_size(760.0, 520.0)
         .data_directory(data_dir)
+        .disable_drag_drop_handler()
         .focused(true);
     if let Err(e) = builder.build() {
         eprintln!("[shell] recovery-center window build failed: {}", e);
@@ -1182,6 +1370,24 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
                 app2.exit(0);
             });
         }
+        "shell.open-external" => {
+            let url = params.get("url").and_then(|value| value.as_str()).unwrap_or("");
+            let url = url.to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = open_external(&url).await {
+                    eprintln!("[shell] sidecar open external failed: {}", error);
+                }
+            });
+        }
+        "shell.system-notification" => {
+            let title = params.get("title").and_then(|value| value.as_str()).unwrap_or("Deepseek Harness EAC").to_string();
+            let body = params.get("body").and_then(|value| value.as_str()).unwrap_or("").to_string();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = show_system_notification(&title, &body).await {
+                    eprintln!("[shell] system notification failed: {}", error);
+                }
+            });
+        }
         _ => {}
     }
 }
@@ -1272,6 +1478,9 @@ fn main() {
                                     .min_inner_size(960.0, 640.0)
                                     .decorations(false)
                                     .on_navigation(is_allowed_main_navigation)
+                                    // 关闭窗口级 drag&drop handler，放行页面 HTML5 拖拽
+                                    //（否则图片/文件拖不进输入框，页面 dragover/drop 收不到）。
+                                    .disable_drag_drop_handler()
                                     .initialization_script(&init);
                                     if let Err(e) = built.build() {
                                         eprintln!("[shell] main window build failed: {}", e);
@@ -1379,7 +1588,11 @@ fn main() {
                 }
                 "relaunch" => app.restart(),
                 "feedback" => {
-                    open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(error) = open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues").await {
+                            eprintln!("[tray] open feedback failed: {}", error);
+                        }
+                    });
                 }
                 "recovery" => {
                     open_recovery_center_window(app);

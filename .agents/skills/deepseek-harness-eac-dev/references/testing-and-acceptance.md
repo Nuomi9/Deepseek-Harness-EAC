@@ -18,7 +18,7 @@
 ### V1 定向
 
 - `npm run build`
-- 相关 `node --test test/<name>.test.mjs`
+- 相关 `node --test test/<name>.test.ts`
 - 配置、语法、资源或类型专项检查
 
 适用于局部、低风险模块。

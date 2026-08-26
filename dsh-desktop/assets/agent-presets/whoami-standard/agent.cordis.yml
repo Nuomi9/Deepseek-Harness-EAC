@@ -97,26 +97,16 @@
 # publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
 # the criterion for host-plane ownership — injection resolves before any session
 # exists, so there is no agent to key by. Behind a preset realm those variables
-# never reached the model's shell at all. Both shell tools consume the host
-# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
-# host-plane too.
-- id: tool-bash
-  name: '@deepseek-ai/dsh-tool-bash'
-  disabled: !!js process.platform === 'win32'
-
+# never reached the model's shell at all. The PowerShell and Git Bash tools
+# consume the host registry from here; their executors are host-plane too.
 - id: tool-pwsh
   name: '@deepseek-ai/dsh-tool-pwsh'
-  disabled: !!js process.platform !== 'win32'
 
-# Windows-only `bash` tool (see _preset/custom-bash.mjs): the official bash
-# needs a PTY, and DSH's PTY backend is linux/darwin-only. This row presents
-# the SAME tool name (`bash`) with a Minimal-compatible description but spawns
-# Git Bash through the ordinary cross-platform subprocess seam. `bashPath`
-# defaults to `bash` on PATH; point it at Git Bash explicitly when the WSL
-# shim would otherwise be picked up.
+# Windows `bash` tool (see _preset/custom-bash.mjs): this row presents the same
+# tool name (`bash`) with a Minimal-compatible description and spawns Git Bash
+# through the ordinary subprocess service.
 - id: custom-bash
   name: ../_preset/custom-bash.mjs
-  disabled: !!js process.platform !== 'win32'
   config:
     bashPath: 'C:\Program Files\Git\bin\bash.exe'
 

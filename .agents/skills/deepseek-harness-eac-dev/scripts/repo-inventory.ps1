@@ -70,7 +70,7 @@ foreach ($group in ($extensionNames | Group-Object | Sort-Object Count -Descendi
         desktopL2TypeScript = Count-Files 'dsh-desktop\lib\desktop' '*.ts'
         sidecarTypeScript = Count-Files 'tauri-shell\sidecar' '*.ts'
         rustFiles = @($files | Where-Object { [IO.Path]::GetExtension($_) -eq '.rs' }).Count
-        nodeTestFiles = Count-Files 'dsh-desktop\test' '*.test.mjs'
+        nodeTestFiles = Count-Files 'dsh-desktop\test' '*.test.ts'
         rootSmokeScripts = @(Get-ChildItem -LiteralPath $root -File | Where-Object Name -match '(smoke|upgrade-test).*\.js$').Count
         workflows = Count-Files '.github\workflows' '*'
     }

@@ -79,53 +79,10 @@
 
 # ── shell ───────────────────────────────────────────────────────────────────
 
-# The model-facing shell is Minimal's PERSISTENT bash: the same PTY stack, the
-# same tool name, and the byte-identical description as the shipped `minimal`
-# preset. Standard `tool-bash` is gone — both packages register the tool name
-# `bash`, so they cannot coexist — and the persistent shell is the schema the
-# pure Minimal state must present. `shell-env` stays in the HOST composition
-# (`apps/cli/src/web.ts` injects it to publish `DSH_WEB_URL`/`DSH_WEB_MODE`);
-# the backend still consumes the host sandbox policy and subprocess
-# implementation.
-#
-# The PTY (`terminals`) registry is an agent-owned service, so it lives in an
-# entry-local realm, exactly as in Minimal.
-#
-# `tool-pwsh` remains as the Windows shell: Minimal's terminal-bash hardcodes
-# `/bin/bash`, so on win32 the persistent-shell group is disabled and pwsh
-# keeps a working shell. On Linux/macOS the catalog matches Minimal exactly.
-- id: persistent-shell
-  name: cordis:group
-  group: true
-  disabled: !!js process.platform === 'win32'
-  isolate:
-    terminals: true
-  config:
-    - id: pty
-      name: '@deepseek-ai/dsh-terminal'
-
-    - id: terminal-bash
-      name: '@deepseek-ai/dsh-terminal-bash'
-      config:
-        timeoutMs: 300000
-
-    - id: persistent-bash
-      name: '@deepseek-ai/dsh-tool-bash-persistent'
-      config:
-        timeoutMs: 300000
-        description: |-
-          Run commands in a bash shell
-          * When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.
-          * You don't have access to the internet via this tool.
-          * You do have access to a mirror of common linux and python packages via apt and pip.
-          * State is persistent across command calls and discussions with the user.
-          * To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.
-          * Please avoid commands that may produce a very large amount of output.
-          * Please run long lived commands in the background, e.g. 'sleep 10 &' or start a server in the background.
-
+# The Windows build exposes PowerShell as its model-facing shell. `shell-env`
+# stays in the host composition so DSH_WEB_URL and DSH_WEB_MODE reach it.
 - id: tool-pwsh
   name: '@deepseek-ai/dsh-tool-pwsh'
-  disabled: !!js process.platform !== 'win32'
 
 # ── filesystem ──────────────────────────────────────────────────────────────
 
@@ -169,10 +126,7 @@
 # session, and a preset only chooses whether its agent can collect and stop
 # background work at all.
 #
-# Note: the persistent bash tool's schema is Minimal's single-parameter one —
-# it has no `run_in_background` and produces no background jobs — so on
-# Linux/macOS these controls stay idle. `tool-pwsh` on Windows still produces
-# background jobs, which is why the controls remain in the catalog.
+# `tool-pwsh` produces background jobs, so these controls remain in the catalog.
 - id: tool-jobs
   name: '@deepseek-ai/dsh-tool-jobs'
 

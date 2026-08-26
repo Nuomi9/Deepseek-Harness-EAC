@@ -6,21 +6,17 @@
  * WHY: DeepSeek's first-request trajectory anchor keys on the tool SCHEMA
  * matching the RL training distribution (issue #11: persistent
  * bash + str_replace_editor anchored 5/5 at maxTokens=256000, pwsh/read
- * 8/8 standard-like). The official persistent bash uses a PTY, and DSH's PTY
- * backend is linux/darwin-only — `subprocess-local` throws "terminal
- * inspection is unsupported on platform win32". A custom tool that presents
- * the same name and a Minimal-like description but spawns Git Bash through
- * the ordinary (cross-platform) subprocess seam keeps the schema anchor
- * without the PTY dependency.
+ * 8/8 standard-like). The official persistent bash cannot inspect a Windows
+ * terminal. This custom tool presents the same name and a Minimal-like
+ * description while spawning Git Bash through the ordinary subprocess service.
  *
  * Executable resolution (config `bashPath`):
  *  - explicit absolute path (e.g. `C:\Program Files\Git\bin\bash.exe`), or
  *  - `bash` resolved through `ctx.subprocess.resolveExecutable` (PATH lookup).
  *
  * Semantics mirror the official bash tool: `bash -c <command>` in a fresh
- * process, bounded output, non-zero exit reported not thrown. No sandbox
- * confinement on Windows (the sandbox backend is linux-only); the tool
- * description says so. The bootstrap catalog pairs this with
+ * process, bounded output, non-zero exit reported not thrown. It runs without
+ * OS sandbox confinement on Windows. The bootstrap catalog pairs this with
  * `str_replace_editor` (Minimal's two tools).
  */
 
@@ -62,11 +58,10 @@ export function apply(ctx, config) {
       'Run commands in a bash shell (Git Bash on Windows)',
       '* When invoking this tool, the contents of the "command" parameter does NOT need to be XML-escaped.',
       "* You don't have access to the internet via this tool.",
-      '* You do have access to a mirror of common linux and python packages via apt and pip.',
       '* State does NOT persist across command calls: each call runs in a fresh shell.',
       "* To inspect a particular line range of a file, e.g. lines 10-25, try 'sed -n 10,25p /path/to/the/file'.",
       '* Please avoid commands that may produce a very large amount of output.',
-      '* NOTE: runs without OS sandbox confinement on Windows (no landlock); treat output as untrusted.',
+      '* NOTE: runs without OS sandbox confinement on Windows; treat output as untrusted.',
     ].join('\n'),
     parameters: commandSchema,
     output: {

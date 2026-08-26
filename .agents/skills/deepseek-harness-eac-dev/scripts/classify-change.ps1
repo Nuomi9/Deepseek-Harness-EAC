@@ -293,7 +293,7 @@ foreach ($file in $Files) {
     $fileDomains = [System.Collections.Generic.HashSet[string]]::new()
     $fileReferences = [System.Collections.Generic.HashSet[string]]::new()
     $fileLevel = 'targeted'
-    if ($normalized -match '^dsh-desktop/(test/.+\.test\.mjs)$') {
+    if ($normalized -match '^dsh-desktop/(test/.+\.test\.ts)$') {
         [void]$tests.Add($Matches[1])
     }
     $matchingRules = @($rules | Where-Object { $matchPath -match $_.Pattern })

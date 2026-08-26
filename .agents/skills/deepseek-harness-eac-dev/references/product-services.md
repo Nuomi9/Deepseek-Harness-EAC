@@ -13,9 +13,9 @@
 
 修改模型价格、峰谷窗口或推送格式时检查：
 
-- `balance-prices-core.test.mjs`
-- `pricing-window.test.mjs`
-- `widget-theme.test.mjs`
+- `balance-prices-core.test.ts`
+- `pricing-window.test.ts`
+- `widget-theme.test.ts`
 - bridge 中的余额通知消费者
 
 ## 会话完成通知
@@ -62,27 +62,14 @@
 
 对应测试：
 
-- `stable-port.test.mjs`
-- `stream-write-after-end.test.mjs`
-- `koffi-preflight.test.mjs`
-
-## WSL
-
-关键文件：`wsl-backend.ts`。
-
-保持：
-
-- Windows 与 WSL 路径转换有明确边界。
-- `wsl.exe --` 后参数不通过字符串拼接。
-- Agent staging、previous 和 PID 文件位于约定目录。
-- 不让 WSL profile 污染 Windows `web-desktop` profile。
-
-WSL 修改需要专门环境验收；没有 WSL 环境时必须声明未验证。
+- `stable-port.test.ts`
+- `stream-write-after-end.test.ts`
+- `koffi-preflight.test.ts`
 
 ## 错误详情与构建完整性
 
-- `error-detail.ts` 对应 `error-detail.test.mjs`。
-- `bundle-integrity.ts` 对应 `bundle-integrity.test.mjs`。
-- `builtin-collision.ts` 对应 `builtin-collision.test.mjs`。
+- `error-detail.ts` 对应 `error-detail.test.ts`。
+- `bundle-integrity.ts` 对应 `bundle-integrity.test.ts`。
+- `builtin-collision.ts` 对应 `builtin-collision.test.ts`。
 
 错误详情必须脱敏，完整性检查只把文件丢失判为损坏，不因额外文件误报。

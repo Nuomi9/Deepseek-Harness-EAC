@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const desktop = join(repo, 'dsh-desktop');
 const main = readFileSync(join(repo, 'tauri-shell', 'src', 'main.rs'), 'utf8');
+const navFence = readFileSync(join(repo, 'tauri-shell', 'src', 'nav_fence.rs'), 'utf8');
 const bridge = readFileSync(join(repo, 'tauri-shell', 'sidecar', 'bridge.ts'), 'utf8');
 const stage = readFileSync(join(repo, 'tauri-shell', 'stage-resources.mjs'), 'utf8');
 
@@ -22,9 +23,11 @@ test('Task 8.1 Tauri 托盘提供 Web 服务重启、完全重启和退出', () 
 
 test('Task 8.2 主窗导航只放行当前 dsh origin 与本地壳白名单', () => {
   assert.match(main, /fn is_allowed_main_navigation\(/);
-  assert.match(main, /target\.origin\(\)\s*==\s*base\.origin\(\)/);
-  assert.match(main, /127\.0\.0\.1|localhost|::1/);
+  assert.match(main, /nav_fence::is_allowed_navigation\(target, current_web_url\(\)\.as_deref\(\), WS_PORT\)/);
   assert.match(main, /\.on_navigation\(is_allowed_main_navigation\)/);
+  // 同源放行 + 回环端口白名单逻辑已抽取到 nav_fence.rs（Task 12⑥ 表驱动单测落点）
+  assert.match(navFence, /target\.origin\(\)\s*==\s*base\.origin\(\)/);
+  assert.match(navFence, /127\.0\.0\.1|localhost|::1/);
 });
 
 test('Task 8.3 Tauri 菜单在重启与重新加载之间拉起快照面板', () => {
