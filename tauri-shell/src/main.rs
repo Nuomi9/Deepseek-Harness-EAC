@@ -1,6 +1,6 @@
 // release 构建隐藏控制台：release 的 exe 为 windows 子系统，双击启动不再弹出
 // 标题为 exe 路径的命令行窗口（debug 保留控制台便于看 eprintln 诊断）。
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 // Deepseek Harness EAC — Tauri ShellHost（ADR 0002 L1；P2 GUI 主链路）
 //
@@ -48,24 +48,52 @@ use tokio_tungstenite::tungstenite::Message;
 const BRIDGE_JS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/sidecar/bridge.js"));
 const WS_PORT: u16 = 19873;
 
-/// 打包态与开发态（CARGO_MANIFEST_DIR 布局）的资源根。
-/// 实测（R6 Stage 1）：Tauri v2 resources map 目标相对安装根，NSIS 装出
-/// exe 同级 sidecar/ + dsh-desktop/ 兄弟目录；exe 同级直认优先，
-/// 兼容保留 resources/ 子目录布局探测，最后回退开发布局。
-fn resource_root() -> std::path::PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent().map(|p| p.to_path_buf()) {
-            if dir.join("sidecar").join("server.js").exists() {
-                return dir;
-            }
-            let res = dir.join("resources");
-            if res.join("sidecar").join("server.js").exists() {
-                return res;
+fn main_initialization_script() -> String {
+    let file = resource_root().join("sidecar").join("snapshot-ui.js");
+    let snapshot = std::fs::read_to_string(file)
+        .unwrap_or_default()
+        .replace("Object.defineProperty(exports, \"__esModule\", { value: true });", "")
+        .replace("exports.openSnapshotPanel = openSnapshotPanel;", "");
+    format!("{}\n{}\nwindow.__dshOpenSnapshotPanel=openSnapshotPanel;", BRIDGE_JS, snapshot)
+}
+
+trait Platform {
+    fn resource_root() -> std::path::PathBuf;
+    fn configure_command(command: &mut Command);
+}
+
+struct CurrentPlatform;
+
+impl Platform for CurrentPlatform {
+    fn resource_root() -> std::path::PathBuf {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent().map(|p| p.to_path_buf()) {
+                if dir.join("sidecar").join("server.js").exists() {
+                    return dir;
+                }
+                let res = dir.join("resources");
+                if res.join("sidecar").join("server.js").exists() {
+                    return res;
+                }
             }
         }
+        std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")))
     }
-    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).canonicalize()
-        .unwrap_or_else(|_| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")))
+
+    fn configure_command(command: &mut Command) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        #[cfg(unix)]
+        let _ = command;
+    }
+}
+
+fn resource_root() -> std::path::PathBuf {
+    CurrentPlatform::resource_root()
 }
 
 fn sidecar_script() -> std::path::PathBuf {
@@ -104,18 +132,34 @@ fn set_current_web_url(url: &str) {
     }
 }
 
-/// 解析 Node 运行时：优先内置 vendor/node（与 Electron 壳共用一份），回退 PATH。
+fn is_allowed_main_navigation(target: &tauri::Url) -> bool {
+    if target.scheme() != "http" && target.scheme() != "https" {
+        return false;
+    }
+    if let Some(current) = current_web_url() {
+        if let Ok(base) = tauri::Url::parse(&current) {
+            if target.origin() == base.origin() {
+                return true;
+            }
+        }
+    }
+    matches!(target.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
+        && target.port_or_known_default() == Some(WS_PORT)
+}
+
+/// 解析 Node 运行时：优先内置 vendor/node（与 legacy-shell 壳共用一份），回退 PATH。
 fn resolve_node() -> String {
     if let Ok(p) = std::env::var("DSH_NODE_EXE") {
         if !p.is_empty() {
             return p;
         }
     }
-    let vendored = format!("{}/vendor/node/node.exe", dsh_desktop_dir());
+    let relative = if cfg!(windows) { "vendor/node/node.exe" } else { "vendor/node/bin/node" };
+    let vendored = format!("{}/{}", dsh_desktop_dir(), relative);
     if std::path::Path::new(&vendored).exists() {
         return vendored;
     }
-    "node.exe".to_string()
+    if cfg!(windows) { "node.exe".to_string() } else { "node".to_string() }
 }
 
 /// L1 ↔ L2 sidecar 异步客户端：行分隔 JSON-RPC over stdio。
@@ -137,10 +181,7 @@ impl Sidecar {
             // 开发期诊断直通终端；release 无控制台，显式丢弃（inherit 在
             // windows 子系统下无有效句柄）。
             .stderr(if cfg!(debug_assertions) { Stdio::inherit() } else { Stdio::null() });
-        // node.exe 是控制台子系统程序：GUI 父进程派生时若不加
-        // CREATE_NO_WINDOW 会自建控制台窗口（0x08000000）。
-        #[cfg(windows)]
-        cmd.creation_flags(0x0800_0000);
+        CurrentPlatform::configure_command(&mut cmd);
         if let Ok(exe) = std::env::current_exe() {
             // 壳层 exe 与资源根（client-update 的 installDir 判定 / 打包态定位）。
             cmd.env("DSH_SHELL_EXE", &exe);
@@ -333,7 +374,7 @@ async fn handle_shell_method(
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.close" => {
-            // 退出策略（= Electron exitAction）：minimize→隐藏；quit→退出；
+            // 退出策略（= legacy-shell exitAction）：minimize→隐藏；quit→退出；
             // ask→弹出独立退出选择窗口。
             apply_exit_policy(app, true).await;
             Ok(Some(reply(serde_json::json!({"ok":true}))))
@@ -461,7 +502,7 @@ async fn handle_shell_method(
             Ok(None)
         }
         "recovery.restart" => {
-            // 整应用重启（= Electron app.relaunch+exit）。
+            // 整应用重启（= legacy-shell app.relaunch+exit）。
             app.restart();
         }
         "rc.open" => {
@@ -479,7 +520,7 @@ async fn handle_shell_method(
     }
 }
 
-/// 仅放行 http(s)（对齐 Electron 侧 will-navigate/openExternal 的外链纪律）。
+/// 仅放行 http(s)（对齐 legacy-shell 侧 will-navigate/openExternal 的外链纪律）。
 fn is_safe_external_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
 }
@@ -488,11 +529,20 @@ fn open_external(url: &str) {
     if !is_safe_external_url(url) {
         return;
     }
-    use std::os::windows::process::CommandExt;
-    let _ = std::process::Command::new("cmd")
-        .args(["/c", "start", "", url])
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-        .spawn();
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/c", "start", "", url]).creation_flags(0x0800_0000);
+        command
+    };
+    #[cfg(unix)]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    let _ = command.spawn();
 }
 
 /// 窗口标签字符集（tauri 限制：字母数字与 - / : _）。
@@ -515,7 +565,7 @@ fn sanitize_label(s: &str) -> String {
 }
 
 /// 会话浮窗（硬门槛①）：第二个 WebviewWindow + 独立 data_directory
-/// （= Electron 的 persist:dsh-float 分区），与主窗 localStorage 隔离。
+/// （= legacy-shell 的 persist:dsh-float 分区），与主窗 localStorage 隔离。
 /// 同一会话复用同一标签 → 单浮窗；返回 false 表示已存在（show+focus）。
 fn open_float_window(app: &tauri::AppHandle, session_id: &str) -> Result<bool, String> {
     use tauri::Manager;
@@ -698,15 +748,15 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
 fn loading_page() -> String {
     format!(
         "<!doctype html><meta charset=utf-8><title>Deepseek Harness EAC</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
-         <div style=\"text-align:center\">\
-         <div style=\"font-size:20px;font-weight:600;margin-bottom:14px\">Deepseek Harness EAC</div>\
-         <div style=\"font-size:13px;color:#8b9ac4\">正在启动服务…</div>\
-         <div style=\"margin-top:18px;width:34px;height:34px;margin-left:auto;margin-right:auto;\
-         border:3px solid rgba(255,255,255,.12);border-top-color:#5b8cff;border-radius:50%;\
-         animation:dshspin 1s linear infinite\"></div></div>\
-         <style>@keyframes dshspin{{to{{transform:rotate(360deg)}}}}</style>\
+         <style>:root{{color-scheme:light dark}}body{{margin:0;height:100vh;display:grid;place-items:center;\
+         background:#f8faff;color:#1a2a4a;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif}}\
+         .status{{font-size:13px;color:#5a6a8a}}.spinner{{margin-top:18px;width:34px;height:34px;margin-left:auto;margin-right:auto;\
+         border:3px solid rgba(91,140,255,.25);border-top-color:#5b8cff;border-radius:50%;animation:dshspin 1s linear infinite}}\
+         @media (prefers-color-scheme:dark){{body{{background:#0b1220;color:#dfe6ff}}.status{{color:#8b9ac4}}\
+         .spinner{{border-color:rgba(255,255,255,.12);border-top-color:#5b8cff}}}}\
+         @keyframes dshspin{{to{{transform:rotate(360deg)}}}}</style>\
+         <body><div style=\"text-align:center\"><div style=\"font-size:20px;font-weight:600;margin-bottom:14px\">Deepseek Harness EAC</div>\
+         <div class=status>正在启动服务…</div><div class=spinner></div></div>\
          <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script>",
         WS_PORT, BRIDGE_JS
     )
@@ -903,6 +953,13 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     }
     let (body, ctype) = if path.starts_with("/inject/bridge.js") {
         (BRIDGE_JS.to_string(), "application/javascript")
+    } else if path.starts_with("/inject/snapshot-ui.js") {
+        let file = resource_root().join("sidecar").join("snapshot-ui.js");
+        let script = std::fs::read_to_string(file)
+            .unwrap_or_default()
+            .replace("Object.defineProperty(exports, \"__esModule\", { value: true });", "")
+            .replace("exports.openSnapshotPanel = openSnapshotPanel;", "");
+        (format!("{}\nwindow.__dshOpenSnapshotPanel=openSnapshotPanel;", script), "application/javascript")
     } else if path.starts_with("/recovery-center") {
         (recovery_center_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/loading") {
@@ -1145,7 +1202,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // 二次启动：聚焦已有主窗（= Electron second-instance 行为）。
+            // 二次启动：聚焦已有主窗（= legacy-shell second-instance 行为）。
             use tauri::Manager;
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show();
@@ -1204,6 +1261,7 @@ fn main() {
                             // 主窗：先加载壳层 /loading 页（即起即见）。
                             let app_win = app_handle.clone();
                             let app_win_inner = app_win.clone();
+                            let init = main_initialization_script();
                             let _ = app_win.run_on_main_thread(move || {
                                 let app_win = app_win_inner;
                                 let loading = format!("http://127.0.0.1:{}/loading", WS_PORT);
@@ -1217,7 +1275,8 @@ fn main() {
                                     .inner_size(1400.0, 900.0)
                                     .min_inner_size(960.0, 640.0)
                                     .decorations(false)
-                                    .initialization_script(BRIDGE_JS);
+                                    .on_navigation(is_allowed_main_navigation)
+                                    .initialization_script(&init);
                                     if let Err(e) = built.build() {
                                         eprintln!("[shell] main window build failed: {}", e);
                                     }
@@ -1276,16 +1335,17 @@ fn main() {
                 });
             });
 
-            // 托盘（L1）：对齐 Electron 托盘全项（显示/隐藏、恢复中心、重启服务、反馈、退出）。
+            // 托盘（L1）：对齐 legacy-shell 托盘全项（显示/隐藏、恢复中心、重启服务、反馈、退出）。
             let app_handle = app.handle().clone();
             let show = tauri::menu::MenuItem::with_id(app, "show", "显示 / 隐藏窗口", true, None::<&str>)?;
             let recovery = tauri::menu::MenuItem::with_id(app, "recovery", "恢复中心…", true, None::<&str>)?;
             let restart = tauri::menu::MenuItem::with_id(app, "restart", "重启 Web 服务", true, None::<&str>)?;
+            let relaunch = tauri::menu::MenuItem::with_id(app, "relaunch", "完全重启", true, None::<&str>)?;
             let feedback = tauri::menu::MenuItem::with_id(app, "feedback", "反馈建议", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
             let sep2 = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &recovery, &restart, &sep2, &feedback, &quit])?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &recovery, &restart, &relaunch, &sep2, &feedback, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu);
@@ -1321,6 +1381,7 @@ fn main() {
                         }
                     });
                 }
+                "relaunch" => app.restart(),
                 "feedback" => {
                     open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
                 }
@@ -1331,7 +1392,7 @@ fn main() {
                 _ => {}
             })
             .on_tray_icon_event(|tray, event| {
-                // 单击切换窗口可见性（= Electron tray.on('click')）。
+                // 单击切换窗口可见性（= legacy-shell tray.on('click')）。
                 if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
                     let app = tray.app_handle().clone();
                     if let Some(win) = app.get_webview_window("main") {
