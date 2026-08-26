@@ -116,6 +116,16 @@ jobs:
         working-directory: tauri-shell
         run: node make-portable.mjs --out target/release/portable
 
+      - name: 规范化 Windows NSIS 命名（对齐历史规范）
+        if: runner.os == 'Windows'
+        working-directory: tauri-shell
+        shell: bash
+        run: |
+          ver="${{ steps.tag.outputs.version }}"
+          cd target/release/bundle/nsis
+          for f in *-setup.exe; do mv "$f" "Deepseek-Harness-EAC-Setup-${ver}-x64.exe"; break; done
+          ls -la
+
       - name: 规范化 Linux 产物命名（对齐历史规范 OQ-2）
         if: runner.os == 'Linux'
         working-directory: tauri-shell
