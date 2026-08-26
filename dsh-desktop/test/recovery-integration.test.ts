@@ -1,78 +1,61 @@
-// TDD wiring tests: the recovery/watchdog modules must actually be wired
-// into the desktop shell. Electron 入口不可在 node:test 下直接执行，故在
-// 源码层面钉住接线点 —— 每条断言对应一个必需的集成位。
-//
-// Task 4/5.4：装配入口 main.js 只剩 bridge 注入 + 生命周期；以下符号分别
-// 位于 lib/run-state.ts、lib/watchdog-boot.ts、lib/window.ts、lib/ipc/
-// recovery.ts、lib/boot.ts，入口/装配断言改为对应模块的 require 调用。
-
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
-const ROOT = join(fileURLToPath(import.meta.url), '..', '..');
-const mainSrc = readFileSync(join(ROOT, 'main.js'), 'utf8');
-// Task 6.4：桥接面实现自 preload.js 迁至 preload/api.ts（门面拆分），
-// 断言语义等价（心跳发送 + 恢复页通道）。
-const preloadSrc = readFileSync(join(ROOT, 'preload', 'api.ts'), 'utf8');
-const windowSrc = readFileSync(join(ROOT, 'lib', 'window.ts'), 'utf8');
-const runStateSrc = readFileSync(join(ROOT, 'lib', 'run-state.ts'), 'utf8');
-const watchdogSrc = readFileSync(join(ROOT, 'lib', 'watchdog-boot.ts'), 'utf8');
-const recoveryIpcSrc = readFileSync(join(ROOT, 'lib', 'ipc', 'recovery.ts'), 'utf8');
-const bootSrc = readFileSync(join(ROOT, 'lib', 'boot.ts'), 'utf8');
+const root = join(fileURLToPath(import.meta.url), '..', '..');
+const repo = join(root, '..');
+const bridge = readFileSync(join(repo, 'tauri-shell', 'sidecar', 'bridge.ts'), 'utf8');
+const shell = readFileSync(join(repo, 'tauri-shell', 'src', 'main.rs'), 'utf8');
+const server = readFileSync(join(repo, 'tauri-shell', 'sidecar', 'server.ts'), 'utf8');
+const windowSrc = readFileSync(join(root, 'lib', 'window.ts'), 'utf8');
+const watchdogSrc = readFileSync(join(root, 'lib', 'watchdog-boot.ts'), 'utf8');
+const recoveryIpcSrc = readFileSync(join(root, 'lib', 'ipc', 'recovery.ts'), 'utf8');
+const bootSrc = readFileSync(join(root, 'lib', 'boot.ts'), 'utf8');
+const runStateSrc = readFileSync(join(root, 'lib', 'run-state.ts'), 'utf8');
+const updateFlowSrc = readFileSync(join(root, 'lib', 'update-flow.ts'), 'utf8');
 
-test('renderer-recovery is imported and the state machine attaches the main window', () => {
-  // Task 3：lib/window.ts 以 ESM import 引 renderer-recovery.js（编译为 require）。
-  assert.ok(/from '\.\.\/renderer-recovery\.js'/.test(windowSrc), "lib/window.ts must import '../renderer-recovery.js'");
-  assert.ok(/export function initRendererRecovery\(\)/.test(windowSrc), 'initRendererRecovery() missing');
-  // Task 6 Wave 1：窗口句柄属宿主，lib 侧改为 attachWindowToRecovery(win, kind)
-  // 供宿主在 createMain/openFloatWindow 末尾挂接（kind='main' 即主窗）。
-  assert.ok(/state\.recovery\.attach\(win, kind\)/.test(windowSrc), 'window attach wiring missing');
+test('renderer recovery 状态机仍挂接窗口抽象', () => {
+  assert.match(windowSrc, /from '\.\.\/renderer-recovery\.js'/);
+  assert.match(windowSrc, /export function initRendererRecovery\(\)/);
+  assert.match(windowSrc, /state\.recovery\.attach\(win, kind\)/);
 });
 
-test('watchdog lifecycle: run-state write, spawn, clean-exit mark', () => {
-  assert.ok(/export function writeRunState\(/.test(runStateSrc), 'writeRunState() missing');
-  assert.ok(/export function markCleanExit\(/.test(runStateSrc), 'markCleanExit() missing');
-  assert.ok(/export function startWatchdog\(\)/.test(watchdogSrc), 'startWatchdog() missing');
-  // boot 链负责调用（Task 5.4 起 watchdog 生命周期在 lib/boot.ts）。
-  assert.ok(/startWatchdog\(\);/.test(bootSrc), 'startWatchdog() is never called');
+test('run-state 暴露运行态写入与 clean-exit 标记', () => {
+  assert.match(runStateSrc, /export function writeRunState\(/);
+  assert.match(runStateSrc, /export function markCleanExit\(/);
 });
 
-test('heartbeat IPC is registered and heartbeats are polled', () => {
-  assert.ok(recoveryIpcSrc.includes("'dsh:renderer-heartbeat'"), 'heartbeat IPC channel missing');
-  assert.ok(/checkHeartbeats\(\)/.test(windowSrc), 'checkHeartbeats() loop missing');
+test('watchdog 生命周期由 sidecar boot 链接线', () => {
+  assert.match(watchdogSrc, /export function startWatchdog\(\)/);
+  assert.match(bootSrc, /writeRunState\(\);/);
+  assert.match(bootSrc, /startWatchdog\(\);/);
 });
 
-test('the local recovery page IPC endpoints are served', () => {
-  for (const ch of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:export-logs']) {
-    assert.ok(recoveryIpcSrc.includes(`'${ch}'`), `IPC handler ${ch} missing`);
+test('已知退出与更新重启路径都会标记 clean exit', () => {
+  const marks = [bootSrc, recoveryIpcSrc, updateFlowSrc]
+    .reduce((count, source) => count + (source.match(/markCleanExit\(\)/g) ?? []).length, 0);
+  assert.ok(marks >= 4, `预期至少 4 条 clean-exit 路径，实际 ${marks}`);
+});
+
+test('心跳通道在 Tauri bridge 与统一 IPC 中对齐', () => {
+  assert.match(bridge, /log\.renderer-heartbeat/);
+  assert.match(recoveryIpcSrc, /dsh:renderer-heartbeat/);
+  assert.match(windowSrc, /state\.recovery\.checkHeartbeats\(\)/);
+});
+
+test('恢复中心页面与四个恢复动作都可达', () => {
+  for (const channel of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:export-logs']) {
+    assert.ok(recoveryIpcSrc.includes(`'${channel}'`));
+    assert.ok(bridge.includes(`'${channel}'`));
   }
-  assert.ok(existsSync(join(ROOT, 'assets', 'recovery.html')), 'assets/recovery.html missing');
+  assert.ok(existsSync(join(root, 'assets', 'recovery.html')));
+  assert.match(shell, /open_recovery_center_window/);
 });
 
-test('every quit path marks a clean exit for the watchdog', () => {
-  // 退出路径分散在 main.js（before-quit）、lib/boot.ts（fatal/校验失败）、
-  // lib/update-flow.ts（agent/客户端更新重启）—— 全部源码合计 ≥3。
-  const sources = [mainSrc, bootSrc];
-  const updateFlowSrc = readFileSync(join(ROOT, 'lib', 'update-flow.ts'), 'utf8');
-  sources.push(updateFlowSrc);
-  const marks = sources.reduce(
-    (n, src) => n + (src.match(/markCleanExit\(\)/g) || []).length, 0,
-  );
-  assert.ok(marks >= 3, `expected markCleanExit() on before-quit + restart + app.exit paths, found ${marks}`);
-});
-
-test('preload sends renderer heartbeats and exposes the recovery bridge', () => {
-  assert.ok(preloadSrc.includes("'dsh:renderer-heartbeat'"), 'preload heartbeat sender missing');
-  for (const ch of ['chrome:recovery-state', 'chrome:recovery-reload', 'chrome:recovery-restart', 'chrome:export-logs']) {
-    assert.ok(preloadSrc.includes(`'${ch}'`), `preload bridge for ${ch} missing`);
-  }
-});
-
-test('main.js wires the boot module and registers IPC through lib/ipc', () => {
-  // Task 7：main.js 为 tsc 编译产物（双引号 require）；源码 main.ts 为 ESM import。
-  assert.ok(/require\(['"]\.\/lib\/boot\.js['"]\)/.test(mainSrc), 'boot wiring missing');
-  assert.ok(/registerIpc\(\);/.test(bootSrc), 'registerIpc() is never called');
+test('Tauri sidecar 装配 boot.start 与统一 IPC 传输面', () => {
+  assert.match(server, /'boot\.start'/);
+  assert.match(server, /createSidecarIpcSurface/);
+  assert.match(server, /setDefaultIpcSurface/);
 });

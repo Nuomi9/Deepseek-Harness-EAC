@@ -2,7 +2,7 @@
  * lib/recovery-center/register-sidecar.ts — 恢复中心动作分发（Tauri sidecar
  * 适配，Task 3.5 自 main 侧 vnext-absorb 变体移植）。
  *
- * 与 register.ts（Electron BrowserWindow + ipcMain 版）平行：Tauri 三层架构
+ * 与 register.ts（legacy-shell BrowserWindow + ipcMain 版）平行：Tauri 三层架构
  * 下窗口由 Rust 壳创建（main.rs open_recovery_center），本模块只提供：
  *   - init(ctx)：sidecar 启动时注入壳层/编排能力；
  *   - handleRcAction(action, value)：sidecar `rc.action` RPC 的动作分发
@@ -14,7 +14,7 @@
  * register.ts 合流。lib/desktop 与根级 rescue-agent 经运行时 require 取
  * （类型断言），避免把过渡层拖进 erasableSyntaxOnly 严格编译程序。
  *
- * 三个入口（对应 Electron 版）：
+ * 三个入口（对应 legacy-shell 版）：
  *   1. 托盘常驻菜单「恢复中心…」（Rust 托盘项 → open_recovery_center）；
  *   2. 启动失败链（sidecar boot 失败 → 请求壳层打开恢复中心）；
  *   3. DSH_DESKTOP_RECOVERY=1（Rust 壳启动时检测并直开恢复中心窗口）。
@@ -45,19 +45,14 @@ interface GuardApi {
   restore(id: string): Record<string, unknown>;
 }
 
-const { ensureGuard } = require('../desktop/guard-box.js') as { ensureGuard(): GuardApi };
-const {
+import { ensureGuard } from '../guard.js';
+import {
   pluginManagerCollect, pluginManagerSetEnabled, pluginManagerSetRemoved,
-} = require('../desktop/plugin-ops.js') as {
-  pluginManagerCollect(): Array<{ id: string; core?: boolean }>;
-  pluginManagerSetEnabled(id: string, enabled: boolean): { ok: boolean; error?: string };
-  pluginManagerSetRemoved(id: string, removed: boolean): { ok: boolean; error?: string };
-};
-const { COMPANION_PLUGINS } = require('../desktop/companion-sync.js') as {
-  COMPANION_PLUGINS: Array<{ id: string }>;
-};
-const { desktopProfileDir } = require('../desktop/profile.js') as { desktopProfileDir(): string };
-const { state: bootState } = require('../desktop/boot-server.js') as { state(): { running: boolean } };
+} from '../plugin-manager-core.js';
+import { COMPANION_PLUGINS } from '../plugin-registry-data.js';
+import { desktopProfileDir } from '../paths.js';
+
+const bootState = (): { running: boolean } => ({ running: !!state.serverProc });
 
 /** 由 sidecar 注入的壳层/编排能力（窗口创建在 Rust，这里只做请求）。 */
 export interface RecoveryCenterCtx {
@@ -167,7 +162,7 @@ export async function handleRcAction(action: string, value?: unknown): Promise<R
         const patchFile = path.join(desktopProfileDir(), 'cordis.patch.yml');
         let text = '';
         try { text = fs.readFileSync(patchFile, 'utf8'); } catch { /* 无 patch 文件按空文本处理 */ }
-        const rows = (() => { try { return pluginManagerCollect(); } catch { return []; } })();
+        const rows = (() => { try { return pluginManagerCollect() as Array<{ id: string; core?: boolean }>; } catch { return []; } })();
         const coreIds = rows.filter((r) => r.core).map((r) => r.id);
         const { patch, removed } = safeModePatch(text, coreIds);
         try {
@@ -238,7 +233,7 @@ export async function handleRcAction(action: string, value?: unknown): Promise<R
 }
 
 // ---------------------------------------------------------------------------
-// 插件档案批量登记（boot 链在 sync 后调用一次；与 Electron 版语义一致）
+// 插件档案批量登记（boot 链在 sync 后调用一次；与 legacy-shell 版语义一致）
 // ---------------------------------------------------------------------------
 
 /**
@@ -253,7 +248,7 @@ export function archivePluginProfiles(): void {
     }
     // patch 行中登记、但不在内置表里的 = 市场/手工安装插件。
     const builtin = new Set(COMPANION_PLUGINS.map((p) => p.id));
-    const rows = pluginManagerCollect();
+    const rows = pluginManagerCollect() as Array<{ id: string; core?: boolean }>;
     for (const r of rows) {
       if (builtin.has(r.id) || r.core) continue;
       upsertLegacyPlugin({ id: r.id, source: 'market' });

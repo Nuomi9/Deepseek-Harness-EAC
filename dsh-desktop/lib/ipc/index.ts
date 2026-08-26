@@ -6,7 +6,7 @@
  * 余额/文件）。channel 名与行为与拆分前的 registerChromeIpc 一一对齐。
  *
  * Task 6.1：注册面从 ipcMain 换成注入的 IpcSurface——boot 链不传参时取
- * 宿主装配期注入的缺省注册面（Electron main.ts 的 electronIpcSurface() /
+ * 宿主装配期注入的缺省注册面（legacy-shell main.ts 的 legacy-shellIpcSurface() /
  * sidecar 的 JSON-RPC 注册面）；测试直接传 createRecordingIpcSurface()。
  */
 
