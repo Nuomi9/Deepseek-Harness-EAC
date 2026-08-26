@@ -70,3 +70,40 @@ test('Task 9.1 Unix 降级围栏真实回收主进程与孙进程', { skip: proc
     jobFence._forceNativeUnavailableForTest(false);
   }
 });
+
+// Windows Job Object（Task 12⑧）：真实击杀整棵树（子 → cmd → ping），
+// 验证 TerminateJobObject 语义下无孤儿进程残留。
+test('Task 9.1 Windows Job Object 真实击杀主进程与孙进程树', { skip: process.platform !== 'win32' }, async () => {
+  jobFence._forceNativeUnavailableForTest(false);
+  const fence = jobFence.createFence();
+  assert.equal(fence.mode, 'win32-job', 'win32 且原生可用时应为 win32-job 围栏');
+  const handle = fence.launch(process.execPath, [
+    '-e',
+    "const { spawn } = require('node:child_process'); const child = spawn('cmd', ['/c', 'ping -n 60 127.0.0.1 > NUL'], { stdio: 'ignore' }); process.stdout.write(String(child.pid)); setInterval(() => {}, 1000);",
+  ]);
+  let output = '';
+  handle.stdout.setEncoding('utf8');
+  handle.stdout.on('data', (chunk: string) => { output += chunk; });
+  const pollGone = async (pid: number): Promise<boolean> => {
+    for (let i = 0; i < 50; i++) {
+      try { process.kill(pid, 0); } catch { return true; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return false;
+  };
+  try {
+    while (!/^\d+$/.test(output)) await once(handle.stdout, 'data');
+    const cmdPid = Number(output);
+    assert.ok(process.kill(handle.pid, 0) === true, '主进程应存活');
+    assert.ok(process.kill(cmdPid, 0) === true, '孙进程（cmd）应存活');
+    const exited = once(handle.stdout, 'close');
+    await handle.kill();
+    await exited;
+    assert.equal(await pollGone(handle.pid), true, '主进程应在 ≤5s 内退出');
+    assert.equal(await pollGone(cmdPid), true, '孙进程（cmd）应在 ≤5s 内被 Job Object 回收');
+  } finally {
+    await handle.kill();
+    fence.dispose();
+    jobFence._forceNativeUnavailableForTest(false);
+  }
+});
