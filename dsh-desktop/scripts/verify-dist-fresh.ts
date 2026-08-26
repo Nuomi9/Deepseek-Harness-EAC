@@ -22,6 +22,15 @@ export interface DistFreshResult {
   artifactTime?: number;
 }
 
+/** 平台产物集（Task 11.1 / tdd.md T15）：win 额外要求便携 zip；linux 仅 bundle。 */
+export type DistPlatform = 'win' | 'linux';
+
+export interface DistFreshOptions {
+  platform?: DistPlatform;
+  /** 便携包目录（win 平台校验用），默认 repoRoot/target/release/portable。 */
+  portableDir?: string;
+}
+
 function listSources(repoRoot: string): string[] {
   let out: string;
   try {
@@ -49,7 +58,11 @@ function listSources(repoRoot: string): string[] {
   return out.split(/\r?\n/).filter(Boolean).filter((f) => !IGNORED_PREFIXES.some((p) => f.startsWith(p)));
 }
 
-export function verifyDistFresh(repoRoot: string, bundleDir = path.join(repoRoot, 'target', 'release', 'bundle')): DistFreshResult {
+export function verifyDistFresh(
+  repoRoot: string,
+  bundleDir = path.join(repoRoot, 'target', 'release', 'bundle'),
+  opts: DistFreshOptions = {},
+): DistFreshResult {
   const artifacts: string[] = [];
   const walkArtifacts = (dir: string): void => {
     let entries: fs.Dirent[];
@@ -57,12 +70,21 @@ export function verifyDistFresh(repoRoot: string, bundleDir = path.join(repoRoot
     for (const entry of entries) {
       const target = path.join(dir, entry.name);
       if (entry.isDirectory()) walkArtifacts(target);
-      else if (/\.(?:exe|deb|appimage)$/i.test(entry.name)) artifacts.push(target);
+      else if (/\.(?:exe|deb|appimage|zip)$/i.test(entry.name)) artifacts.push(target);
     }
   };
   walkArtifacts(bundleDir);
+  // win 平台：便携包目录一并纳入（缺失 = 产物不全，拒绝放行）。
+  const portableDir = opts.portableDir ?? path.join(repoRoot, 'target', 'release', 'portable');
+  if (opts.platform === 'win') {
+    const before = artifacts.length;
+    walkArtifacts(portableDir);
+    if (artifacts.length === before) {
+      return { ok: false, offenders: [], error: `no portable artifacts (*.zip) found under ${portableDir} (platform=win)` };
+    }
+  }
   if (!artifacts.length) {
-    return { ok: false, offenders: [], error: 'no packaged Tauri artifacts (*.exe, *.deb, *.AppImage) found' };
+    return { ok: false, offenders: [], error: 'no packaged Tauri artifacts (*.exe, *.deb, *.AppImage, *.zip) found' };
   }
   const artifactTime = Math.min(...artifacts.map((p) => fs.statSync(p).mtimeMs));
   const offenders: string[] = [];
@@ -76,8 +98,23 @@ export function verifyDistFresh(repoRoot: string, bundleDir = path.join(repoRoot
 }
 
 if (require.main === module) {
-  const repoRoot = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '..');
-  const r = verifyDistFresh(repoRoot);
+  // CLI: node verify-dist-fresh.js [repoRoot] [--bundle=<dir>] [--portable=<dir>] [--platform=win|linux]
+  const argv = process.argv.slice(2);
+  let repoRootArg: string | undefined;
+  let bundleArg: string | undefined;
+  let portableArg: string | undefined;
+  let platform: DistPlatform | undefined;
+  for (const a of argv) {
+    if (a.startsWith('--bundle=')) bundleArg = path.resolve(a.slice('--bundle='.length));
+    else if (a.startsWith('--portable=')) portableArg = path.resolve(a.slice('--portable='.length));
+    else if (a === '--platform=win' || a === '--platform=linux') platform = a.slice('--platform='.length) as DistPlatform;
+    else repoRootArg = a;
+  }
+  const repoRoot = repoRootArg ? path.resolve(repoRootArg) : path.resolve(__dirname, '..');
+  const opts: DistFreshOptions = {};
+  if (platform) opts.platform = platform;
+  if (portableArg) opts.portableDir = portableArg;
+  const r = verifyDistFresh(repoRoot, bundleArg ?? undefined, opts);
   if (r.ok) {
     console.log('verify-dist-fresh: OK — artifacts newer than every tracked source file');
     process.exit(0);

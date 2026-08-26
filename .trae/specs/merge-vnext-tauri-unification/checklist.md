@@ -74,5 +74,5 @@
 
 ## 七、Open questions 决议记录
 
-- [ ] OQ-1 rpm 产出与否：决议 + 理由
-- [ ] OQ-2 AppImage 命名规范对齐：决议 + README 链接
+- [x] OQ-1 rpm 产出与否：**不产出**（决议日期 2026-08-26）。理由：Tauri v2 bundler 无 rpm target（历史 v4.4.0-linux 的 rpm 是社区 PR #12 的 electron-builder 产物，非 Tauri 能力）；Linux 升级沿用系统包管理器约定，deb + AppImage 已覆盖主流发行版。
+- [x] OQ-2 AppImage 命名规范对齐：**对齐历史规范**（决议日期 2026-08-26）。release-tauri.yml Linux job 在 upload 前重命名：AppImage → `Deepseek-Harness-EAC-<ver>-x86_64.AppImage`、deb → `Deepseek-Harness-EAC-<ver>-amd64.deb`（版本取自 tag 注入）；README 下载链接与此命名一致。

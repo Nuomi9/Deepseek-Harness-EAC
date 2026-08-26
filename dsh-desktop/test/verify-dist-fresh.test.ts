@@ -91,3 +91,58 @@ test('fails when no Tauri bundle artifacts exist', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---- Task 11.1（tdd.md T15）：portable zip 纳入新鲜度守卫 + 平台参数 ----
+
+test('platform=win 把 portable/*.zip 纳入产物集（zip 缺失即失败）', () => {
+  const root = makeRepo();
+  try {
+    const r = verifyDistFresh(root, undefined, { platform: 'win' });
+    assert.equal(r.ok, false, 'win 平台必须要求 portable zip 存在');
+    assert.match(r.error || '', /portable/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('platform=win：portable zip 存在且比源新则通过，比源旧则失败', () => {
+  const root = makeRepo();
+  try {
+    touchPortable(root, 'Deepseek-Harness-EAC-6.0.0-portable.zip', T1);
+    let r = verifyDistFresh(root, undefined, { platform: 'win' });
+    assert.equal(r.ok, true, 'portable zip 与产物同刻：应通过，offenders=' + JSON.stringify(r.offenders));
+    utimesSync(join(root, 'target', 'release', 'portable', 'Deepseek-Harness-EAC-6.0.0-portable.zip'), new Date('2026-08-15T11:30:00Z'), new Date('2026-08-15T11:30:00Z'));
+    r = verifyDistFresh(root, undefined, { platform: 'win' });
+    assert.equal(r.ok, false, 'portable zip 比源旧：整组产物 mtime 被拉低应失败');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('platform=linux 忽略 portable 目录（即使不存在 zip 也通过）', () => {
+  const root = makeRepo();
+  try {
+    const r = verifyDistFresh(root, undefined, { platform: 'linux' });
+    assert.equal(r.ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('默认（无 platform）不要求 portable zip——向后兼容形状', () => {
+  const root = makeRepo();
+  try {
+    const r = verifyDistFresh(root);
+    assert.equal(r.ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function touchPortable(root: string, name: string, t: Date) {
+  mkdirSync(join(root, 'target', 'release', 'portable'), { recursive: true });
+  const p = join(root, 'target', 'release', 'portable', name);
+  writeFileSync(p, 'zip');
+  utimesSync(p, t, t);
+}
+
