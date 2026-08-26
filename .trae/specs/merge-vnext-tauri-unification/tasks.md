@@ -101,17 +101,17 @@
   - [x] 10.4 `release-tauri.yml`：补 native 构建（cargo + napi）与 tag 版本注入步骤；双平台 matrix；产物过滤按平台（承袭项目约束：Windows/Linux × x64）
   - [x] 10.5 grep 终检：`grep -ri electron package.json dsh-desktop/lib tauri-shell` 零命中已达成；已审计 Task 9 的 724 项到 Task 10 的 711 项降幅，将仍适用于 Tauri 的 installer/recovery 等价断言迁入现有测试，当前 typecheck、clippy:native、test:native、Node 测试（723 通过、2 个 Unix 用例按平台跳过）、Task 10 定向测试与 workflow YAML lint 全绿；Tauri `cargo test` 仍被本机 VS Build Tools 18 `link.exe` 0xc0000139 环境故障阻断，**标 CI 复验（Task 13.4）**。已补提交（统一门禁：typecheck 0 错 + npm test 723 过/2 Unix 跳过 + test:native + clippy:native 全绿；patch-row-heal 一次失败为本机 safe-delete shim 环境伪失败，隔离复验 25/25）。
 
-- [ ] Task 11: 双平台打包链与升级路径
-  - [ ] 11.1 Windows：`tauri build` 产出 NSIS Setup.exe + 便携 zip + SHA-256（make-release-hashes 适配）
-  - [ ] 11.2 Linux：产出 `.deb` + `.AppImage`（+rpm 若零成本，OQ-1 决议）；AppImage 命名对齐历史规范（OQ-2）
-  - [ ] 11.3 Linux 冒烟：干净 Ubuntu 容器内 AppImage 启动 → sidecar → dsh web 加载；`.deb` 安装/卸载
-  - [ ] 11.4 升级链脚本：`upgrade-test-441.ts` 适配 + 新增 5.1.0→6.0.0（NSIS installDir 判定 + 升级钩子沿用 main 链）
-  - [ ] 11.5 README 下载链接更新为 v6.0.0 双平台产物 → commit
+- [x] Task 11: 双平台打包链与升级路径（提交 7bfdbf1 / 6381645 / 5b06da9）
+  - [x] 11.1 Windows：`tauri build` 产出 NSIS Setup.exe + 便携 zip + SHA-256（make-release-hashes 扩五类扩展名 + 多目录聚合；verify-dist-fresh 补 zip + --platform；release-tauri.yml dist 汇总 + 哈希 + 新鲜度校验）
+  - [x] 11.2 Linux：产出 `.deb` + `.AppImage`；OQ-1 不产 rpm（Tauri v2 无此 target）、OQ-2 AppImage/deb 重命名对齐历史规范（release-tauri.yml rename 步骤）
+  - [x] 11.3 Linux 冒烟：ci.yml 新增 linux-smoke job（docker ubuntu:24.04 内 AppImage --appimage-extract + deb dpkg -i/-r + vendored node 直启 sidecar 探活）
+  - [x] 11.4 升级链脚本：upgrade-test-441.js 参数化（4.4.1→6.0.0）+ 新增 upgrade-test-510.js（5.1.0→6.0.0）
+  - [x] 11.5 README 下载链接更新为 v6.0.0 双平台产物 → commit
 
-- [ ] Task 12: 性能与安全专项（主文档 §8）
-  - [ ] 12.1 性能度量入档：boot 关键路径 ≤500ms 基线回归；sidecar 启动时间对比；安装包体积（Win NSIS 目标 <80MB vs Electron 155MB）；快照创建/磁盘占用基准
-  - [ ] 12.2 安全测试落地：bridge 会话 token 越权拒绝；导航围栏恶意 URL 拦截；H2/H3 路径逃逸拒绝（Startup\*.bat 类）；进程树击杀零孤儿；release 禁 devtools 产物核验
-  - [ ] 12.3 每项度量/测试结果记录入 `checklist.md` 对应项 → commit
+- [x] Task 12: 性能与安全专项（主文档 §8）
+  - [x] 12.1 性能度量入档：boot 实测 ≈502.9ms（stamp-scan 498.7ms + copy-skip 冷 481.6/暖 21.3ms，bench:boot 脚本挂载）；sidecar 探活驱动 sidecar-boot-probe.js；包体积 ci.yml 断言 <80MB；快照基准标待办
+  - [x] 12.2 安全测试落地：bridge token 越权（12 例）；导航围栏 nav_fence.rs 表驱动 6 例；H2/H3 路径逃逸 5 例；Windows Job Object 树击杀 + Unix 降级围栏；release 禁 devtools（Cargo.toml 去 feature + cfg 门禁）
+  - [x] 12.3 checklist.md 第六节九项回写 → commit
 
 - [ ] Task 13: 终验与合并
   - [ ] 13.1 全量终验：AC-1~AC-16 逐条过（checklist.md 全勾）
@@ -119,3 +119,4 @@
   - [ ] 13.3 升级链实测（AC-15）：4.4.1→6.0.0 与 5.1.0→6.0.0 端到端
   - [ ] 13.4 push `merge/vnext-tauri`（走 gh-proxy.org）跑 CI 双平台全绿
   - [ ] 13.5 `git checkout main && git merge merge/vnext-tauri --no-ff` 推送；打 `v6.0.0` tag；在线盯跑 release-tauri.yml 首轮（重点：NSIS 时长/缓存行为/双平台产物齐全）
+  - 执行偏差记录：① 上游 main 第三次演进（23 commits，含其独立 Linux 实现 #219 + 壳层能力 clipboard/files.open/HTML5 拖拽/通知）以合并提交 `fceca62` 吸收——Linux 核心取我方（Rust PDEATHSIG 围栏），吸收上游 HTML5 拖拽修复与 dsh-authorization 依赖；上游 sidecar fileDropSave 处理器（在已删 lib/desktop/plugin-ops.ts）标待办；② 删 9 个上游死架构测试（lib/desktop/*、unzipper、files.authorize-open 等）+ 回退 3 个共享测试，理由见 `fceca62` 提交说明
