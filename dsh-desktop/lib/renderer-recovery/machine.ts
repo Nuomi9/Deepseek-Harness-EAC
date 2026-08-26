@@ -2,7 +2,7 @@
  * lib/renderer-recovery/machine.ts — 渲染进程崩溃/挂起自恢复状态机本体
  * （Task 14 自 renderer-recovery.ts 拆出；背景与设计约束见根门面文件头）。
  *
- * 不加载 electron 模块，全部副作用经注入回调完成；策略参数与纯决策
+ * 不加载 legacy-shell 模块，全部副作用经注入回调完成；策略参数与纯决策
  * 函数在 ./policy.ts，受控加载在 ./load.ts。
  */
 
@@ -26,7 +26,7 @@ export class RendererRecovery {
   private opts: RendererRecoveryDeps & RecoveryOpts;
   private _states = new Map<number, WindowState>(); // winId -> state
   private _wins = new Set<RecoveryWindow>();
-  // 心跳键＝会话 token（Task 6.1：IPC 来源 token 化；Electron 宿主下即
+  // 心跳键＝会话 token（Task 6.1：IPC 来源 token 化；legacy-shell 宿主下即
   // String(webContents.id)，历史 number 入参经 String 归一保持等价）。
   private _heartbeats = new Map<string, number>();
   private _mainWin: RecoveryWindow | null = null;

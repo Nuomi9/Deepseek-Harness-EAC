@@ -52,7 +52,7 @@ type WizardDoneCallback = (result: unknown) => void;
 /** 主进程全局共享可变状态（字段与初值同原 main.js 顶层声明一一对应）。 */
 export interface AppState {
   /**
-   * 主窗桥会话句柄（Task 6.1：取代 BrowserWindow 概念——Electron 宿主
+   * 主窗桥会话句柄（Task 6.1：取代 BrowserWindow 概念——legacy-shell 宿主
    * createMain 时登记，窗口销毁时清空；窗口操作经 hostCtx().windows）。
    */
   mainSession: BridgeSession | null;
@@ -76,7 +76,7 @@ export interface AppState {
   notifyOnTurnEnd: boolean;
   /** 会话文件监听器（session-watcher.js 实例）。 */
   sessionWatcher: SessionWatcherLike | null;
-  /** Electron userData 目录。 */
+  /** legacy-shell userData 目录。 */
   userDataDir: string;
   /** 日志目录。 */
   logsDir: string;
@@ -183,8 +183,8 @@ export const state: AppState = {
 
 /**
  * 由 sidecar boot 链注入真实路径（Tauri 三层架构，Task 3.5 吸收 main 侧
- * vnext-absorb 变体的导出面）：幂等，缺失字段保持原值。Electron 宿主不走
- * 本函数（main.ts 启动时逐项赋值），因此对既有 Electron 路径零影响。
+ * vnext-absorb 变体的导出面）：幂等，缺失字段保持原值。legacy-shell 宿主不走
+ * 本函数（main.ts 启动时逐项赋值），因此对既有 legacy-shell 路径零影响。
  */
 export function initVNextState(d: Partial<Pick<AppState, 'dshHome' | 'userDataDir' | 'logsDir'>>): void {
   if (d.dshHome) state.dshHome = d.dshHome;

@@ -1,17 +1,17 @@
 /**
  * lib/recovery-center/register.ts — 恢复中心（VNext Phase 0，Task 8；Task 6
- * Wave 2 宿主中立化：本模块不再 import electron）。
+ * Wave 2 宿主中立化：本模块不再 import legacy-shell）。
  *
  * 独立恢复中心窗口（assets/recovery-center.html + 专用 preload），不依赖
  * dsh web 与主窗 —— 任意 plugin tree 启动失败时用户必定能进入这里关闭/
  * 卸载/回滚/隔离问题插件（架构文档 §3.4 / §9 Phase 0 交付标准）。
  *
  * 窗口生命周期整体委托宿主（HostWindows.openRecoveryCenter /
- * closeRecoveryCenter；Electron 实现在 Wave 3 的顶层 host-electron/，Tauri
+ * closeRecoveryCenter；legacy-shell 实现在 Wave 3 的顶层 host-legacy-shell/，Tauri
  * 壳对应 main.rs 窗口）。宿主开窗时把窗口的 BridgeSession 登记进
  * state.rcSession（窗口关闭时清空），rc:action / rc:close 的来源校验据此
  * 比对会话 token（取代原 event.sender === rcWindow.webContents 的
- * Electron webContents 身份比对，语义等价）。
+ * legacy-shell webContents 身份比对，语义等价）。
  *
  * 三个入口：
  *   1. 托盘常驻菜单「恢复中心…」（lib/tray.ts）；

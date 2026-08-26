@@ -1,21 +1,6 @@
-# CI：push / PR 时跑测试并完整构建 dsh-desktop（Windows x64）
-# 缓存策略（四层）：
-#   1. npm 依赖下载缓存（setup-node 内置，按 dsh-desktop/package-lock.json 哈希命中）
-#   2. Electron 二进制缓存（npm install 与 electron-builder 共用）
-#   3. electron-builder 工具链缓存（NSIS / winCodeSign 等）
-#   4. cargo registry + 各原生模块 target（按 Cargo.lock 哈希命中）
-# Node 版本：26 —— 测试已迁 .test.ts，依赖原生 type-stripping 直跑（Node ≥ 26）；
-#   fetch-runtime 复制的 node.exe 即随包分发运行时，与测试/安装 ABI 一致。
-# Rust：native/{supervisor,snapshot} 两模块在跑测试前从源码构建（index.node
-#   仓库内亦有预编译提交，CI 构建保证测试与打包用最新源码产物），并跑
-#   cargo test；链接统一走 scripts/build-native.js 内置的 rust-lld 方案。
-# 镜像说明：GitHub 托管 runner 直连 npm registry / GitHub Releases，无需 README
-# 中的 ELECTRON_MIRROR 等镜像（仅自托管国内 runner 才需要，从美国 runner 访问 npmmirror 反而更慢）。
 name: CI
 
 on:
-  # paths 负向匹配（与 electron-builder.yml 的 files 规则同构）：
-  # 跳过纯文档改动，但 SKILL.md 随包分发（README「内置 Skills 分发」），必须放行。
   push:
     branches:
       - main
@@ -44,9 +29,13 @@ concurrency:
 
 jobs:
   build:
-    name: 测试并构建 dsh-desktop（Windows x64）
-    runs-on: windows-latest
-    timeout-minutes: 60
+    name: Tauri ${{ matrix.os }} x64
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: dsh-desktop
@@ -54,105 +43,74 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 Node.js（含 npm 缓存）
+      - name: 安装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        working-directory: ${{ github.workspace }}
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: 安装 Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 
-      - name: 校验开发者 Skill（PowerShell 7）
-        shell: pwsh
-        working-directory: ${{ github.workspace }}
-        run: |
-          .\.agents\skills\deepseek-harness-eac-dev\scripts\validate-skill.ps1 `
-            -SkillPath .\.agents\skills\deepseek-harness-eac-dev `
-            -RepoPath .
-
-      - name: 校验开发者 Skill（Windows PowerShell 5.1）
-        shell: powershell
-        working-directory: ${{ github.workspace }}
-        run: |
-          .\.agents\skills\deepseek-harness-eac-dev\scripts\validate-skill.ps1 `
-            -SkillPath .\.agents\skills\deepseek-harness-eac-dev `
-            -RepoPath . `
-            -SkipRuntimeMatrix
-
-      - name: 缓存 Electron 二进制
-        uses: actions/cache@v4
-        with:
-          path: ~\AppData\Local\electron\Cache
-          key: dsh-electron-win-x64-${{ hashFiles('dsh-desktop/package-lock.json') }}
-          restore-keys: |
-            dsh-electron-win-x64-
-
-      - name: 缓存 electron-builder 工具链
-        uses: actions/cache@v4
-        with:
-          path: ~\AppData\Local\electron-builder\Cache
-          key: dsh-electron-builder-win-x64-${{ hashFiles('dsh-desktop/package-lock.json') }}
-          restore-keys: |
-            dsh-electron-builder-win-x64-
-
-      - name: 安装 Rust 工具链（stable）
+      - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 缓存 Rust 构建产物（cargo registry + 各原生模块 target）
-        uses: actions/cache@v4
+      - name: 缓存 Rust 构建产物
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            dsh-desktop/native/supervisor/target
-            dsh-desktop/native/snapshot/target
-          key: dsh-cargo-win-x64-${{ hashFiles('dsh-desktop/native/*/Cargo.lock') }}
-          restore-keys: |
-            dsh-cargo-win-x64-
+          workspaces: |
+            tauri-shell -> target
+            dsh-desktop/native/supervisor -> target
+            dsh-desktop/native/snapshot -> target
+          key: ${{ matrix.os }}-x64
 
       - name: 安装依赖
         run: npm ci
 
-      - name: 构建 Rust 原生模块（supervisor + snapshot → index.node）
-        # main 尚无 native/ 目录（模块仅存在于 vnext 分支），按 Cargo.toml 存在性跳过
-        if: hashFiles('dsh-desktop/native/*/Cargo.toml') != ''
-        run: |
-          node scripts/build-native.js build
-          node scripts/build-native.js build snapshot
-
-      - name: Rust 原生模块测试（cargo test --release）
-        if: hashFiles('dsh-desktop/native/*/Cargo.toml') != ''
-        run: |
-          node scripts/build-native.js test
-          node scripts/build-native.js test snapshot
-
-      - name: 获取内置运行时（node.exe + npm CLI）
+      - name: 获取内置运行时
         run: npm run fetch-runtime
 
-      - name: 类型检查（tsc --noEmit 零错误）
+      - name: 类型检查
         run: npm run typecheck
 
-      - name: Rust clippy（-D warnings 零告警）
+      - name: Rust clippy
         run: npm run clippy:native
 
-      - name: Rust 原生模块测试（cargo test --release）
+      - name: Rust 原生模块测试
         run: npm run test:native
 
-      - name: 构建 Rust 原生模块（supervisor + snapshot）
-        run: npm run build:native && npm run build:native -- snapshot
+      - name: Tauri 壳测试
+        run: cargo test --manifest-path ../tauri-shell/Cargo.toml
 
-      - name: 运行测试
+      - name: Node 测试
         run: npm test
 
-      - name: 构建产物（portable + NSIS 安装包）
-        run: npm run dist
+      - name: 构建 Rust 原生模块
+        run: npm run build:native
 
-      - name: 上传构建产物
+      - name: 构建 Tauri
+        run: npm run tauri:build
+
+      - name: 上传 Windows 产物
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: dsh-desktop-win-x64-ci
+          name: dsh-eac-windows-x64-ci
           path: |
-            dsh-desktop/dist/*.exe
-            dsh-desktop/dist/*.blockmap
-            dsh-desktop/dist/SHA256SUMS.txt
+            tauri-shell/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: 上传 Linux 产物
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-eac-linux-x64-ci
+          path: |
+            tauri-shell/target/release/bundle/deb/*.deb
+            tauri-shell/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
           retention-days: 7

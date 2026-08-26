@@ -55,8 +55,12 @@ export function startWatchdog(): void {
 // 就把指向修复回客户端闭包（原生 CLI 重启时会再次指回它自己，互不纠缠：
 // 各自启动时各自纠正，运行中互不打扰）。
 // ---------------------------------------------------------------------------
+export function junctionWatchdogSupported(platform: NodeJS.Platform): boolean {
+  return platform === 'win32';
+}
+
 export function startJunctionWatchdog(): void {
-  if (!IS_WIN) return;
+  if (!junctionWatchdogSupported(process.platform)) return;
   let notified = false;
   const tick = async (): Promise<void> => {
     if (state.quitting || state.restartingServer) return;
@@ -73,7 +77,7 @@ export function startJunctionWatchdog(): void {
       if (res.repaired.length && !notified) {
         notified = true;
         try {
-          // Task 5.2：系统通知经宿主上下文注入（Electron Notification /
+          // Task 5.2：系统通知经宿主上下文注入（legacy-shell Notification /
           // sidecar stderr / 测试 mock）；点击回调语义保持。
           hostCtx().notify({
             title: '已自动修复共享模块指向',

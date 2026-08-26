@@ -1,6 +1,6 @@
 /**
  * lib/onboarding.ts — 内置插件选择向导（Task 5b 自 main.js 提取；Task 6
- * Wave 2 宿主中立化：本模块不再 import electron）。
+ * Wave 2 宿主中立化：本模块不再 import legacy-shell）。
  *
  * 首次启动 first 模式 / 设置页二次打开 rerun 模式。启动门控：全新用户展示
  * 向导并等待提交；升级用户静默跳过并记完成标记。关闭向导（取消）= 保持全部
@@ -8,8 +8,8 @@
  * computeOnboardingNeed 预计算（settings.json 会在启动早期被迁移流程无条件
  * 创建，事后无法区分新老用户）。
  *
- * 向导窗口由宿主提供（HostWindows.openPluginWizard；Electron 实现在 Wave 3
- * 的顶层 host-electron/）：宿主创建窗口、把 BridgeSession 登记进
+ * 向导窗口由宿主提供（HostWindows.openPluginWizard；legacy-shell 实现在 Wave 3
+ * 的顶层 host-legacy-shell/）：宿主创建窗口、把 BridgeSession 登记进
  * state.wizardSession，并将 onboard:submit / onboard:close / 窗口 closed
  * 事件统一转发 closeWizard() 收口。宿主无窗口能力时 openPluginWizard 返回
  * false，本模块按用户取消收口。

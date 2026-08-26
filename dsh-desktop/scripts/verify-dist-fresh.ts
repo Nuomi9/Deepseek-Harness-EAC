@@ -13,7 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const IGNORED_PREFIXES = ['dist/', 'node_modules/', 'vendor/', '.git/'];
+const IGNORED_PREFIXES = ['target/', 'node_modules/', 'vendor/', '.git/'];
 
 export interface DistFreshResult {
   ok: boolean;
@@ -49,15 +49,20 @@ function listSources(repoRoot: string): string[] {
   return out.split(/\r?\n/).filter(Boolean).filter((f) => !IGNORED_PREFIXES.some((p) => f.startsWith(p)));
 }
 
-export function verifyDistFresh(repoRoot: string, distDir = path.join(repoRoot, 'dist')): DistFreshResult {
+export function verifyDistFresh(repoRoot: string, bundleDir = path.join(repoRoot, 'target', 'release', 'bundle')): DistFreshResult {
   const artifacts: string[] = [];
-  try {
-    for (const e of fs.readdirSync(distDir, { withFileTypes: true })) {
-      if (e.isFile() && /\.exe$/i.test(e.name)) artifacts.push(path.join(distDir, e.name));
+  const walkArtifacts = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const target = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkArtifacts(target);
+      else if (/\.(?:exe|deb|appimage)$/i.test(entry.name)) artifacts.push(target);
     }
-  } catch { /* dist missing */ }
+  };
+  walkArtifacts(bundleDir);
   if (!artifacts.length) {
-    return { ok: false, offenders: [], error: 'no packaged artifacts (*.exe) found in dist/' };
+    return { ok: false, offenders: [], error: 'no packaged Tauri artifacts (*.exe, *.deb, *.AppImage) found' };
   }
   const artifactTime = Math.min(...artifacts.map((p) => fs.statSync(p).mtimeMs));
   const offenders: string[] = [];
@@ -80,6 +85,6 @@ if (require.main === module) {
   console.error('verify-dist-fresh: STALE — ' + (r.error ?? `${r.offenders.length} source file(s) modified after the artifacts were built:`));
   for (const o of r.offenders.slice(0, 40)) console.error('  ' + o);
   if (r.offenders.length > 40) console.error(`  … and ${r.offenders.length - 40} more`);
-  console.error('Rebuild (npm run dist) before publishing.');
+  console.error('Rebuild (npm run tauri:build) before publishing.');
   process.exit(1);
 }

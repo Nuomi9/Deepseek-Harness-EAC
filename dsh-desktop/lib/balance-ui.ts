@@ -1,6 +1,6 @@
 /**
  * lib/balance-ui.ts — DeepSeek 余额轮询与会话完成通知（Task 5b 自 main.js
- * 提取；Task 6 Wave 2 宿主中立化：本模块不再 import electron）。
+ * 提取；Task 6 Wave 2 宿主中立化：本模块不再 import legacy-shell）。
  *
  * refreshBalance：查询余额 + 按当前默认模型选价格档（settings.json 可覆盖
  * balancePrices.<model>，兼容旧扁平覆盖与 { peak, offpeak } 双档覆盖）+ 峰谷

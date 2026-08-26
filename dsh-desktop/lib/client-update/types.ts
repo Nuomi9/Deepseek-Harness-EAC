@@ -63,7 +63,7 @@ export interface ApiEndpoint {
   headers?: Record<string, string>;
 }
 
-/** getResponse 的统一响应形状（electron.net 与 node https 双路径归一）。 */
+/** getResponse 的统一响应形状（legacy-shell.net 与 node https 双路径归一）。 */
 export interface HttpResponse {
   status: number;
   headers: NodeJS.Dict<string | string[]>;

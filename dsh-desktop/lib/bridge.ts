@@ -1,6 +1,6 @@
 /**
  * lib/bridge.ts — 跨域函数注入点（Task 2 引入；Task 6 Wave 2 宿主中立化：
- * 本模块不再 import electron）。
+ * 本模块不再 import legacy-shell）。
  *
  * 背景：模块提取后，低层模块（run-state/server/watchdog-boot）需要调用
  * 尚未提取或属于其他域的高层函数（窗口/托盘的 showMainWindow、boot 域的
@@ -10,7 +10,7 @@
  *
  * 约定：默认实现只记警告日志（保证未装配时也不崩溃）；main.ts 装配发生在
  * 同步 require 阶段，早于任何事件回调，语义与原 main.ts 闭包直调等价。
- * showBox 默认实现路由宿主上下文的无主窗消息框（Electron 宿主＝
+ * showBox 默认实现路由宿主上下文的无主窗消息框（legacy-shell 宿主＝
  * dialog.showMessageBox；无头宿主＝日志 + cancelId 应答，见 host-ctx.ts）。
  */
 

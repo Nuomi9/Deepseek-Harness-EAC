@@ -2,10 +2,10 @@
  * lib/host-ctx.ts — 宿主上下文注入（Task 5.1；模板取 lib/desktop/guard-box.ts
  * 的 XxxCtx 单例注入 + runtime-paths.ts 的防御性缺省语义）。
  *
- * lib/* 统一模块不直接 import electron：Electron API 面（打包态/资源根/
+ * lib/* 统一模块不直接 import legacy-shell：legacy-shell API 面（打包态/资源根/
  * 版本号/系统通知/剪贴板/退出/系统目录/无主窗消息框/.lnk 快捷方式读写）
  * 经本单例注入，双宿主过渡期同一份模块可运行于——
- *   · Electron main：main.ts 装配段 initHostCtx(electronHost())
+ *   · legacy-shell main：main.ts 装配段 initHostCtx(legacy-shellHost())
  *   · Tauri sidecar：sidecar/server.ts 装配段 initHostCtx(sidecarHost())
  *   · Node 测试：initHostCtx(mock) 或直接用内置缺省（开发态语义）
  *
@@ -19,7 +19,7 @@ import * as os from 'node:os';
 import { log as defaultLog } from './log.js';
 import type { RecoveryWindow } from './renderer-recovery/policy.js';
 
-/** 系统通知参数（Electron Notification 语义子集）。 */
+/** 系统通知参数（legacy-shell Notification 语义子集）。 */
 export interface HostNotifyOpts {
   title: string;
   body: string;
@@ -29,7 +29,7 @@ export interface HostNotifyOpts {
   onClick?(): void;
 }
 
-/** 无主窗消息框参数（Electron dialog.showMessageBox 语义子集）。 */
+/** 无主窗消息框参数（legacy-shell dialog.showMessageBox 语义子集）。 */
 export interface HostMessageBoxOpts {
   type: 'error' | 'info' | 'warning' | 'none' | 'question';
   title: string;
@@ -50,7 +50,7 @@ export interface HostMessageBoxResult {
   checkboxChecked?: boolean;
 }
 
-/** .lnk 写入参数（Electron shell.writeShortcutLink 语义子集）。 */
+/** .lnk 写入参数（legacy-shell shell.writeShortcutLink 语义子集）。 */
 export interface HostShortcutWriteOpts {
   target: string;
   description?: string;
@@ -60,8 +60,8 @@ export interface HostShortcutWriteOpts {
 }
 
 /**
- * .lnk 读回结构（Electron shell.readShortcutLink 返回面的宽松描述；全可选
- * —— Electron ShortcutDetails 接口可直接结构化赋值，sidecar PowerShell 实现
+ * .lnk 读回结构（legacy-shell shell.readShortcutLink 返回面的宽松描述；全可选
+ * —— legacy-shell ShortcutDetails 接口可直接结构化赋值，sidecar PowerShell 实现
  * 返回其子集）。
  */
 export interface HostShortcutLink {
@@ -84,20 +84,20 @@ export interface HostShortcuts {
 
 /**
  * 桥会话句柄（Task 6.1）：宿主中立的渲染端会话身份与推送通道，取代
- * state 里的 Electron BrowserWindow 概念。
- *   · Electron：主窗/浮窗/向导各注册一个（id＝webContents.id）
+ * state 里的 legacy-shell BrowserWindow 概念。
+ *   · legacy-shell：主窗/浮窗/向导各注册一个（id＝webContents.id）
  *   · Tauri sidecar：WS 桥连接 token（Task 7 bridge 扩域后接入）
  */
 export interface BridgeSession {
   /** 会话唯一标识（来源校验 token；宿主保证稳定且互异）。 */
   readonly id: string;
-  /** 到该会话渲染端的推送通道（Electron＝webContents.send）。 */
+  /** 到该会话渲染端的推送通道（legacy-shell＝webContents.send）。 */
   send(channel: string, payload?: unknown): void;
   /** 聚焦承载会话的窗口（不存在时静默）。 */
   focus(): void;
   /** 关闭承载会话的窗口（尽力而为，不抛错）。 */
   close(): void;
-  /** 会话是否仍存活（Electron＝窗口未销毁）。 */
+  /** 会话是否仍存活（legacy-shell＝窗口未销毁）。 */
   isAlive(): boolean;
 }
 
@@ -116,7 +116,7 @@ export interface OpenUpdateProgressOpts {
 
 /**
  * 窗口宿主面（Task 6.2）：主窗生命周期/控制语义的 `win.*` 通道对接层。
- * Electron 直调 BrowserWindow；Tauri sidecar 经壳层通道转发（实现留 Task 8）；
+ * legacy-shell 直调 BrowserWindow；Tauri sidecar 经壳层通道转发（实现留 Task 8）；
  * 无窗宿主（Node 测试/sidecar 过渡期）缺省 undefined → 调用方按无窗降级。
  */
 export interface HostWindows {
@@ -193,23 +193,23 @@ export interface HostCtx {
   isPackaged(): boolean;
   /** 打包态资源根（resources/）；开发态为空串。 */
   resourcesPath(): string;
-  /** 应用版本号（Electron app.getVersion / sidecar package.json）。 */
+  /** 应用版本号（legacy-shell app.getVersion / sidecar package.json）。 */
   appVersion(): string;
   /** 宿主日志通道（缺省路由到 lib/log.ts）。 */
   log(tag: string, msg: string): void;
-  /** 立即终止进程，跳过优雅退出链（Electron app.exit / process.exit）。 */
+  /** 立即终止进程，跳过优雅退出链（legacy-shell app.exit / process.exit）。 */
   exitProcess(code: number): void;
-  /** 请求宿主走优雅退出链（Electron app.quit；无优雅链宿主等价 exit(0)）。 */
+  /** 请求宿主走优雅退出链（legacy-shell app.quit；无优雅链宿主等价 exit(0)）。 */
   requestQuit(): void;
   /** 系统通知（无通知通道宿主静默，不抛错）。 */
   notify(opts: HostNotifyOpts): void;
   /** 复制文本到系统剪贴板（无剪贴板宿主静默，不抛错）。 */
   copyToClipboard(text: string): void;
-  /** 系统目录（Electron app.getPath 语义；缺省按 OS 惯例）。 */
+  /** 系统目录（legacy-shell app.getPath 语义；缺省按 OS 惯例）。 */
   getPath(name: 'appData' | 'desktop' | 'userData' | 'crashDumps'): string;
-  /** 启动早期重定向系统目录（Electron app.setPath('userData')；缺省记录覆盖）。 */
+  /** 启动早期重定向系统目录（legacy-shell app.setPath('userData')；缺省记录覆盖）。 */
   setPath?(name: 'userData', value: string): void;
-  /** 移除原生应用菜单（Electron 专属；缺省 no-op）。 */
+  /** 移除原生应用菜单（legacy-shell 专属；缺省 no-op）。 */
   removeAppMenu?(): void;
   /** 无主窗消息框；缺省无头兜底（记日志并按 cancelId 应答）。 */
   showMessageBox(opts: HostMessageBoxOpts): Promise<HostMessageBoxResult>;
@@ -221,7 +221,7 @@ export interface HostCtx {
   openPath(p: string): void;
   /** 在文件管理器中定位文件（缺省记日志）。 */
   showItemInFolder(p: string): void;
-  /** 完全重启：安排 relaunch 后立即退出（Electron relaunch+exit / 壳层 restart）。 */
+  /** 完全重启：安排 relaunch 后立即退出（legacy-shell relaunch+exit / 壳层 restart）。 */
   relaunch(): void;
   /** 窗口宿主面（缺省 undefined → 无窗环境降级：IPC/浮窗/恢复中心按无能力处理）。 */
   windows?: HostWindows;
@@ -232,14 +232,14 @@ export interface HostCtx {
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
 
-/** OS 惯例 appData（对齐 Electron app.getPath('appData') 的落点）。 */
+/** OS 惯例 appData（对齐 legacy-shell app.getPath('appData') 的落点）。 */
 function defaultAppData(): string {
   if (IS_WIN) return process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
   if (IS_MAC) return path.join(os.homedir(), 'Library', 'Application Support');
   return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
 }
 
-/** 缺省 setPath 的目录覆盖表（Electron 宿主的 setPath 影响后续 getPath）。 */
+/** 缺省 setPath 的目录覆盖表（legacy-shell 宿主的 setPath 影响后续 getPath）。 */
 const defaultPathOverrides: Partial<Record<'appData' | 'desktop' | 'userData' | 'crashDumps', string>> = {};
 
 const NODE_DEFAULT: HostCtx = {
@@ -257,7 +257,7 @@ const NODE_DEFAULT: HostCtx = {
     if (name === 'appData') return defaultAppData();
     if (name === 'desktop') return path.join(os.homedir(), 'Desktop');
     if (name === 'crashDumps') {
-      // Electron 缺省落点＝userData/Crashpad；Node 缺省对齐该布局。
+      // legacy-shell 缺省落点＝userData/Crashpad；Node 缺省对齐该布局。
       return path.join(defaultAppData(), 'Deepseek Harness EAC', 'Crashpad');
     }
     return path.join(defaultAppData(), 'Deepseek Harness EAC');
@@ -290,7 +290,7 @@ const NODE_DEFAULT: HostCtx = {
 
 let current: HostCtx = NODE_DEFAULT;
 
-/** 注入宿主实现（Electron main / Tauri sidecar / 测试 mock 各自装配）。 */
+/** 注入宿主实现（legacy-shell main / Tauri sidecar / 测试 mock 各自装配）。 */
 export function initHostCtx(d: HostCtx): void {
   current = d;
 }

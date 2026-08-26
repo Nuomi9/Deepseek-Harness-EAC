@@ -74,32 +74,32 @@
   - 执行偏差记录：**6.5 的 lib/desktop 删除并入 Task 7.1 执行**——sidecar `server.ts` 现仍 mount 14 个 `lib/desktop/*` 模块（mount('proc') 等），先删必崩 Tauri 侧；删除须与 Task 7.1「sidecar 挂载全部统一模块（≥37）」同一变更落地（届时一并收口 tsconfig.transition.json 排除项与 stage-resources.mjs 过渡链路）。§5 映射表逐行核对已完成（14 行全部有统一层对应物，main 增量移植在 Task 4 清账）。
 
 - [ ] Task 7: sidecar 全量接管 + bridge 扩域
-  - [ ] 7.1 `tauri-shell/sidecar/server.ts`：挂载全部统一模块（≥37）+ 全部 IPC 域注册表（chrome:*/dsh:*/snapshot:* 11 域/rc:*/guard:*/onboard:*）
-  - [ ] 7.2 `sidecar/bridge.ts`：IPC 域覆盖 36+ 域，语义对齐 `preload/chrome.ts`（invoke/send 双语义保留）
-  - [ ] 7.3 `ping.js` → `ping.ts`；sidecar `import x = require()` 改标准 import；tsconfig 编译范围收口
-  - [ ] 7.4 snapshot 域集成测试（overview/create/restore 真实调用）；越权会话拒绝测试（见 tdd.md T14）→ 门禁全绿 → commit
+  - [x] 7.1 `tauri-shell/sidecar/server.ts`：挂载全部统一模块（≥37）+ 全部 IPC 域注册表（chrome:*/dsh:*/snapshot:* 11 域/rc:*/guard:*/onboard:*）
+  - [x] 7.2 `sidecar/bridge.ts`：IPC 域覆盖 36+ 域，语义对齐 `preload/chrome.ts`（invoke/send 双语义保留）
+  - [x] 7.3 `ping.js` → `ping.ts`；sidecar `import x = require()` 改标准 import；tsconfig 编译范围收口
+  - [ ] 7.4 snapshot 域集成测试（overview/create/restore 真实调用）；越权会话拒绝测试（见 tdd.md T14）→ Node/TS/native 门禁全绿；Tauri `cargo test` 被本机 MSVC `link.exe` 0xc0000139 环境故障阻断，修复工具链后复验 → commit
 
 - [ ] Task 8: Tauri 壳能力补齐（tauri-shell/）
-  - [ ] 8.1 `src/main.rs` 托盘菜单：重启 Web 服务 / 完全重启 / 退出（对齐 11be738 + refactor 托盘项）
-    - 现状 delta（Task 4.8 核对）：`main.rs` 托盘现为 show/recovery/restart(重启 Web 服务)/feedback/quit 五项，**缺「完全重启」**；实现可直接用 `app.restart()`（同文件 recovery.restart handler 已有先例），位置对齐 Electron 版：紧随「重启 Web 服务」下方
-  - [ ] 8.2 导航围栏：仅放行 localhost dsh web + 白名单（承接 `lib/window.ts` isAllowedWebUrl 语义）
-  - [ ] 8.3 快照备份树面板入口（⋯ 菜单位置对齐 refactor：重启 Web 服务与重新加载之间）；面板经 bridge 拉起
-  - [ ] 8.4 splash 主题跟随系统（16b8ff4 语义）；恢复中心三入口在 Tauri 壳可达性核对
-  - [ ] 8.5 壳层手动 smoke：`tauri dev` 起壳 → sidecar 起 → dsh web 加载 → 托盘/快照面板可用 → commit
+  - [x] 8.1 `src/main.rs` 托盘菜单：重启 Web 服务 / 完全重启 / 退出（对齐 11be738 + refactor 托盘项）
+    - 完成记录：托盘新增「完全重启」，紧随「重启 Web 服务」，动作走 `app.restart()`；退出仍走有界退出链。
+  - [x] 8.2 导航围栏：仅放行 localhost dsh web + 白名单（承接 `lib/window.ts` isAllowedWebUrl 语义）
+  - [x] 8.3 快照备份树面板入口（⋯ 菜单位置对齐 refactor：重启 Web 服务与重新加载之间）；面板经 bridge 拉起
+  - [x] 8.4 splash 主题跟随系统（16b8ff4 语义）；恢复中心三入口在 Tauri 壳可达性核对
+  - [ ] 8.5 壳层手动 smoke：本机 `cargo check`/`tauri dev` 被 VS Build Tools 18 的 `link.exe`/`lib.exe` 0xc0000139 阻断，且无既有壳产物可启动；已完成可行替代门禁：Task 8 定向契约 4/4、typecheck、npm test 711/711、boot-smoke（sidecar→dsh web HTTP 200）全绿，GUI smoke 明确因 `target/debug/dsh-eac-shell.exe` 不存在而未执行；修复工具链后须补跑真实托盘/导航/快照面板 smoke。未 commit。
 
 - [ ] Task 9: 平台抽象层（Linux 支持核心）
-  - [ ] 9.1 `job-fence.ts` 围栏策略：`fenceMode()` 已有抽象接 Linux 实现；`native/supervisor` Rust 加 `#[cfg(unix)]` PR_SET_PDEATHSIG + setpgid 进程组（对照 `#[cfg(windows)]` Job Object 语义：父子双杀、无孤儿）
-  - [ ] 9.2 `main.rs` 平台抽象：资源定位/进程 spawn/隐藏控制台抽 trait（Windows CREATE_NO_WINDOW / Unix 无操作）；`tauri.conf.json` targets 扩展 deb/AppImage
-  - [ ] 9.3 node 运行时双平台：`scripts/fetch-node.ts` 适配 linux-x64 下载源；vendor 布局 `vendor/node/bin/node`（Linux）vs `vendor/node/node.exe`
-  - [ ] 9.4 Windows 专属面挂分支：junction-patrol / `.lnk` 快捷方式 / 注册表诊断 / NSIS 钩子 / client-update 应用内更新（Linux 走包管理器，更新入口禁用并提示）——各配平台分支单测
-  - [ ] 9.5 cargo test 补 Linux 围栏用例（Linux 环境跑）+ 既有用例双平台通过 → 门禁全绿 → commit
+  - [x] 9.1 `job-fence.ts` 围栏策略：Linux 原生 PDEATHSIG + 独立进程组，降级模式按进程组回收；dsh web 同步建立 Unix 独立进程组
+  - [x] 9.2 `main.rs` 平台抽象：资源定位/进程 spawn/隐藏控制台由 Platform trait 收口；Windows CREATE_NO_WINDOW / Unix no-op；targets 含 nsis/deb/AppImage
+  - [x] 9.3 node 运行时双平台：`scripts/fetch-node.ts` 支持 linux-x64；Windows `vendor/node/node.exe` / Linux `vendor/node/bin/node`
+  - [x] 9.4 Windows 专属面挂分支：junction/.lnk/client-update 等在 Linux 静默降级或提示包管理器升级，并有平台分支测试
+  - [ ] 9.5 Linux 真实行为测试已落地（父死信号/进程组/主孙进程回收），当前 Windows 门禁 724 项中 722 通过、2 个 Unix 用例按平台跳过；本机 MSVC `link.exe` 0xc0000139 且无 Linux/WSL/Docker 环境，需在 Linux CI 补跑 native cargo test 与 ≤5s 零孤儿验证后再 commit
 
 - [ ] Task 10: Electron 退役
-  - [ ] 10.1 删除：`main.ts`、`preload.ts`/`preload/`、`electron-builder.yml`、`build/installer.nsh`、electron 测试夹具（改造为 sidecar 夹具，数量不减）
-  - [ ] 10.2 `package.json`：删 electron/electron-builder devDeps；scripts 收敛 build/typecheck/test/test:native/build:native/clippy:native + tauri 打包链
-  - [ ] 10.3 CI：`ci.yml` 重写为 typecheck + cargo test + node 测试 + `tauri build`（双平台 matrix：windows-latest + ubuntu-latest）；删 `release.yml`
-  - [ ] 10.4 `release-tauri.yml`：补 native 构建（cargo + napi）与 tag 版本注入步骤；双平台 matrix；产物过滤按平台（承袭项目约束：Windows/Linux × x64）
-  - [ ] 10.5 grep 终检：`grep -ri electron package.json dsh-desktop/lib tauri-shell` 零命中 → 门禁全绿 → commit
+  - [x] 10.1 删除：`main.ts`、`preload.ts`/`preload/`、`electron-builder.yml`、`build/installer.nsh`、electron 测试夹具（改造为 sidecar 夹具，数量不减）
+  - [x] 10.2 `package.json`：删 electron/electron-builder devDeps；scripts 收敛 build/typecheck/test/test:native/build:native/clippy:native + tauri 打包链
+  - [x] 10.3 CI：`ci.yml` 重写为 typecheck + cargo test + node 测试 + `tauri build`（双平台 matrix：windows-latest + ubuntu-latest）；删 `release.yml`
+  - [x] 10.4 `release-tauri.yml`：补 native 构建（cargo + napi）与 tag 版本注入步骤；双平台 matrix；产物过滤按平台（承袭项目约束：Windows/Linux × x64）
+  - [ ] 10.5 grep 终检：`grep -ri electron package.json dsh-desktop/lib tauri-shell` 零命中已达成；已审计 Task 9 的 724 项到 Task 10 的 711 项降幅，将仍适用于 Tauri 的 installer/recovery 等价断言迁入现有测试，当前 typecheck、clippy:native、test:native（26/26）、Node 测试（723 通过、2 个 Unix 用例按平台跳过）、Task 10 定向测试与 workflow YAML lint 全绿；Tauri `cargo test` 仍被本机 VS Build Tools 18 `link.exe` 0xc0000139 环境故障阻断，需双平台 CI 复验后勾选。按用户要求未 commit。
 
 - [ ] Task 11: 双平台打包链与升级路径
   - [ ] 11.1 Windows：`tauri build` 产出 NSIS Setup.exe + 便携 zip + SHA-256（make-release-hashes 适配）

@@ -63,8 +63,9 @@ function prepareLldLink(): string {
 
 /** 以 lld-link 为链接器调用 cargo（返回 cargo 退出码）。 */
 function runCargo(sub: string, rest: string[]): number {
-  const linker = prepareLldLink();
-  const env = { ...process.env, RUSTFLAGS: `-C linker=${linker}` };
+  const env = process.platform === 'win32'
+    ? { ...process.env, RUSTFLAGS: `-C linker=${prepareLldLink()}` }
+    : process.env;
   const r = spawnSync('cargo', [sub, '--manifest-path', manifest, ...rest], {
     stdio: 'inherit',
     env,

@@ -17,7 +17,7 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { createFence, fenceMode, type FenceHandle } from './job-fence.js';
+import { createFence, fenceMode, type FenceHandle, type FenceMode } from './job-fence.js';
 import { RpcPeer } from './rpc.js';
 import { readRegistry, writeRegistry } from '../supervisor/registry.js';
 import type { RegistryEntry } from '../supervisor/registry.js';
@@ -143,7 +143,7 @@ export class ExtensionHostManager {
   }
 
   /** Host 围栏档位（win32-job / taskkill-fallback，恢复中心展示用）。 */
-  fenceMode(): 'win32-job' | 'taskkill-fallback' {
+  fenceMode(): FenceMode {
     return fenceMode();
   }
 
@@ -434,7 +434,7 @@ export class ExtensionHostManager {
 }
 
 // ---------------------------------------------------------------------------
-// 生产单例（Electron 主进程装配；测试直接 new ExtensionHostManager(opts)）
+// 生产单例（legacy-shell 主进程装配；测试直接 new ExtensionHostManager(opts)）
 // ---------------------------------------------------------------------------
 
 let defaultManager: ExtensionHostManager | null = null;
@@ -442,7 +442,7 @@ let defaultManager: ExtensionHostManager | null = null;
 /** 生产 Manager：内置 node.exe + 根目录 host-bootstrap.js。 */
 export function getExtensionHostManager(): ExtensionHostManager {
   if (defaultManager) return defaultManager;
-  // proc.ts 依赖 electron —— 仅在 Electron 主进程装配时按需加载。
+  // proc.ts 依赖 legacy-shell —— 仅在 legacy-shell 主进程装配时按需加载。
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { nodeExe } = require('../proc.js') as typeof import('../proc.js');
   defaultManager = new ExtensionHostManager({

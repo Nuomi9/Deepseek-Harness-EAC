@@ -1,6 +1,6 @@
 /**
  * lib/tray.ts — 系统托盘与退出策略（Task 3.2 自 main.js 提取；Task 6 Wave 2
- * 宿主中立化：本模块不再 import electron）。
+ * 宿主中立化：本模块不再 import legacy-shell）。
  *
  *   退出行为三档（ask/minimize/quit，含旧 closeToTray 布尔迁移）；
  *   showMainWindow（bridge 注入给各域通知回调）；
@@ -8,14 +8,14 @@
  *   createTray / trayHintOnce（托盘生命周期，整体委托 hostCtx().tray）；
  *   repoUrls / showAbout（关于对话框）。
  *
- * Tray/Menu 的原生实现不驻留本模块：Electron 实现由 Wave 3 在顶层
- * host-electron/ 提供（经 hostCtx().tray 注入），Tauri Rust 壳的托盘接线在
+ * Tray/Menu 的原生实现不驻留本模块：legacy-shell 实现由 Wave 3 在顶层
+ * host-legacy-shell/ 提供（经 hostCtx().tray 注入），Tauri Rust 壳的托盘接线在
  * Task 8。宿主托盘实现契约：
  *   · create()：创建托盘后置位 state.trayActive（图标缺失等静默跳过时保持
  *     false；托盘存在性判断统一走 state.trayActive）；
  *   · 菜单规格实时经 buildTrayMenuSpec() 拉取（checkbox 态随设置变化），
  *     菜单项点击/勾选把 action（及 checkbox 新态）转发 executeTrayAction()；
- *   · 托盘单击/双击行为约定（对齐原 Electron 实现）：单击＝主窗可见则隐藏、
+ *   · 托盘单击/双击行为约定（对齐原 legacy-shell 实现）：单击＝主窗可见则隐藏、
  *     否则 showMainWindow()；双击＝showMainWindow()。
  */
 
@@ -133,8 +133,8 @@ export async function showAbout(): Promise<void> {
 }
 
 /**
- * 托盘菜单结构化规格：宿主实现（Electron Wave 3 / Rust 壳 Task 8）据此构建
- * 原生菜单；checkbox 项勾选态每次拉取时求值。项集与原 Electron 菜单一一对齐。
+ * 托盘菜单结构化规格：宿主实现（legacy-shell Wave 3 / Rust 壳 Task 8）据此构建
+ * 原生菜单；checkbox 项勾选态每次拉取时求值。项集与原 legacy-shell 菜单一一对齐。
  */
 export function buildTrayMenuSpec(): TrayMenuItem[] {
   return [

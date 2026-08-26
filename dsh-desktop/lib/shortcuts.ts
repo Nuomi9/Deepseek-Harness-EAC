@@ -14,7 +14,7 @@ import * as updater from '../updater.js';
 import { state } from './state.js';
 import { log } from './log.js';
 import { hostCtx } from './host-ctx.js';
-import { IS_WIN, updCtx } from './proc.js';
+import { updCtx } from './proc.js';
 import {
   STANDARD_SHORTCUT_NAME,
   RUNTIME_SHORTCUT_DESCRIPTION,
@@ -28,6 +28,10 @@ import {
 
 /** 图标设计版本：更换图标时 +1，触发所有快捷方式图标刷新。 */
 export const SHORTCUT_ICON_VERSION = 'whale-2';
+
+export function shortcutMaintenanceSupported(platform: NodeJS.Platform): boolean {
+  return platform === 'win32';
+}
 
 /** 快捷方式目标/图标选项（shell.writeShortcutLink 入参）。 */
 interface ShortcutOpts {
@@ -69,7 +73,7 @@ function listLnkFiles(dir: string): string[] {
 /** 安全读 .lnk（损坏/宿主无 .lnk 能力返回 null）。 */
 function readLnkSafe(p: string): LnkLike | null {
   try {
-    // Task 5.2：.lnk 读写经宿主上下文注入（Electron shell / sidecar PowerShell
+    // Task 5.2：.lnk 读写经宿主上下文注入（legacy-shell shell / sidecar PowerShell
     // WScript.Shell 实现，见 sidecar/server.ts）；无能力宿主返回 null。
     return (hostCtx().shortcuts?.readLink(p) ?? null) as LnkLike | null;
   } catch {
@@ -108,8 +112,8 @@ function collectDesktopShortcutEntries(
  */
 export function maintainShortcuts(): void {
   const host = hostCtx();
-  if (!host.isPackaged() || !IS_WIN) return;
-  // Task 5.2：.lnk 能力由宿主注入（Electron shell / sidecar PowerShell）；
+  if (!host.isPackaged() || !shortcutMaintenanceSupported(process.platform)) return;
+  // Task 5.2：.lnk 能力由宿主注入（legacy-shell shell / sidecar PowerShell）；
   // 宿主不提供（如 Linux壳）时整体静默跳过维护。
   const lnk = host.shortcuts;
   if (!lnk) return;

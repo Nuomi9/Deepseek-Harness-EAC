@@ -23,7 +23,7 @@ let sinkOverride: LogSink | null = null;
  * 注入日志出口（Tauri sidecar boot 链调用，幂等；Task 3.5 吸收 main 侧
  * vnext-absorb 变体的导出面）。设置后 log() 只走注入 sink（sidecar 的
  * stderr → Rust 壳统一收集），不再写 desktop.log/结构化通道——两通道的
- * 初始化依赖 Electron userData 流程，sidecar 宿主不适用。Electron 宿主
+ * 初始化依赖 legacy-shell userData 流程，sidecar 宿主不适用。legacy-shell 宿主
  * 不调用本函数，行为保持双通道不变。
  */
 export function setLogSink(fn: LogSink | null): void {

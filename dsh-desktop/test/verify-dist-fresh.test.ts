@@ -30,9 +30,11 @@ function makeRepo() {
       utimesSync(fp, t, t);
     }
   };
-  touch('src', ['main.js'], T0);
-  touch('build', ['installer.nsh'], T0);
-  touch('dist', ['App-Setup-x64.exe', 'App-Portable-x64.exe'], T1);
+  touch('src', ['server.ts'], T0);
+  touch('tauri-shell', ['installer-hooks.nsh'], T0);
+  touch(join('target', 'release', 'bundle', 'nsis'), ['App-Setup-x64.exe'], T1);
+  touch(join('target', 'release', 'bundle', 'deb'), ['app_amd64.deb'], T1);
+  touch(join('target', 'release', 'bundle', 'appimage'), ['App.AppImage'], T1);
   return root;
 }
 
@@ -50,19 +52,19 @@ test('passes when artifacts are newer than every source file', () => {
 test('fails and names the offending file when a source is newer than artifacts', () => {
   const root = makeRepo();
   try {
-    utimesSync(join(root, 'build', 'installer.nsh'), T2, T2);
+    utimesSync(join(root, 'tauri-shell', 'installer-hooks.nsh'), T2, T2);
     const r = verifyDistFresh(root);
     assert.equal(r.ok, false);
-    assert.ok(r.offenders.some((o) => o.includes('installer.nsh')), 'offender listed, got: ' + JSON.stringify(r.offenders));
+    assert.ok(r.offenders.some((o) => o.includes('installer-hooks.nsh')), 'offender listed, got: ' + JSON.stringify(r.offenders));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('ignores changes under dist/, node_modules/ and vendor/', () => {
+test('ignores changes under target/, node_modules/ and vendor/', () => {
   const root = makeRepo();
   try {
-    utimesSync(join(root, 'dist', 'App-Setup-x64.exe'), T2, T2);
+    utimesSync(join(root, 'target', 'release', 'bundle', 'nsis', 'App-Setup-x64.exe'), T2, T2);
     mkdirSync(join(root, 'node_modules', 'foo'), { recursive: true });
     const nm = join(root, 'node_modules', 'foo', 'index.js');
     writeFileSync(nm, 'x');
@@ -78,10 +80,10 @@ test('ignores changes under dist/, node_modules/ and vendor/', () => {
   }
 });
 
-test('fails when no artifacts exist in dist/', () => {
+test('fails when no Tauri bundle artifacts exist', () => {
   const root = makeRepo();
   try {
-    rmSync(join(root, 'dist'), { recursive: true, force: true });
+    rmSync(join(root, 'target'), { recursive: true, force: true });
     const r = verifyDistFresh(root);
     assert.equal(r.ok, false);
     assert.ok(/no .*artifacts/i.test(r.error || ''), 'must report missing artifacts');

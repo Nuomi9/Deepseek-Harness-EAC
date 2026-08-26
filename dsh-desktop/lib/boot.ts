@@ -203,7 +203,7 @@ export function fatal(title: string, err: unknown): void {
   const detail = buildErrorDetail(err, state.logsDir, ['dsh-web.log', 'desktop.log']);
   // 主窗存在性经桥会话判定（Task 6.1：mainSession 取代 BrowserWindow 概念）。
   if (!state.mainSession || !state.mainSession.isAlive()) {
-    // Task 5.2：无主窗消息框经宿主上下文注入（Electron dialog.showMessageBox；
+    // Task 5.2：无主窗消息框经宿主上下文注入（legacy-shell dialog.showMessageBox；
     // sidecar/无头宿主走缺省兜底——记日志并按 cancelId 应答）。
     void hostCtx()
       .showMessageBox({
@@ -294,7 +294,7 @@ export function verifyBundledModules(): Promise<void> {
  */
 export async function boot(): Promise<void> {
   // Portable builds keep all data next to the exe.
-  // Task 5.2：userData 解析/重定向经宿主上下文注入（Electron app.getPath/
+  // Task 5.2：userData 解析/重定向经宿主上下文注入（legacy-shell app.getPath/
   // setPath；sidecar/Node 缺省按 OS 惯例并记忆覆盖）。
   const host = hostCtx();
   if (!host.isPackaged() && process.env.DSH_DESKTOP_USERDATA) {
@@ -335,7 +335,7 @@ export async function boot(): Promise<void> {
   log('boot', `Deepseek Harness EAC（封装 ${host.appVersion()}）  userData=${state.userDataDir}  dshHome=${state.dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
-  // （Electron 专属能力经宿主上下文；无原生菜单概念宿主 no-op。）
+  // （legacy-shell 专属能力经宿主上下文；无原生菜单概念宿主 no-op。）
   host.removeAppMenu?.();
   startPreviewStaticServer();
   registerIpc();

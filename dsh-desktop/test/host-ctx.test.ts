@@ -168,11 +168,8 @@ test('原 electron 面 6 模块改经 host-ctx 注入宿主能力', () => {
 // 3. 双宿主接线 + 打包清单
 // ---------------------------------------------------------------------------
 
-test('双宿主注入接线：main.ts（Electron）与 sidecar（Tauri）各自装配 initHostCtx', () => {
-  const mainSrc = readFileSync(join(root, 'main.ts'), 'utf8');
+test('Tauri sidecar 装配统一 HostCtx', () => {
   const sidecarSrc = readFileSync(join(root, '..', 'tauri-shell', 'sidecar', 'server.ts'), 'utf8');
-  assert.match(mainSrc, /initHostCtx\(\{/, 'main.ts 须装配 Electron 宿主适配器');
-  assert.match(mainSrc, /from 'electron'/, 'main.ts 作为组合根是 electron import 的合法装配点');
   assert.match(sidecarSrc, /initHostCtx\(\{/, 'sidecar/server.ts 须装配 Tauri 宿主适配器');
   assert.match(sidecarSrc, /shell\.quit-for-update/, 'sidecar requestQuit 须走壳层有界收口通道');
 });
@@ -180,6 +177,4 @@ test('双宿主注入接线：main.ts（Electron）与 sidecar（Tauri）各自�
 test('打包清单：sidecar 运行时依赖 lib/host-ctx.js 已入 stage-resources 清单', () => {
   const stageSrc = readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
   assert.match(stageSrc, /'host-ctx\.js'/, 'LIB_VNEXT 须含 host-ctx.js（否则打包态 sidecar 启动即 MODULE_NOT_FOUND）');
-  const yml = readFileSync(join(root, 'electron-builder.yml'), 'utf8');
-  assert.match(yml, /lib\/host-ctx\.js/, 'electron-builder files 须含 lib/host-ctx.js');
 });

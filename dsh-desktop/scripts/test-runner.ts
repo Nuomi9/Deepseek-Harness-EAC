@@ -13,7 +13,9 @@ import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const VENDOR_NODE = path.join(__dirname, '..', 'vendor', 'node', 'node.exe');
+const VENDOR_NODE = process.platform === 'win32'
+  ? path.join(__dirname, '..', 'vendor', 'node', 'node.exe')
+  : path.join(__dirname, '..', 'vendor', 'node', 'bin', 'node');
 
 /** 取 node 主版本号（--version 输出形如 v26.7.0）；失败返回 0。 */
 function majorOf(exe: string): number {

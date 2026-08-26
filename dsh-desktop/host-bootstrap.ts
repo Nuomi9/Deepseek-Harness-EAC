@@ -28,6 +28,22 @@ import type {
   PingParams, SdkEventParams,
 } from './shared/protocol.js';
 
+if (process.platform !== 'win32') {
+  process.once('SIGTERM', () => {
+    try {
+      process.kill(-process.pid, 'SIGKILL');
+    } catch {
+      process.exit(0);
+    }
+  });
+  try {
+    const native = require('./native/supervisor/index.node') as { armParentDeathSignal?: () => void };
+    native.armParentDeathSignal?.();
+  } catch {
+    process.stdin.once('close', () => process.exit(0));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 插件装载状态（init 后填充）
 // ---------------------------------------------------------------------------

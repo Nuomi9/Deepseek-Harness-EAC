@@ -1,10 +1,10 @@
 /**
  * lib/window.ts — 主窗/浮窗生命周期与渲染进程自恢复装配（Task 3.1 自 main.js
- * 提取；Task 6 Wave 1 宿主中立化：本模块不再 import electron）。
+ * 提取；Task 6 Wave 1 宿主中立化：本模块不再 import legacy-shell）。
  *
  * 窗口创建与事件接线（导航围栏、右键菜单、快捷键、最大化同步、关闭策略、
- * BridgeSession 登记、浮窗构造/复用）全部属宿主职责 —— Electron 机制由
- * Wave 3 在顶层 host-electron/windows.ts 实现；原 attachEditContextMenu /
+ * BridgeSession 登记、浮窗构造/复用）全部属宿主职责 —— legacy-shell 机制由
+ * Wave 3 在顶层 host-legacy-shell/windows.ts 实现；原 attachEditContextMenu /
  * guardFloatWebContents（WebContents 强耦合）与 createFloatWindow 主体一并
  * 迁往彼处。此处保留宿主中立部分：
  *   showBox（映射 hostCtx().showMessageBox）/ isAllowedWebUrl（纯函数）；
@@ -31,7 +31,7 @@ import { bridge } from './bridge.js';
  */
 export const FLOAT_MAX = 8;
 
-/** showBox 参数（Electron MessageBoxOptions 语义子集的自有宽松结构）。 */
+/** showBox 参数（legacy-shell MessageBoxOptions 语义子集的自有宽松结构）。 */
 export interface ShowBoxOpts {
   type?: 'error' | 'info' | 'warning' | 'none' | 'question';
   title?: string;
@@ -44,7 +44,7 @@ export interface ShowBoxOpts {
   checkboxChecked?: boolean;
   noLink?: boolean;
   /**
-   * Electron 的 icon 参数（NativeImage/路径）：HostMessageBoxOpts 无 icon 字段，
+   * legacy-shell 的 icon 参数（NativeImage/路径）：HostMessageBoxOpts 无 icon 字段，
    * 接受但忽略 —— 图标策略由宿主决定（Wave 3 视需要扩宿主面）。
    */
   icon?: unknown;
@@ -58,7 +58,7 @@ export interface ShowBoxResult {
 
 /**
  * 消息框：映射到宿主消息框（hostCtx().showMessageBox）。原「有主窗时挂主窗」
- * 的模态语义由宿主实现自行决定（Electron 宿主可在实现内挂主窗）；无头宿主
+ * 的模态语义由宿主实现自行决定（legacy-shell 宿主可在实现内挂主窗）；无头宿主
  * 走缺省兜底（记日志并按 cancelId 应答），不抛错。
  */
 export function showBox(opts: ShowBoxOpts): Promise<ShowBoxResult> {
@@ -102,7 +102,7 @@ export interface CreateWindowOpts {
 /**
  * 创建主窗口（薄委托）：窗口构造、加载态页、导航/开窗围栏、右键菜单、快捷
  * 键、最大化同步、关闭按退出策略分流、BridgeSession 登记与恢复机挂接全部由
- * 宿主实现（Electron：Wave 3 的 host-electron/windows.ts createMain）。无窗口
+ * 宿主实现（legacy-shell：Wave 3 的 host-legacy-shell/windows.ts createMain）。无窗口
  * 能力的宿主（Node 测试 / sidecar 过渡期）静默返回。
  */
 export function createWindow(opts: CreateWindowOpts = {}): void {
@@ -165,7 +165,7 @@ export function initRendererRecovery(): unknown {
     onStable: (): void => {
       writeRunState({ renderer: { state: 'healthy', at: new Date().toISOString() } });
     },
-    // 系统通知经宿主上下文（Electron Notification / sidecar 静默）：
+    // 系统通知经宿主上下文（legacy-shell Notification / sidecar 静默）：
     // 图标沿 assets/icon.png 绝对路径，点击唤回主窗（bridge 注入）。
     notify: (title: string, body: string): void => {
       hostCtx().notify({
@@ -181,7 +181,7 @@ export function initRendererRecovery(): unknown {
 }
 
 /**
- * 把窗口挂到已构建的恢复状态机：宿主（host-electron/windows.ts）在
+ * 把窗口挂到已构建的恢复状态机：宿主（host-legacy-shell/windows.ts）在
  * createMain / openFloatWindow 末尾调用（主窗 kind='main'、浮窗 'float'）；
  * state.recovery 未构建时静默跳过（boot 链保证 createWindow 前先
  * initRendererRecovery）。

@@ -1,7 +1,7 @@
 /**
  * lib/plugin-guard/index.ts — 插件保护中心装配出口（Task 6.3）。
  *
- * 融合社区三大保护插件并升华（跑在 Electron 主进程，快照/回滚发生在
+ * 融合社区三大保护插件并升华（跑在 legacy-shell 主进程，快照/回滚发生在
  * 「无服务进程持锁」的重启间隙）：
  *   lxzy-7/dsh-plugin-guard          → 安装前快照 / 一键与自动回滚 / 守护启动 /
  *                                      事故报告（snapshot.ts + heal.ts）

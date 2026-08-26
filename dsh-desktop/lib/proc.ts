@@ -23,13 +23,18 @@ import { hostCtx } from './host-ctx.js';
 /** 是否运行在 Windows（进程回收策略分支依据）。 */
 export const IS_WIN = process.platform === 'win32';
 
+export function nodeRuntimeRelativePath(platform: NodeJS.Platform): string {
+  return platform === 'win32'
+    ? path.join('vendor', 'node', 'node.exe')
+    : path.join('vendor', 'node', 'bin', 'node');
+}
+
 /** 内置 node.exe：打包后在 resources/node/，开发态在 vendor/node/。 */
 export function nodeExe(): string {
-  // Task 5.2：打包态/资源根经宿主上下文注入（Electron app / Tauri sidecar /
-  // Node 测试各按宿主语义提供；缺省＝开发态 vendor 布局）。
   const host = hostCtx();
-  if (host.isPackaged()) return path.join(host.resourcesPath(), 'node', 'node.exe');
-  return path.resolve(__dirname, '..', 'vendor', 'node', 'node.exe');
+  const executable = process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node');
+  if (host.isPackaged()) return path.join(host.resourcesPath(), 'node', executable);
+  return path.resolve(__dirname, '..', nodeRuntimeRelativePath(process.platform));
 }
 
 /** 内置 npm CLI 入口：与 node.exe 同源的 vendor npm 分发。 */
@@ -115,7 +120,7 @@ export interface KillTreeAndWaitOpts {
  * 退出路径专用的有界同步回收（V4 修复「退出后残留一对进程」）。
  *
  * 旧实现在 before-quit 里调用 killTree —— 强杀补刀挂在 1500ms 的
- * setTimeout 上，而 Electron 在 before-quit 后数百毫秒内就退出，定时器
+ * setTimeout 上，而 legacy-shell 在 before-quit 后数百毫秒内就退出，定时器
  * 随主进程湮灭；无 /F 的 taskkill 对控制台进程（node.exe 没有顶层窗口，
  * 无处投递 WM_CLOSE）基本无效。结果：dsh web 的 node.exe 连同它的
  * conhost.exe 每次退出都原样残留。

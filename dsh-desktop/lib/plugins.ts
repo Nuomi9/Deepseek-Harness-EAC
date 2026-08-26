@@ -300,7 +300,7 @@ export function syncCompanionPlugins(): void {
     if (migratedBuiltins.length) {
       try {
         const names = migratedBuiltins.map((m) => m.name).join('、');
-        // Task 5.2：系统通知经宿主上下文注入（Electron Notification / sidecar
+        // Task 5.2：系统通知经宿主上下文注入（legacy-shell Notification / sidecar
         // stderr / 测试 mock）；点击回调语义保持。
         hostCtx().notify({
           title: '内置插件已接管同名市场包',

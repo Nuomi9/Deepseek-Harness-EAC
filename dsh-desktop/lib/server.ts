@@ -36,7 +36,7 @@ import {
   createDshWebLock,
   removeDshWebLock,
 } from './server-lock.js';
-import { killTree, waitForProcExit, nodeExe, updCtx, dshBin } from './proc.js';
+import { IS_WIN, killTree, waitForProcExit, nodeExe, updCtx, dshBin } from './proc.js';
 import { desktopProfile, desktopProfileDir } from './paths.js';
 import { bridge } from './bridge.js';
 import { allowBuilds } from './market-modules.js';
@@ -49,7 +49,6 @@ export function childEnv(): NodeJS.ProcessEnv {
     'DSH_SESSION_ID',
     'DSH_SESSION_JSONL',
     'DSH_SHELL',
-    'ELECTRON_RUN_AS_NODE',
     'NODE_OPTIONS',
   ]) {
     delete env[k];
@@ -149,6 +148,7 @@ export async function startServer(
         cwd: state.userDataDir,
         env: childEnv(),
         windowsHide: true,
+        detached: !IS_WIN,
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
@@ -330,7 +330,7 @@ export function watchServerProc(
             noLink: true,
           })
           .then(({ response }) => {
-            // Task 5.2：剪贴板/退出经宿主上下文注入（Electron clipboard/app；
+            // Task 5.2：剪贴板/退出经宿主上下文注入（legacy-shell clipboard/app；
             // sidecar 静默降级）。
             if (response === 0) hostCtx().copyToClipboard(detail);
             else if (response === 1)

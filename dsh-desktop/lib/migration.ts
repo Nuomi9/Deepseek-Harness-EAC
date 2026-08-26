@@ -1,6 +1,6 @@
 /**
  * lib/migration.ts — 历史迁移与一次性告警（Task 5.3 自 main.js 提取；Task 6
- * Wave 2 宿主中立化：本模块不再 import electron）。
+ * Wave 2 宿主中立化：本模块不再 import legacy-shell）。
  *
  * migrateFromSharedWebProfile：桌面端从共享 web profile 切到专属
  * web-desktop profile 的一次性迁移（三件事，全部幂等）；applyLegacySkinChoice

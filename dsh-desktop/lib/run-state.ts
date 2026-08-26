@@ -1,6 +1,6 @@
 /**
  * lib/run-state.ts — 运行状态标记与客户端更新崩溃自回退（Task 2.1 自
- * main.js 提取；Task 6 Wave 2 宿主中立化：本模块不再 import electron）。
+ * main.js 提取；Task 6 Wave 2 宿主中立化：本模块不再 import legacy-shell）。
  *
  * 三个子域（均为启动/退出链路，逻辑逐行等价迁移）：
  *   1) run-state.json：主进程写心跳式运行状态，watchdog.js（独立进程）轮询
@@ -194,7 +194,7 @@ export function offerBackupCleanupConfirm(): void {
   } catch {
     /* 忽略 */
   }
-  // 非阻塞异步（不阻塞主窗显示）：消息框经 showBox（映射宿主消息框，Electron
+  // 非阻塞异步（不阻塞主窗显示）：消息框经 showBox（映射宿主消息框，legacy-shell
   // 宿主可自行挂主窗为父窗；无头宿主按 cancelId 应答），回调中处理用户选择。
   const ageInfo =
     ageSec > 0

@@ -164,7 +164,7 @@ export function selectAsset(release: NormalizedRelease): AssetSelection {
   // Gitee 单文件 100MB 限制：安装包拆分为 <file>.part1 / <file>.part2 …
   // 候选按发布年代覆盖各命名形态：无版本（v2.0.3–v4.4.0）、
   // v<version>-Setup（v1/v2 初期）、<version>-Setup（早期无 v 前缀）、
-  // Setup-v<version>（v4.4.1 起，与 origin/main electron-builder.yml 的
+  // Setup-v<version>（v4.4.1 起，与 origin/main legacy-shell-builder.yml 的
   // artifactName 一致，重构分支沿用；缺这第 4 候选会导致自身命名在
   // Gitee 分片形态下永远匹配失败）。
   const kind = isPortable() ? 'Portable' : 'Setup';

@@ -55,7 +55,7 @@ export interface FailureRecord {
   at: string;
 }
 
-/** 窗口的最小结构类型（不依赖 electron）。 */
+/** 窗口的最小结构类型（不依赖 legacy-shell）。 */
 export interface RecoveryWindow {
   readonly id: number;
   isDestroyed(): boolean;

@@ -19,7 +19,7 @@ export const STANDARD_SHORTCUT_NAME = 'Deepseek Harness EAC.lnk';
 /** 运行时创建的快捷方式描述。 */
 export const RUNTIME_SHORTCUT_DESCRIPTION = 'DeepSeek Harness 桌面客户端';
 
-/** NSIS 安装器创建的快捷方式描述（electron-builder.nsh 中的中文描述原文）。 */
+/** NSIS 安装器创建的快捷方式描述（legacy-shell-builder.nsh 中的中文描述原文）。 */
 export const INSTALLER_SHORTCUT_DESCRIPTIONS = new Set([
   'DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI',
 ]);

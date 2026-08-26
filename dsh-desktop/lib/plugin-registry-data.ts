@@ -35,8 +35,10 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
   { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
+  { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
+  { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
   // 社区功能插件（视觉 / 人设 / 移动端布局修复）：npm registry
   // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
@@ -70,6 +72,7 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
   { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
+  { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
   // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
   // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
   // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
@@ -77,10 +80,13 @@ export const COMPANION_PLUGINS: CompanionPlugin[] = [
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
   // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
+  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
+  { id: 'settings-scroll-fix', name: 'dsh-settings-scroll-fix', dir: 'dsh-settings-scroll-fix' },
   // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
   // 临时目录 → 注入完整路径提示。默认禁用 —— 与内置 picturereader 的
   // 「粘贴即用/图片桥自动分析」入口语义重叠，避免粘贴图片时重复注入。
   { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
+  { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer', dir: 'dsh-webui-prompt-optimizer' },
 ];
 
 /** 曾内置、现已从内置清单移除的插件（vnext 同步自 main v4.5）。 */
