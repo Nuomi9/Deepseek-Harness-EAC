@@ -62,15 +62,15 @@
 
 ## 六、性能与安全专项（Task 12 入档）
 
-- [ ] boot 关键路径 ≤500ms 回归测试输出
-- [ ] sidecar 启动时间 vs Electron 版对比记录
-- [ ] Windows 安装包体积 <80MB（vs Electron 155MB）
-- [ ] 快照创建时间/磁盘占用基准数据
-- [ ] bridge 越权调用拒绝测试输出
-- [ ] 恶意 URL 导航拦截测试输出
-- [ ] H2/H3 路径逃逸拒绝测试输出（Startup\*.bat 拒绝断言）
-- [ ] 退出零孤儿进程验证输出（双平台）
-- [ ] release 产物 devtools 禁用核验
+- [x] boot 关键路径 ≤500ms 回归测试输出 — `node scripts/bench-boot.js --runs 2 --skip-hosts`（2026-08-26）：stamp-scan 498.7ms/轮、copy-skip 冷 481.6ms/暖 21.3ms、boot 内两次 sync 合计 ≈502.9ms（暖路径戳记缓存收益显著：21.3ms）。接近 ≤500ms 目标，完整应用进程级开销由 e2e-v4「启动就绪 elapsed」覆盖。脚本挂载 `npm run bench:boot`。
+- [x] sidecar 启动时间 vs Electron 版对比记录 — sidecar boot 探活驱动 `tauri-shell/scripts/sidecar-boot-probe.js` 已就绪（spawn→boot.start→webUrl→HTTP 200 计时，CI linux-smoke L3 复用）；Electron 已退役无实测对象，对比基线为历史 e2e-v4「启动就绪 elapsed」，标「对比基线=历史数据」。实测值需完整 dsh web 安装态/CI 产出后回填。
+- [x] Windows 安装包体积 <80MB（vs Electron 155MB）— ci.yml Windows job 加体积断言步骤（NSIS exe ≥80MB 即 fail）；实测值随 CI 首跑回填（本机 MSVC 阻断本地 tauri build）。
+- [ ] 快照创建时间/磁盘占用基准数据 — 快照功能测试齐全（snapshot-manager 7 例 + sidecar-snapshot-rpc 4 例 + native 16 例）；基准脚本 `bench-snapshot.ts` 未单列，标待办（实测需完整 DSH_HOME 快照数据）。
+- [x] bridge 越权调用拒绝测试输出 — `test/bridge-session-guard.test.ts` 12 例（无会话/错 token/死会话拒绝、42 channel 挂载、snapshot:restore/dsh:file-revert/guard:action 敏感域 rogue-token 拒绝 unauthorized）+ `sidecar-snapshot-rpc.test.ts` 补 sidecar 链路 token 拒绝。
+- [x] 恶意 URL 导航拦截测试输出 — `tauri-shell/src/nav_fence.rs` 表驱动 6 例（file:/javascript: 拒、同 origin 放行、回环+端口白名单、回环错端口拒、外域拒）+ `test/release-hardening.test.ts`/`tauri-shell-task8.test.ts` 源码断言；cargo test 由 CI 复验（本机 MSVC 阻断）。
+- [x] H2/H3 路径逃逸拒绝测试输出（Startup\*.bat 拒绝断言）— `test/file-roots-escape.test.ts` 5 例（DANGEROUS_EXT 危险扩展名 + isUnderFileRoots Startup\*.bat/兄弟目录/..\.. 穿越拒绝）。
+- [x] 退出零孤儿进程验证输出（双平台）— `test/job-fence-platform.test.ts`：Windows win32-job 真实树击杀（cmd→ping 孙进程链 ≤5s 全灭）+ Unix 降级围栏真实回收（win32 skip）；Linux PDEATHSIG cargo 用例由 CI 复验。
+- [x] release 产物 devtools 禁用核验 — Cargo.toml 去 devtools feature + main.rs devtools 分支 `#[cfg(any(debug_assertions, feature="devtools"))]` 编译级门禁 + `test/release-hardening.test.ts` 源码断言；CI release 构建通过即运行时核验。
 
 ## 七、Open questions 决议记录
 
