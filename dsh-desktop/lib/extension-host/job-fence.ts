@@ -39,12 +39,15 @@ interface NativeSupervisor {
   terminateJob(jobId: number, exitCode?: number): void;
   jobAlive(jobId: number): boolean;
   closeJob(jobId: number): void;
+  armParentDeathSignal?(): void;
   sha256Stream(path: string): string;
 }
 
 /** 围栏单进程句柄：stdio 流 + 树级强杀。 */
+export type FenceMode = 'win32-job' | 'unix-process-group' | 'taskkill-fallback' | 'process-group-fallback';
+
 export interface FenceHandle {
-  readonly mode: 'win32-job' | 'taskkill-fallback';
+  readonly mode: FenceMode;
   readonly pid: number;
   readonly stdin: Writable;
   readonly stdout: Readable;
@@ -61,7 +64,7 @@ export interface FenceHandle {
 
 /** 围栏实例：一个 Job（或降级通道）可容纳一次宿主启动。 */
 export interface Fence {
-  readonly mode: 'win32-job' | 'taskkill-fallback';
+  readonly mode: FenceMode;
   /** 在围栏内拉起进程（stdio 即 RPC 传输层）。 */
   launch(exe: string, args: string[], cwd?: string): FenceHandle;
   /** 释放围栏资源（launch 失败/未用时的 Job 句柄回收）。 */
@@ -223,9 +226,13 @@ function taskkillTree(pid: number): Promise<void> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
       try {
-        process.kill(pid, 'SIGKILL');
+        process.kill(-pid, 'SIGKILL');
       } catch {
-        // 已退出
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // 已退出
+        }
       }
       resolve();
       return;
@@ -237,7 +244,7 @@ function taskkillTree(pid: number): Promise<void> {
 }
 
 class FallbackFenceHandle implements FenceHandle {
-  readonly mode = 'taskkill-fallback' as const;
+  readonly mode: 'unix-process-group' | 'taskkill-fallback' | 'process-group-fallback';
   readonly pid: number;
   readonly stdin: Writable;
   readonly stdout: Readable;
@@ -245,8 +252,9 @@ class FallbackFenceHandle implements FenceHandle {
   private readonly child: ChildProcessWithoutNullStreams;
   private killed = false;
 
-  constructor(child: ChildProcessWithoutNullStreams) {
+  constructor(child: ChildProcessWithoutNullStreams, mode: 'unix-process-group' | 'taskkill-fallback' | 'process-group-fallback') {
     this.child = child;
+    this.mode = mode;
     this.pid = child.pid ?? -1;
     this.stdin = child.stdin;
     this.stdout = child.stdout;
@@ -275,15 +283,24 @@ class FallbackFenceHandle implements FenceHandle {
 }
 
 class FallbackFence implements Fence {
-  readonly mode = 'taskkill-fallback' as const;
+  readonly mode: 'unix-process-group' | 'taskkill-fallback' | 'process-group-fallback';
+
+  constructor(mode: 'unix-process-group' | 'taskkill-fallback' | 'process-group-fallback') {
+    this.mode = mode;
+  }
 
   launch(exe: string, args: string[], cwd?: string): FenceHandle {
-    const child = spawn(exe, args, { cwd, stdio: 'pipe', windowsHide: true });
+    const child = spawn(exe, args, {
+      cwd,
+      stdio: 'pipe',
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+    });
     if (child.pid === undefined) {
       child.kill();
       throw new Error(`围栏 spawn 失败: ${exe}`);
     }
-    return new FallbackFenceHandle(child);
+    return new FallbackFenceHandle(child, this.mode);
   }
 
   dispose(): void {
@@ -312,10 +329,20 @@ export function createFence(opts: FenceOptions = {}): Fence {
       log('warn', `job-fence: Job 创建失败，降级 taskkill error=${String((err as Error).message ?? err)}`);
     }
   }
-  return new FallbackFence();
+  const mode = process.platform === 'win32'
+    ? 'taskkill-fallback'
+    : native
+      ? 'unix-process-group'
+      : 'process-group-fallback';
+  return new FallbackFence(mode);
+}
+
+export function fenceModeForPlatform(platform: NodeJS.Platform, nativeAvailable: boolean): FenceMode {
+  if (platform === 'win32') return nativeAvailable ? 'win32-job' : 'taskkill-fallback';
+  return nativeAvailable ? 'unix-process-group' : 'process-group-fallback';
 }
 
 /** 原生模块是否可用（恢复中心展示围栏档位用）。 */
-export function fenceMode(): 'win32-job' | 'taskkill-fallback' {
-  return loadNativeSupervisor() ? 'win32-job' : 'taskkill-fallback';
+export function fenceMode(): FenceMode {
+  return fenceModeForPlatform(process.platform, loadNativeSupervisor() !== null);
 }

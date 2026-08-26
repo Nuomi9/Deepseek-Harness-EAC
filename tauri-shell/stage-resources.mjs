@@ -4,7 +4,7 @@
 //
 // 布局（= main.rs resource_root() 的约定）：
 //   staged-resources/sidecar/server.js|bridge.js|rescue-integration.js
-//   staged-resources/dsh-desktop/<Electron 时代的精确文件清单 + 生产 node_modules
+//   staged-resources/dsh-desktop/<legacy-shell 时代的精确文件清单 + 生产 node_modules
 //                              + assets + vendor/node + vendor/npm>
 //
 // 用法：node stage-resources.mjs [--skip-npm]（--skip-npm 复用上次 npm ci 产物）
@@ -19,7 +19,7 @@ const dd = path.join(root, 'dsh-desktop');
 const staged = path.join(root, 'tauri-shell', 'staged-resources');
 const skipNpm = process.argv.includes('--skip-npm');
 
-// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 已废弃，不再打包；
+// 人工同步：新增根模块要加进来（legacy-shell 时代的 main.js / preload.js 已废弃，不再打包；
 // wsl-backend.js 已随 refactor 删除，Task 0 起不再装配）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
@@ -30,12 +30,6 @@ const ROOT_FILES = [
   'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
   'host-bootstrap.js',
 ];
-const LIB_DESKTOP = [
-  'file-roots.js', 'proc.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',
-  'runtime-patches.js', 'companion-sync.js', 'plugin-ops.js', 'market.js',
-  'shortcuts.js', 'junction-patrol.js', 'client-update.js', 'static-preview.js',
-  'boot-server.js',
-];
 const SCRIPTS = [
   'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
   'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
@@ -45,14 +39,22 @@ const SCRIPTS = [
 // supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
 // host-ctx.js（Task 5.3）：sidecar 装配段 initHostCtx 的统一模块宿主上下文。
 const LIB_VNEXT = [
-  'state.js', 'log.js', 'plugin-copy.js', 'host-ctx.js',
-  'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
-  'supervisor/permissions.js', 'supervisor/incidents.js',
+  'state.js', 'log.js', 'host-ctx.js', 'proc.js', 'paths.js', 'server.js', 'server-lock.js',
+  'boot.js', 'watchdog-boot.js', 'shortcuts.js', 'shortcut-maintenance.js', 'plugin-copy.js',
+  'plugin-registry-data.js', 'plugins.js', 'plugin-manager-core.js', 'market-modules.js',
+  'market-ops.js', 'preview.js', 'guard.js', 'balance-ui.js', 'bridge.js', 'migration.js',
+  'onboarding.js', 'run-state.js', 'session-heal.js', 'terminal.js', 'tray.js',
+  'update-flow.js', 'window.js', 'ipc/index.js', 'ipc/transport.js', 'ipc/sender.js',
+  'ipc/app.js', 'ipc/recovery.js', 'ipc/plugin.js', 'ipc/onboard.js', 'ipc/session.js',
+  'ipc/snapshot.js', 'snapshot/native.js', 'snapshot/paths.js', 'snapshot/manager.js',
+  'snapshot/scheduler.js', 'supervisor/registry.js', 'supervisor/state-machine.js',
+  'supervisor/installer.js', 'supervisor/permissions.js', 'supervisor/incidents.js',
   'extension-host/manager.js', 'extension-host/bridge-server.js',
   'extension-host/job-fence.js', 'extension-host/rpc.js', 'extension-host/sdk/index.js',
   'recovery-center/register-sidecar.js',
 ];
 const NATIVE_MODULES = ['supervisor/index.node', 'snapshot/index.node'];
+const SIDECAR_UI_FILES = ['snapshot-ui.js'];
 
 function requireFile(file, label) {
   if (!existsSync(file) || !statSync(file).isFile()) {
@@ -123,22 +125,21 @@ console.log('[stage] 编译 TypeScript（tsc 就地产物）');
 execSync('npx tsc -p tsconfig.json', { cwd: dd, stdio: 'inherit' });
 
 console.log('[stage] sidecar 产物');
-for (const f of ['server.js', 'bridge.js', 'rescue-integration.js']) {
+for (const f of ['server.js', 'bridge.js', 'ping.js', 'rescue-integration.js', 'ipc-surface.js']) {
   cpSync(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f));
 }
 
-console.log('[stage] dsh-desktop 根模块 + lib/desktop + scripts + package.json');
+console.log('[stage] dsh-desktop 根模块 + 统一 lib + scripts + package.json');
 for (const f of ROOT_FILES) {
   const src = path.join(dd, f);
   copyRequired(src, path.join(staged, 'dsh-desktop', f), '根模块');
 }
-mkdirSync(path.join(staged, 'dsh-desktop', 'lib', 'desktop'), { recursive: true });
-for (const f of LIB_DESKTOP) {
-  copyRequired(path.join(dd, 'lib', 'desktop', f), path.join(staged, 'dsh-desktop', 'lib', 'desktop', f), '桌面库');
-}
-console.log('[stage] vnext 隔离体系（lib 模块 + shared 协议 + 原生 .node）');
+console.log('[stage] 统一 lib 隔离体系（lib 模块 + shared 协议 + 原生 .node）');
 for (const f of LIB_VNEXT) {
   copyRequired(path.join(dd, 'lib', f), path.join(staged, 'dsh-desktop', 'lib', f), 'vnext 库');
+}
+for (const f of SIDECAR_UI_FILES) {
+  copyRequired(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f), 'sidecar 面板');
 }
 // shared/protocol.js：隔离体系单点协议源，extension-host/rpc.js 运行时 require
 // （../../shared/protocol.js）——漏装配会让 sidecar 启动即 MODULE_NOT_FOUND。
