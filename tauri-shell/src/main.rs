@@ -48,6 +48,8 @@ use tokio_tungstenite::tungstenite::Message;
 const BRIDGE_JS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/sidecar/bridge.js"));
 const WS_PORT: u16 = 19873;
 
+mod nav_fence;
+
 fn main_initialization_script() -> String {
     let file = resource_root().join("sidecar").join("snapshot-ui.js");
     let snapshot = std::fs::read_to_string(file)
@@ -133,18 +135,7 @@ fn set_current_web_url(url: &str) {
 }
 
 fn is_allowed_main_navigation(target: &tauri::Url) -> bool {
-    if target.scheme() != "http" && target.scheme() != "https" {
-        return false;
-    }
-    if let Some(current) = current_web_url() {
-        if let Ok(base) = tauri::Url::parse(&current) {
-            if target.origin() == base.origin() {
-                return true;
-            }
-        }
-    }
-    matches!(target.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
-        && target.port_or_known_default() == Some(WS_PORT)
+    nav_fence::is_allowed_navigation(target, current_web_url().as_deref(), WS_PORT)
 }
 
 /// 解析 Node 运行时：优先内置 vendor/node（与 legacy-shell 壳共用一份），回退 PATH。
@@ -450,11 +441,16 @@ async fn handle_shell_method(
                     Ok(Some(reply(Value::Null)))
                 }
                 "devtools" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        if w.is_devtools_open() {
-                            let _ = w.close_devtools();
-                        } else {
-                            let _ = w.open_devtools();
+                    // release 禁 devtools（安全专项 §8 / Task 12⑨）：仅 debug 或显式
+                    // 启用 devtools feature 时编译该分支；release 无门禁路径直接空操作。
+                    #[cfg(any(debug_assertions, feature = "devtools"))]
+                    {
+                        if let Some(w) = app.get_webview_window("main") {
+                            if w.is_devtools_open() {
+                                let _ = w.close_devtools();
+                            } else {
+                                let _ = w.open_devtools();
+                            }
                         }
                     }
                     Ok(Some(reply(Value::Null)))
