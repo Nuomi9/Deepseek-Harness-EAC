@@ -111,13 +111,34 @@ jobs:
         run: npm run typecheck
 
       - name: Rust clippy（-D warnings 零告警）
+        env:
+          RUST_BACKTRACE: 1
         run: npm run clippy:native
 
+      - name: Rust 快照模块 clippy（-D warnings 零告警）
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run clippy:native -- snapshot
+
       - name: Rust 原生模块测试（cargo test --release）
+        env:
+          RUST_BACKTRACE: 1
         run: npm run test:native
 
+      - name: Rust 快照模块测试（cargo test --release）
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run test:native -- snapshot
+
       - name: 构建 Rust 原生模块（supervisor + snapshot）
-        run: npm run build:native && npm run build:native -- snapshot
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run build:native
+
+      - name: 构建 Rust 快照模块
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run build:native -- snapshot
 
       - name: 运行测试（超过 15 分钟自动重新开始，最多 3 次）
         uses: nick-fields/retry@v3
@@ -175,14 +196,35 @@ jobs:
       - name: 类型检查与全量测试
         run: npm run typecheck && npm test
 
-      - name: Rust 原生模块 clippy、测试与构建
-        run: |
-          npm run clippy:native
-          npm run clippy:native -- snapshot
-          npm run test:native
-          npm run test:native -- snapshot
-          npm run build:native
-          npm run build:native -- snapshot
+      - name: Rust 原生模块 clippy
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run clippy:native
+
+      - name: Rust 快照模块 clippy
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run clippy:native -- snapshot
+
+      - name: Rust 原生模块测试
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run test:native
+
+      - name: Rust 快照模块测试
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run test:native -- snapshot
+
+      - name: 构建 Rust 原生模块
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run build:native
+
+      - name: 构建 Rust 快照模块
+        env:
+          RUST_BACKTRACE: 1
+        run: npm run build:native -- snapshot
 
       - name: 装配并审计 Linux 运行树
         working-directory: ${{ github.workspace }}

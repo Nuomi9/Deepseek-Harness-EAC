@@ -29,8 +29,8 @@ fn err(msg: String) -> Error {
 // 创建快照（增量 + 内容寻址去重）
 // ---------------------------------------------------------------------------
 
-/// 创建快照：遍历源目录（应用排除列表）→ 命中 mtime+size 缓存的文件直接
-/// 复用哈希 → 新内容写入对象库 → 快照元数据 parent 指向目标分支当前 head。
+/// 创建快照：遍历源目录（应用排除列表）→ 始终计算内容哈希 → 新内容写入
+/// 对象库 → 快照元数据 parent 指向目标分支当前 head。
 /// files_new = 与父快照哈希不同的文件数（真正的增量）。
 #[napi]
 pub fn snapshot_create(opts: CreateSnapshotOpts) -> Result<SnapshotSummary> {
@@ -64,8 +64,8 @@ pub fn snapshot_create(opts: CreateSnapshotOpts) -> Result<SnapshotSummary> {
         .map(|s| s.files.iter().map(|f| (f.path.clone(), f.hash.clone())).collect())
         .unwrap_or_default();
 
-    // 3. 逐文件：缓存命中 → 复用哈希；否则哈希并入库（对象已存在则跳过复制）
-    let index = store.load_index();
+    // 3. 逐文件计算内容哈希并入库。mtime+size 无法可靠地表示内容，index.json
+    // 仅保留为兼容的元数据记录；对象库按哈希去重，避免重复存储。
     let mut new_index = DiskIndex {
         version: 1,
         entries: BTreeMap::new(),
@@ -75,21 +75,14 @@ pub fn snapshot_create(opts: CreateSnapshotOpts) -> Result<SnapshotSummary> {
     let mut bytes_new: u64 = 0;
 
     for wf in &walk.files {
-        let cached = index.entries.get(&wf.rel);
-        let hash = match cached.filter(|c| c.m == wf.mtime_ns && c.s == wf.size) {
-            Some(c) => c.h.clone(),
-            None => {
-                let h = hash_file(&wf.abs)
-                    .map_err(|e| err(format!("哈希失败 {}: {e}", wf.rel)))?;
-                // 入对象库（哈希相同 → 对象已存在 → 不重复备份）
-                let obj = store.object_path(&h);
-                if !obj.exists() {
-                    atomic_copy(&wf.abs, &obj)
-                        .map_err(|e| err(format!("写对象失败 {}: {e}", wf.rel)))?;
-                }
-                h
-            }
-        };
+        let hash = hash_file(&wf.abs)
+            .map_err(|e| err(format!("哈希失败 {}: {e}", wf.rel)))?;
+        // 入对象库（哈希相同 → 对象已存在 → 不重复备份）
+        let obj = store.object_path(&hash);
+        if !obj.exists() {
+            atomic_copy(&wf.abs, &obj)
+                .map_err(|e| err(format!("写对象失败 {}: {e}", wf.rel)))?;
+        }
         let is_new = parent_files.get(&wf.rel).map(|h| h != &hash).unwrap_or(true);
         if is_new {
             files_new += 1;
@@ -506,6 +499,7 @@ pub fn snapshot_default_exclusions() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::fsutil::testutil::*;
+    use std::time::{Duration, UNIX_EPOCH};
 
     struct Ctx {
         store: std::path::PathBuf,
@@ -537,6 +531,15 @@ mod tests {
             branch: None,
         })
         .expect("create")
+    }
+
+    fn set_mtime(path: &std::path::Path, modified: std::time::SystemTime) {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open writable")
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .expect("set mtime");
     }
 
     #[test]
@@ -681,9 +684,25 @@ mod tests {
         let st = c.store.to_str().unwrap();
         let src = c.src.to_str().unwrap();
         write_file(&c.src, "a.txt", "v1");
+        let fixed_mtime = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        set_mtime(&c.src.join("a.txt"), fixed_mtime);
         let s1 = create(st, src, "1");
         write_file(&c.src, "a.txt", "v2");
+        set_mtime(&c.src.join("a.txt"), fixed_mtime);
         let s2 = create(st, src, "2");
+
+        assert_eq!(s2.files_new, 1.0);
+        let first_hash = snapshot_detail(st.to_string(), s1.id.clone())
+            .expect("first detail")
+            .files[0]
+            .hash
+            .clone();
+        let second_hash = snapshot_detail(st.to_string(), s2.id.clone())
+            .expect("second detail")
+            .files[0]
+            .hash
+            .clone();
+        assert_ne!(first_hash, second_hash);
 
         // head 不可删
         assert!(snapshot_delete(st.to_string(), s2.id.clone()).is_err());

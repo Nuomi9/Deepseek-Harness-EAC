@@ -62,7 +62,7 @@ pub struct DiskConfig {
     pub current_branch: String,
 }
 
-/** 哈希缓存条目（index.json）。m = mtime 毫秒，s = 尺寸，h = SHA-256。 */
+/** 索引元数据条目（index.json）。m = mtime 纳秒，s = 尺寸，h = SHA-256。 */
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DiskIndexEntry {
     pub m: i64,
@@ -70,7 +70,7 @@ pub struct DiskIndexEntry {
     pub h: String,
 }
 
-/** 哈希缓存（index.json）。按相对路径索引。 */
+/** 索引元数据（index.json）。按相对路径索引，不作为跳过哈希的依据。 */
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct DiskIndex {
     pub version: u32,
