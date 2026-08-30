@@ -880,6 +880,107 @@ git commit -m "feat(darwin): macOS 打包配置（.app/.dmg、icns、最低 13.0
 
 ---
 
+### Task 8: 跨平台 preset 同步 + Windows 专属预设过滤（TDD）
+
+**Files:**
+- Modify: `dsh-desktop/preset-sync.ts`、`dsh-desktop/lib/desktop/companion-sync.ts`
+- Test: `dsh-desktop/test/preset-sync.test.ts`
+
+**Interfaces:**
+- Consumes: 现有 `syncBundledPresets(assetsRoot, presetsRoot, log)` / `ensureDefaultAgentPreset(home, presetId, log)` 导出。
+- Produces: `presetSyncExcludeForPlatform(platform: NodeJS.Platform): Set<string>`（win32 → 空集；darwin/linux → `minimal-win`、`minimal-gitbash`）；`syncBundledPresets(assetsRoot, presetsRoot, log, opts?: { exclude?: ReadonlySet<string> })`（exclude 内目录不安装，`_` 前缀共享目录不受影响）。
+
+- [ ] **Step 1: 写失败测试**（追加到 `test/preset-sync.test.ts`）
+
+```ts
+test('presetSyncExcludeForPlatform：win32 无排除，darwin/linux 排除 Windows 专属预设', () => {
+  assert.deepEqual([...presetSyncExcludeForPlatform('win32')], []);
+  assert.deepEqual([...presetSyncExcludeForPlatform('darwin')].sort(), ['minimal-gitbash', 'minimal-win']);
+  assert.deepEqual([...presetSyncExcludeForPlatform('linux')].sort(), ['minimal-gitbash', 'minimal-win']);
+});
+
+test('syncBundledPresets 跳过 exclude 名单，仍安装共享目录与其他预设', () => {
+  const dir = tmp();
+  const assets = fakeAssets(dir, ['_preset', 'anchored-standard', 'minimal-win', 'minimal-gitbash', 'router-standard']);
+  const dst = join(dir, 'presets');
+  const r = syncBundledPresets(assets, dst, () => {}, { exclude: new Set(['minimal-win', 'minimal-gitbash']) });
+  assert.deepEqual(r.installed.sort(), ['anchored-standard', 'router-standard']);
+  assert.equal(existsSync(join(dst, 'minimal-win')), false);
+  assert.equal(existsSync(join(dst, 'minimal-gitbash')), false);
+  assert.equal(existsSync(join(dst, '_preset')), true);
+  assert.equal(existsSync(join(dst, 'anchored-standard', 'preset.yml')), true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('win32 调用 syncBundledPresets 不带 exclude 时行为零回归（minimal-win 照常安装）', () => {
+  const dir = tmp();
+  const assets = fakeAssets(dir, ['minimal-win', 'anchored-standard']);
+  const dst = join(dir, 'presets');
+  const r = syncBundledPresets(assets, dst, () => {});
+  assert.deepEqual(r.installed.sort(), ['anchored-standard', 'minimal-win']);
+  rmSync(dir, { recursive: true, force: true });
+});
+```
+
+（文件顶部 require 补 `presetSyncExcludeForPlatform`。）
+
+- [ ] **Step 2: 运行验证失败**
+
+Run: `$N24 test -- test/preset-sync.test.ts`（cwd `dsh-desktop`）
+Expected: FAIL——`presetSyncExcludeForPlatform` 未导出。
+
+- [ ] **Step 3: 最小实现**
+
+（1）`preset-sync.ts`：
+
+```ts
+/** Windows 专属内置预设（pwsh 无状态 shell / Git for Windows MSYS 运行时），
+ * 非 Windows 平台同步时排除。 */
+const WINDOWS_ONLY_PRESETS = new Set(['minimal-win', 'minimal-gitbash']);
+
+/** 平台化的预设同步排除名单（纯函数，便于测试）。 */
+export function presetSyncExcludeForPlatform(platform: NodeJS.Platform): Set<string> {
+  return platform === 'win32' ? new Set() : new Set(WINDOWS_ONLY_PRESETS);
+}
+```
+
+`syncBundledPresets` 签名与循环内加过滤：
+
+```ts
+function syncBundledPresets(
+  assetsRoot: string,
+  presetsRoot: string,
+  log: (m: string) => void = () => {},
+  opts?: { exclude?: ReadonlySet<string> },
+) {
+  const exclude = opts?.exclude;
+  ...
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (exclude?.has(entry.name)) {
+      log('skipped platform-excluded bundled preset: ' + entry.name);
+      continue;
+    }
+    ...
+```
+
+module.exports 补 `presetSyncExcludeForPlatform`。
+
+（2）`companion-sync.ts` 的 `syncCompanionPlugins`：把 `if (platform === 'win32') { ... } else { log('Linux 使用上游默认 agent preset...') }` 改为跨平台执行——preset 同步、compact preset 迁移、默认 preset 设置全部取消 win32 门，同步调用传入 `{ exclude: presetSyncExcludeForPlatform(platform) }`（从 `../../preset-sync` 引入该函数）。日志文案相应调整（“已安装内置 agent preset”）。
+
+- [ ] **Step 4: 运行验证通过**
+
+Run: `$N24 test -- test/preset-sync.test.ts` → PASS；`$N24 test` → 全绿；`$N24 run typecheck` → 0 error。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add dsh-desktop/preset-sync.ts dsh-desktop/lib/desktop/companion-sync.ts dsh-desktop/test/preset-sync.test.ts
+git commit -m "feat(darwin): 内置 agent preset 同步跨平台化（非 Windows 排除 minimal-win/minimal-gitbash）"
+```
+
+---
+
 ### Task 7: 验收冒烟清单（手动执行，逐项勾选）
 
 **Files:**
