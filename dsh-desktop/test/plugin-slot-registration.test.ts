@@ -13,7 +13,7 @@ function pluginSource(name) {
 test('root companion plugins inject parent slots before registering entries', () => {
   const balance = pluginSource('dsh-balance');
   const floatWindow = pluginSource('dsh-float-window');
-  const petSettings = pluginSource('dsh-pet-settings');
+  const pet = pluginSource('dsh-pet');
 
   assert.match(balance,
     /slots\.inject\("conversation\.composer\.dock",\s*\(\) => ctx\.slots\.register\(\{\s*name: "conversation\.composer\.dock"/);
@@ -21,6 +21,6 @@ test('root companion plugins inject parent slots before registering entries', ()
     /slots\.inject\("settings\.section",\s*\(\) => ctx\.slots\.register\(\{\s*name: "settings\.section"/);
   assert.match(floatWindow,
     /slots\.inject\("conversation\.session\.header\.actions",\s*\(\) => ctx\.slots\.register\(\{\s*name: "conversation\.session\.header\.actions"/);
-  assert.match(petSettings,
-    /slots\.inject\('settings\.section',\s*\(\) => ctx\.slots\.register\(\{\s*name: 'settings\.section'/);
+  assert.match(pet,
+    /slots\.inject\("settings\.section"/);
 });

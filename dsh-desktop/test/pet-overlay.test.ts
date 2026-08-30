@@ -1,3 +1,5 @@
+// dsh-pet（0.2.0-hevc）overlay 不变量：EAC z-index 补丁、四角锚点、命中区、
+// .mov 播放分支。内部实现随上游版本变化，本测试只钉住 EAC 补丁与对外契约。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -7,84 +9,22 @@ import { dirname, join } from 'node:path';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = readFileSync(join(root, 'assets', 'plugins', 'dsh-pet', 'lib', 'client.js'), 'utf8');
 
-function loadInternals() {
-  let bundleExports;
-  const windowStub = {
-    __ModuleLoader__: {
-      load(spec) {
-        bundleExports = spec.factory((id) => {
-          if (id === 'react') {
-            return { useEffect() {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}] };
-          }
-          if (id === 'react/jsx-runtime') return { jsx: () => null };
-          return {};
-        });
-      },
-    },
-  };
-  // eslint-disable-next-line no-new-func
-  new Function('window', source)(windowStub);
-  return bundleExports.__internals;
-}
-
-test('dsh-pet stays viewport-fixed above sidebar surfaces without growing page overflow', () => {
-  assert.match(source, /\.dsh-pet-root\{position:fixed/);
-  assert.match(source, /\.dsh-pet-call\{position:fixed/);
+test('EAC z-index 补丁：root 提到 CSS 最大值且 shell.overlay 容器一并抬升', () => {
+  assert.match(source, /\.dsh-pet-root\{position:fixed;z-index:2147483647/);
   assert.match(source, /\[data-shell-overlay\]\{z-index:2147483647!important\}/);
-  assert.match(source, /\.dsh-pet-stage\{[^}]*overflow:clip!important/);
-  assert.doesNotMatch(source, /dsh-pet-stage\{[^}]*transform:/);
 });
 
-test('dsh-pet defines all corner anchors', () => {
-  assert.match(source, /\.dsh-pet-root\[data-corner="top-right"\]\{right:24px;top:24px\}/);
-  assert.match(source, /\.dsh-pet-root\[data-corner="top-left"\]\{left:24px;top:24px\}/);
+test('四角锚点定义完整（position 配置契约）', () => {
+  assert.match(source, /data-corner=\\"bottom-right\\"/);
+  assert.match(source, /data-corner=\\"bottom-left\\"/);
+  assert.match(source, /data-corner=\\"top-right\\"/);
+  assert.match(source, /data-corner=\\"top-left\\"/);
 });
 
-test('dsh-pet keeps playback videos pointer-transparent and uses a bounded hit area', () => {
-  assert.match(source, /\.dsh-pet-video\{[^}]*pointer-events:none/);
-  assert.match(source, /--dsh-pet-hit-x:14%;--dsh-pet-hit-top:12%;--dsh-pet-hit-bottom:2%/);
-  assert.match(source, /const hitAreaProps = \{/);
-  assert.match(source, /h\('div', hitAreaProps\)/);
-  assert.match(source, /\.dsh-pet-toolbar\{[^}]*opacity:\.72[^}]*pointer-events:auto/);
-  assert.match(source, /\.dsh-pet-root:hover \.dsh-pet-toolbar,\.dsh-pet-toolbar:focus-within\{opacity:1\}/);
-  const videoProps = source.match(/const commonVideoProps = \{([\s\S]*?)\n\t\t\t\};/)?.[1] || '';
-  assert.doesNotMatch(videoProps, /onPointerDown:/);
+test('命中区有界且指针可交互（周边点击穿透）', () => {
+  assert.match(source, /\.dsh-pet-hit\{[^}]*pointer-events:auto/);
 });
 
-test('dsh-pet clamps rendered size and free positions for small viewports', () => {
-  const { fitPetSize, clampPetPosition } = loadInternals();
-  assert.equal(fitPetSize(260, 220, 300), 172);
-  assert.equal(fitPetSize(420, 800, 240), 216);
-  assert.deepEqual(clampPetPosition(0, 0, 260, 220, 180), { left: 0, top: 0 });
-  assert.deepEqual(clampPetPosition(1, 1, 120, 220, 180), { left: 100, top: 60 });
-});
-
-test('dsh-pet refreshes an existing style tag after plugin hot reload', () => {
-  const existingTag = { dataset: {}, textContent: 'stale css' };
-  let appended = 0;
-  const documentStub = {
-    querySelector: () => existingTag,
-    createElement: () => ({ dataset: {}, textContent: '' }),
-    head: { appendChild: () => { appended += 1; } },
-  };
-  const windowStub = {
-    __ModuleLoader__: {
-      load(spec) {
-        spec.factory((id) => {
-          if (id === 'react') {
-            return { useEffect() {}, useRef: (value) => ({ current: value }), useState: (value) => [value, () => {}] };
-          }
-          if (id === 'react/jsx-runtime') return { jsx: () => null };
-          return {};
-        });
-      },
-    },
-  };
-
-  // eslint-disable-next-line no-new-func
-  new Function('window', 'document', source)(windowStub, documentStub);
-
-  assert.equal(appended, 0);
-  assert.match(existingTag.textContent, /\.dsh-pet-stage\{/);
-  assert.doesNotMatch(existingTag.textContent, /stale css/);
+test('Safari 分支：播放扩展名固定 .mov', () => {
+  assert.match(source, /THUMB_EXT\s*=\s*"\.mov"/);
 });

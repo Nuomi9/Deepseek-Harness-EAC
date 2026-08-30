@@ -27,13 +27,11 @@ const { healProfileModuleShadowing } = require('../../profile-module-heal') as {
 const {
   configLinesFor,
   healSoulMdPatchRow,
-  healRowConfig,
   removeBundledRowDuplicates,
   collectBundleEntryIds,
 } = require('../../patch-row-heal') as {
   configLinesFor(config: unknown): string;
   healSoulMdPatchRow(patch: string): { healed: unknown[]; patch: string };
-  healRowConfig(patch: string, id: string, config: unknown): { healed: unknown[]; patch: string };
   removeBundledRowDuplicates(patch: string, rowIds: Record<string, string>, bundled: unknown[], declared: Set<string>): { removed: string[]; patch: string };
   collectBundleEntryIds(bundled: unknown[], nodeModulesDir: string): Set<string>;
 };
@@ -235,7 +233,8 @@ export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: stri
   'picturereader': { npm: 'picturereader' },
   'computer-user': { npm: 'computer-user' },
   'soul-md': { npm: 'dsh-soul-md' },
-  'dsh-pet': { npm: 'dsh-pet' },
+  // dsh-pet 不再登记更新源：本分支内置 0.2.0-hevc（mov-only 变体），
+  // npm 标准版是 webm 变体，自动更新会把 Safari 兼容性覆盖掉。
   'better-sidebar': { npm: 'dsh-better-sidebar' },
   'dsh-navbar': { npm: '@vlln/dsh-navbar' },
   'mobile-fix': { npm: 'dsh-web-mobile-fix' },
@@ -662,14 +661,6 @@ function ensurePluginHostDeps(profileDirP: string): void {
       patch = healed.patch;
       changed = true;
       ctx.log('boot', '已修复 profile patch 中缺 config.path 的 soul-md 行');
-    }
-    // V4：修复 v3.1.0 及以前写出的「无 config 的 dsh-pet 行」（loader 传
-    // undefined → dsh-pet 读 config.fullRoot 崩 → 插件树整体加载失败）。
-    const healedPet = healRowConfig(patch, 'dsh-pet', { size: 260, position: 'bottom-right' });
-    if (healedPet.healed.length) {
-      patch = healedPet.patch;
-      changed = true;
-      ctx.log('boot', '已修复 profile patch 中缺 config 的 dsh-pet 行（v3 存量坏行）');
     }
     // 市场安装（dsh plugin add）会把插件登记进 package.json 的
     // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
