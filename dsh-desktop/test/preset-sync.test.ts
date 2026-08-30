@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const { syncBundledPresets, ensureDefaultAgentPreset } = require(join(root, 'preset-sync.js'));
+const { syncBundledPresets, ensureDefaultAgentPreset, presetSyncExcludeForPlatform } = require(join(root, 'preset-sync.js'));
 const { parsePreset } = require(join(root, 'compact-preset-migrate.js'));
 
 function tmp() {
@@ -242,4 +242,32 @@ test('内置 preset 仅携带 Windows shell 配置', () => {
 test('electron-builder files 包含 preset-sync.js（否则新模块不进安装包）', () => {
   const yml = readFileSync(join(root, 'electron-builder.yml'), 'utf8');
   assert.match(yml, /- preset-sync\.js/);
+});
+
+test('presetSyncExcludeForPlatform：win32 无排除，darwin/linux 排除 Windows 专属预设', () => {
+  assert.deepEqual([...presetSyncExcludeForPlatform('win32')], []);
+  assert.deepEqual([...presetSyncExcludeForPlatform('darwin')].sort(), ['minimal-gitbash', 'minimal-win']);
+  assert.deepEqual([...presetSyncExcludeForPlatform('linux')].sort(), ['minimal-gitbash', 'minimal-win']);
+});
+
+test('syncBundledPresets 跳过 exclude 名单，仍安装共享目录与其他预设', () => {
+  const dir = tmp();
+  const assets = fakeAssets(dir, ['_preset', 'anchored-standard', 'minimal-win', 'minimal-gitbash', 'router-standard']);
+  const dst = join(dir, 'presets');
+  const r = syncBundledPresets(assets, dst, () => {}, { exclude: new Set(['minimal-win', 'minimal-gitbash']) });
+  assert.deepEqual(r.installed.sort(), ['anchored-standard', 'router-standard']);
+  assert.equal(existsSync(join(dst, 'minimal-win')), false);
+  assert.equal(existsSync(join(dst, 'minimal-gitbash')), false);
+  assert.equal(existsSync(join(dst, '_preset')), true);
+  assert.equal(existsSync(join(dst, 'anchored-standard', 'preset.yml')), true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('win32 调用 syncBundledPresets 不带 exclude 时行为零回归（minimal-win 照常安装）', () => {
+  const dir = tmp();
+  const assets = fakeAssets(dir, ['minimal-win', 'anchored-standard']);
+  const dst = join(dir, 'presets');
+  const r = syncBundledPresets(assets, dst, () => {});
+  assert.deepEqual(r.installed.sort(), ['anchored-standard', 'minimal-win']);
+  rmSync(dir, { recursive: true, force: true });
 });

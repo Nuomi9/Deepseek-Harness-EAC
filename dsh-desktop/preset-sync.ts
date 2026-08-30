@@ -20,7 +20,22 @@
 import fs = require('node:fs');
 import path = require('node:path');
 
-function syncBundledPresets(assetsRoot: string, presetsRoot: string, log: (m: string) => void = () => {}) {
+/** Windows 专属内置预设（pwsh 无状态 shell / Git for Windows MSYS 运行时），
+ * 非 Windows 平台同步时排除。 */
+const WINDOWS_ONLY_PRESETS = new Set(['minimal-win', 'minimal-gitbash']);
+
+/** 平台化的预设同步排除名单（纯函数，便于测试）。 */
+export function presetSyncExcludeForPlatform(platform: NodeJS.Platform): Set<string> {
+  return platform === 'win32' ? new Set() : new Set(WINDOWS_ONLY_PRESETS);
+}
+
+function syncBundledPresets(
+  assetsRoot: string,
+  presetsRoot: string,
+  log: (m: string) => void = () => {},
+  opts?: { exclude?: ReadonlySet<string> },
+) {
+  const exclude = opts?.exclude;
   const installed: string[] = [];
   const kept: string[] = [];
   let entries;
@@ -28,6 +43,10 @@ function syncBundledPresets(assetsRoot: string, presetsRoot: string, log: (m: st
   fs.mkdirSync(presetsRoot, { recursive: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    if (exclude?.has(entry.name)) {
+      log('skipped platform-excluded bundled preset: ' + entry.name);
+      continue;
+    }
     const src = path.join(assetsRoot, entry.name);
     // Shared resource directories (upstream `_preset/`): preset manifests
     // reference them as `../_preset/<file>.mjs`, so they must be installed
@@ -115,4 +134,4 @@ function ensureDefaultAgentPreset(home: string, presetId: string, log: (m: strin
   }
 }
 
-module.exports = { syncBundledPresets, ensureDefaultAgentPreset };
+module.exports = { syncBundledPresets, ensureDefaultAgentPreset, presetSyncExcludeForPlatform };

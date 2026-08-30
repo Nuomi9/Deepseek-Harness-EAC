@@ -37,9 +37,10 @@ const {
   removeBundledRowDuplicates(patch: string, rowIds: Record<string, string>, bundled: unknown[], declared: Set<string>): { removed: string[]; patch: string };
   collectBundleEntryIds(bundled: unknown[], nodeModulesDir: string): Set<string>;
 };
-const { syncBundledPresets, ensureDefaultAgentPreset } = require('../../preset-sync') as {
-  syncBundledPresets(src: string, dst: string, log: (m: string) => void): { installed: string[] };
+const { syncBundledPresets, ensureDefaultAgentPreset, presetSyncExcludeForPlatform } = require('../../preset-sync') as {
+  syncBundledPresets(src: string, dst: string, log: (m: string) => void, opts?: { exclude?: ReadonlySet<string> }): { installed: string[] };
   ensureDefaultAgentPreset(home: string, name: string, log: (m: string) => void): string;
+  presetSyncExcludeForPlatform(platform: NodeJS.Platform): Set<string>;
 };
 const { migrateManagedCompactPresets } = require('../../compact-preset-migrate') as {
   migrateManagedCompactPresets(dir: string, log: (m: string) => void): { status: string; file: string }[];
@@ -462,32 +463,31 @@ export function syncCompanionPlugins(): void {
     // 内置社区 agent preset（anchored-standard：首请求锚定 Minimal 工具对，
     // 首次工具调用/回复后开放完整 Standard 目录）：安装到用户 preset 根。
     // preset 不进插件树，坏 preset 不会拖垮启动；已存在则跳过（用户手装
-    // 或改过的版本优先），见 preset-sync.js。
-    if (platform === 'win32') {
-      const presetsSynced = syncBundledPresets(
-        path.join(APP_ROOT, 'assets', 'agent-presets'),
-        path.join(home, '.agent-presets'),
-        (m) => ctx.log('boot', m)
-      );
-      if (presetsSynced.installed.length) ctx.log('boot', '已安装内置 agent preset: ' + presetsSynced.installed.join(', '));
-      const compactPresetResults = migrateManagedCompactPresets(
-        path.join(home, '.agent-presets'),
-        (m) => ctx.log('boot', m)
-      );
-      const compactPresetMigrated = compactPresetResults
-        .filter((result) => result.status === 'migrated')
-        .map((result) => path.basename(path.dirname(result.file)));
-      if (compactPresetMigrated.length) {
-        ctx.log('boot', '已将内置 agent preset 迁移到 dsh-compact: ' + compactPresetMigrated.join(', '));
-      }
-      // 默认 preset 指到内置的 anchored-standard（用户已在 settings.yaml 写过
-      // default 则一律保留）。失败只降级为官方默认 preset，不影响启动。
-      const defaultResult = ensureDefaultAgentPreset(home, 'anchored-standard', (m) => ctx.log('boot', m));
-      if (defaultResult === 'set') ctx.log('boot', '已设置默认 agent preset: anchored-standard');
-      else if (defaultResult === 'kept') ctx.log('boot', '用户已设置默认 agent preset，保持不变');
-    } else {
-      ctx.log('boot', 'Linux 使用上游默认 agent preset；未同步 Windows PowerShell/Git Bash 调优 preset');
+    // 或改过的版本优先），见 preset-sync.js。跨平台执行：非 Windows 平台
+    // 排除 minimal-win / minimal-gitbash（Windows 专属 shell 运行时），
+    // 其余内置 preset 照常同步。
+    const presetsSynced = syncBundledPresets(
+      path.join(APP_ROOT, 'assets', 'agent-presets'),
+      path.join(home, '.agent-presets'),
+      (m) => ctx.log('boot', m),
+      { exclude: presetSyncExcludeForPlatform(platform) },
+    );
+    if (presetsSynced.installed.length) ctx.log('boot', '已安装内置 agent preset: ' + presetsSynced.installed.join(', '));
+    const compactPresetResults = migrateManagedCompactPresets(
+      path.join(home, '.agent-presets'),
+      (m) => ctx.log('boot', m)
+    );
+    const compactPresetMigrated = compactPresetResults
+      .filter((result) => result.status === 'migrated')
+      .map((result) => path.basename(path.dirname(result.file)));
+    if (compactPresetMigrated.length) {
+      ctx.log('boot', '已将内置 agent preset 迁移到 dsh-compact: ' + compactPresetMigrated.join(', '));
     }
+    // 默认 preset 指到内置的 anchored-standard（用户已在 settings.yaml 写过
+    // default 则一律保留）。失败只降级为官方默认 preset，不影响启动。
+    const defaultResult = ensureDefaultAgentPreset(home, 'anchored-standard', (m) => ctx.log('boot', m));
+    if (defaultResult === 'set') ctx.log('boot', '已设置默认 agent preset: anchored-standard');
+    else if (defaultResult === 'kept') ctx.log('boot', '用户已设置默认 agent preset，保持不变');
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending: PendingRow[] = [];
     const removedIds = removedPluginIds();
