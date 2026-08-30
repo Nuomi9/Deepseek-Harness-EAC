@@ -117,14 +117,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 分叉新会话（sessions.fork）并以编辑后内容重发（inputActions）。
   // 纯客户端实现，host 半边为 no-op。
   { id: 'message-rewind', name: 'dsh-message-rewind', dir: 'dsh-message-rewind' },
-  // 页面桌宠（npm: dsh-pet 0.1.3）：28 个透明动画的悬浮宠物，即装即用。
-  // assets/ 15MB 播放资源随包分发；peer 依赖全部由 dsh 宿主提供。
-  // V4 关键修复：行必须带 config —— dsh-pet 的 apply 读 config.fullRoot，
-  // 无 config 块的行会让 loader 传 undefined 直接拖垮插件树（v3.1.0 全新
-  // 安装即「启动失败」的根因之一；老用户因市场装过的行带 config 才幸免）。
-  // 值沿用包内 cordis.patch.yml 的出厂默认。
-  // 默认禁用 —— 需要页面桌宠时在「设置 → 插件 → 管理」或「桌宠」分区开启。
-  { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet', config: { size: 260, position: 'bottom-right' }, disabled: true },
+  // 页面桌宠（npm: dsh-pet 0.2.0-hevc）：97 个真 alpha HEVC 动画（Safari/WKWebView
+  // 原生支持；mov-only 变体，Windows 需另行选择 webm 变体），自带设置页与
+  // config.jsonc 配置系统。默认禁用，设置页开启。
+  { id: 'pet', name: 'dsh-pet', dir: 'dsh-pet', disabled: true },
   // 设置页「Skills 与 MCP」分区：Skills 目录浏览（来源徽标/打开目录）+
   // MCP 服务增删改（读写 profile patch 中的 dsh-mcp-client 行）+ 从
   // Claude Code / Codex 一键导入 MCP 配置。
@@ -183,10 +179,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 等待/完成/错误 六态 + 项目状态卡）。默认开启 —— 可在「设置 → 插件 →
   // 管理」或「桌宠」分区关闭（含 49MB PyInstaller helper，按需运行）。
   { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
-  // 桌宠设置分区（V4.2，dsh-pet-settings）：设置页「桌宠」分区，集中管理
-  // 页面桌宠（dsh-pet 开关，重启生效）与大肥鱼桌面伴侣（启用/角色大小/
-  // 空闲微动作频率/减少动态，走 dsh-dafeiyu config 端点即时生效）。
-  { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
   // 峰谷价格卫士（dsh-offpeak，christophersmith2737-commits，MIT）：DeepSeek
   // 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）在发送前
   // 拦截提醒，可一键继续或定时到闲时价自动执行（浏览器不在线也会到点
