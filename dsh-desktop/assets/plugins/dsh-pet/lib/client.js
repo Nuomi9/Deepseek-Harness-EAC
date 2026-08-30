@@ -70,6 +70,8 @@ window.__ModuleLoader__.load({
 			// 视频只负责播放，交互交给下面的缩小热区，避免透明画布扩大命中范围
 			// opacity:0 初始隐藏，transition 做 180ms 淡入淡出
 			'.dsh-pet-video{position:absolute;left:0;top:var(--dsh-pet-ground-offset,0px);width:100%;height:100%;object-fit:contain;pointer-events:none;cursor:default;opacity:0;transition:opacity .18s ease;transform-origin:center}',
+			// EAC macOS 补丁：遮罩不重复平铺（配合上面 mask-image 使用）
+			'.dsh-pet-video{-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat}',
 			// 显示中的视频（is-front 类）
 			'.dsh-pet-video.is-front{opacity:1}',
 			// 角色近似可见区域的透明交互热区，不覆盖整张 360×360 透明画布
@@ -332,6 +334,18 @@ window.__ModuleLoader__.load({
 				if (!el) return;
 				// 设置视频属性并开始加载
 				el.src = '/pet/thumb/' + encodeURIComponent(next) + '.webm';
+				// EAC macOS 补丁：素材无 alpha（黑底烘焙），逐动画挂静态遮罩
+				// （.mask.png 由 scripts/pet-mask.cjs 离线生成）；先探活再应用，
+				// 避免遮罩缺失时整个宠物消失。遮罩随元素 transform 一起镜像。
+				const maskUrl = '/pet/thumb/' + encodeURIComponent(next) + '.mask.png';
+				const maskProbe = new Image();
+				maskProbe.onload = () => {
+					el.style.webkitMaskImage = 'url("' + maskUrl + '")';
+					el.style.maskImage = 'url("' + maskUrl + '")';
+					el.style.webkitMaskSize = '100% 100%';
+					el.style.maskSize = '100% 100%';
+				};
+				maskProbe.src = maskUrl;
 				el.loop = !nextOnce;           // 一次性动画不循环
 				el.muted = true;               // 静音（动画无声音）
 				el.autoplay = true;            // 自动播放
