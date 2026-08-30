@@ -880,6 +880,127 @@ git commit -m "feat(darwin): macOS 打包配置（.app/.dmg、icns、最低 13.0
 
 ---
 
+### Task 10: 桌宠插件升级 dsh-pet@0.2.0-hevc（97 动画真 alpha，Safari 原生）
+
+**Files:**
+- Replace: `dsh-desktop/assets/plugins/dsh-pet/` ← npm 包 `dsh-pet@0.2.0-hevc` 内容（lib/、assets/{mov,fonts,pic,config.jsonc}、cordis.patch.yml、package.json、src/）
+- Modify: `dsh-desktop/lib/desktop/companion-sync.ts`（dsh-pet 表条目更新；删除 dsh-pet-settings 条目）
+- Modify: `dsh-desktop/assets/plugins/dsh-pet/lib/client.js`（EAC 本地补丁：z-index）
+- Delete: `dsh-desktop/assets/plugins/dsh-pet-settings/`、`dsh-desktop/scripts/pet-mask.cjs`、`dsh-desktop/scripts/pet-alpha-mov.cjs`、旧 28 个 `.mask.png`/`.alpha.mov`（工作区未提交态）
+- Test: Delete `dsh-desktop/test/pet-mask-assets.test.ts`；Create `dsh-desktop/test/pet-v020-assets.test.ts`
+
+**背景**：上游 v0.2.0-hevc 是官方 Safari 变体（97 个真 alpha HEVC .mov，源码级 THUMB_EXT=.mov 分支，自带设置页 settings.section，config.jsonc 配置系统）。取代 EAC 内置 v0.1.3（28 个无 alpha 黑底 webm）与本分支前期的自建 alpha 流水线。已核实：apply(ctx) 无 config、根渲染于 shell.overlay slot（EAC z-index 补丁策略适用）、peer 依赖全部 rc.2、npm tgz 解包 128MB。
+
+- [ ] **Step 1: vendor npm 包**
+
+Run:
+```bash
+cd /tmp/pet-hevc/package && rm -rf ~/dsh-eac-macos/dsh-desktop/assets/plugins/dsh-pet
+mkdir -p ~/dsh-eac-macos/dsh-desktop/assets/plugins/dsh-pet
+cp -R lib assets src cordis.patch.yml package.json ~/dsh-eac-macos/dsh-desktop/assets/plugins/dsh-pet/
+```
+（README/LICENSE 可选保留 LICENSE。）
+
+- [ ] **Step 2: z-index 补丁（EAC 本地补丁，就地改 vendored 文件）**
+
+`assets/plugins/dsh-pet/lib/client.js` 中：
+
+```js
+		// EAC 本地补丁：root 默认 z-index:40 会被右侧栏（z-index:50）盖住，
+		// 提到 CSS 最大值；shell.overlay 容器创建独立层叠上下文，需一并抬升。
+		".dsh-pet-root{position:fixed;z-index:2147483647;pointer-events:none;user-select:none}",
+		"[data-shell-overlay]{z-index:2147483647!important}",
+```
+
+（替换原 `.dsh-pet-root{position:fixed;z-index:40;pointer-events:none;user-select:none}` 行，后行追加 `[data-shell-overlay]` 规则。）
+
+- [ ] **Step 3: companion-sync 表条目更新**
+
+`companion-sync.ts`：
+
+```ts
+  // 页面桌宠（npm: dsh-pet 0.2.0-hevc）：97 个真 alpha HEVC 动画（Safari/WKWebView
+  // 原生支持；mov-only 变体，Windows 需另行选择 webm 变体），自带设置页与
+  // config.jsonc 配置系统。默认禁用，设置页开启。
+  { id: 'pet', name: 'dsh-pet', dir: 'dsh-pet', disabled: true },
+```
+
+删除 dsh-pet-settings 条目（及注释行）——其针对 v0.1.3 settings namespace 与大肥鱼，v0.2.x 自带设置 UI。
+
+- [ ] **Step 4: 删除退役文件**
+
+Run:
+```bash
+cd ~/dsh-eac-macos && rm -rf dsh-desktop/assets/plugins/dsh-pet-settings
+rm -f dsh-desktop/scripts/pet-mask.cjs dsh-desktop/scripts/pet-alpha-mov.cjs dsh-desktop/scripts/pet-alpha-debug.cjs
+git rm -q dsh-desktop/test/pet-mask-assets.test.ts
+```
+
+- [ ] **Step 5: 新接线测试**（`dsh-desktop/test/pet-v020-assets.test.ts`）
+
+```ts
+// dsh-pet 0.2.0-hevc 升级接线测试：mov 素材集、客户端 .mov 分支、z-index 补丁、同步表条目。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const pkg = join(root, 'assets', 'plugins', 'dsh-pet');
+const clientJs = readFileSync(join(pkg, 'lib', 'client.js'), 'utf8');
+const syncSrc = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
+
+test('hevc 变体随包 97 个真 alpha mov 素材', () => {
+  const movs = readdirSync(join(pkg, 'assets', 'mov')).filter((f) => f.endsWith('.mov'));
+  assert.ok(movs.length >= 90, 'mov 素材数异常: ' + movs.length);
+  assert.equal(readdirSync(join(pkg, 'assets')).includes('webm'), false, 'hevc 变体不应含 webm');
+});
+
+test('客户端 THUMB_EXT 固定 .mov（Safari 分支）', () => {
+  assert.match(clientJs, /THUMB_EXT\s*=\s*"\.mov"/);
+});
+
+test('EAC z-index 补丁就位', () => {
+  assert.match(clientJs, /\.dsh-pet-root\{position:fixed;z-index:2147483647/);
+  assert.match(clientJs, /\[data-shell-overlay\]\{z-index:2147483647!important\}/);
+});
+
+test('同步表：pet 条目更新、dsh-pet-settings 退役', () => {
+  assert.match(syncSrc, /id: 'pet', name: 'dsh-pet', dir: 'dsh-pet', disabled: true/);
+  assert.doesNotMatch(syncSrc, /dsh-pet-settings/);
+});
+```
+
+- [ ] **Step 6: 验证**
+
+Run:
+```bash
+cd ~/dsh-eac-macos/dsh-desktop
+vendor/node/node vendor/npm/bin/npm-cli.js run build && vendor/node/node vendor/npm/bin/npm-cli.js run typecheck
+vendor/node/node vendor/npm/bin/npm-cli.js test -- test/pet-v020-assets.test.ts
+vendor/node/node vendor/npm/bin/npm-cli.js test
+```
+Expected: 新测试 4/4；全量 712 pass / 8 skip / 0 fail（710 − 2 旧 + 4 新）。
+
+- [ ] **Step 7: 用户 profile 迁移 + 实机验证**
+
+```bash
+rm -rf ~/.dsh/profiles/web-desktop/node_modules/dsh-pet ~/.dsh/profiles/web-desktop/node_modules/dsh-pet-settings
+```
+重启桌面 App（同步会用新版本重装）；验证：设置页出现新版「桌宠」分区、宠物显示、z-index 高于右侧栏、无黑底无噪点、动画池含 97 个。
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A dsh-desktop/assets/plugins/dsh-pet dsh-desktop/assets/plugins/dsh-pet-settings dsh-desktop/scripts/pet-mask.cjs dsh-desktop/scripts/pet-alpha-mov.cjs dsh-desktop/test/pet-mask-assets.test.ts dsh-desktop/test/pet-v020-assets.test.ts dsh-desktop/lib/desktop/companion-sync.ts
+git commit -m "feat(pet): 升级 dsh-pet 至 0.2.0-hevc——97 真 alpha HEVC 动画（Safari 原生）+ 设置页 + config.jsonc；退役 pet-settings 与自建 alpha 流水线"
+```
+
+（`index.node` 平台二进制保持未提交。）
+
+---
+
 ### Task 9: 桌宠黑底透明修复——离线遮罩 + mask-image 补丁
 
 **Files:**
