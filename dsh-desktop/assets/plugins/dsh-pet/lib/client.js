@@ -340,6 +340,7 @@ window.__ModuleLoader__.load({
 				const maskUrl = '/pet/thumb/' + encodeURIComponent(next) + '.mask.png';
 				const maskProbe = new Image();
 				maskProbe.onload = () => {
+					if (genRef.current !== gen) return;
 					el.style.webkitMaskImage = 'url("' + maskUrl + '")';
 					el.style.maskImage = 'url("' + maskUrl + '")';
 					el.style.webkitMaskSize = '100% 100%';

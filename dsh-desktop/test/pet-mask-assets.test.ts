@@ -20,5 +20,6 @@ test('每个宠物动画 webm 都有同名 .mask.png 遮罩', () => {
 test('client.js 含遮罩钩子（探活后挂 mask-image）与 mask-repeat 规则', () => {
   assert.match(clientJs, /maskProbe/);
   assert.match(clientJs, /webkitMaskImage/);
+  assert.match(clientJs, /maskImage/);
   assert.match(clientJs, /-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat/);
 });
