@@ -880,6 +880,64 @@ git commit -m "feat(darwin): macOS 打包配置（.app/.dmg、icns、最低 13.0
 
 ---
 
+### Task 9: 桌宠黑底透明修复——离线遮罩 + mask-image 补丁
+
+**Files:**
+- Create: `dsh-desktop/scripts/pet-mask.cjs`（遮罩生成器：首帧洪水填充 + 柔边，产出 28 个 `<name>.mask.png`）
+- Create: `dsh-desktop/assets/plugins/dsh-pet/assets/thumb/*.mask.png`（28 个，共 ~112KB）
+- Modify: `dsh-desktop/assets/plugins/dsh-pet/lib/client.js`（switchTo 处挂 mask-image，探活后应用；CSS 补 mask-repeat）
+- Test: Create `dsh-desktop/test/pet-mask-assets.test.ts`（接线测试：每个 webm 有同名 mask；client.js 含 maskProbe 钩子与 mask-repeat 规则）
+
+**背景**：宠物动画素材为 yuv420p（无 alpha，黑底烘焙）；Windows 暗色主题下黑底不显眼，macOS 上明显。方案：离线生成静态遮罩（从边框洪水填充背景，角色内部深色像素保持不透明），运行时 `mask-image` 挂到 video 元素，零逐帧开销。工作区已有控制器完成的原型（client.js 补丁 + 28 mask + 脚本），本任务做形式化验证与提交。
+
+- [ ] **Step 1: 核实工作区原型**
+
+Run: `git status --short` 确认：client.js 已改、28 个 `.mask.png` 未跟踪、`scripts/pet-mask.cjs` 存在；`grep -c maskProbe dsh-desktop/assets/plugins/dsh-pet/lib/client.js` ≥ 2。
+
+- [ ] **Step 2: 写接线测试**（新文件 `test/pet-mask-assets.test.ts`）
+
+```ts
+// 桌宠黑底遮罩接线测试：素材-遮罩一一对应 + client.js 补丁钩子存在。
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const thumb = join(root, 'assets', 'plugins', 'dsh-pet', 'assets', 'thumb');
+const clientJs = readFileSync(join(root, 'assets', 'plugins', 'dsh-pet', 'lib', 'client.js'), 'utf8');
+
+test('每个宠物动画 webm 都有同名 .mask.png 遮罩', () => {
+  const webms = readdirSync(thumb).filter((f) => f.endsWith('.webm'));
+  assert.ok(webms.length >= 20, 'webm 素材数异常: ' + webms.length);
+  for (const f of webms) {
+    assert.equal(existsSync(join(thumb, f.replace(/\.webm$/, '.mask.png'))), true, '缺少遮罩: ' + f);
+  }
+});
+
+test('client.js 含遮罩钩子（探活后挂 mask-image）与 mask-repeat 规则', () => {
+  assert.match(clientJs, /maskProbe/);
+  assert.match(clientJs, /webkitMaskImage/);
+  assert.match(clientJs, /-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat/);
+});
+```
+
+- [ ] **Step 3: 运行验证**
+
+Run: `$N24 test -- test/pet-mask-assets.test.ts` → PASS；`$N24 test` → 全绿（预计 710 pass / 8 skip / 0 fail）。
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add dsh-desktop/scripts/pet-mask.cjs "dsh-desktop/assets/plugins/dsh-pet/assets/thumb/" dsh-desktop/assets/plugins/dsh-pet/lib/client.js dsh-desktop/test/pet-mask-assets.test.ts
+git commit -m "fix(pet): 桌宠黑底透明——离线遮罩生成器 + mask-image 运行时补丁（含接线测试）"
+```
+
+（`index.node` 平台二进制保持未提交。）
+
+---
+
 ### Task 8: 跨平台 preset 同步 + Windows 专属预设过滤（TDD）
 
 **Files:**
